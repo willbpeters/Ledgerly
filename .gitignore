@@ -1,0 +1,25 @@
+# Brainstorming / visual companion scratch
+.superpowers/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Tauri / Rust build output
+src-tauri/target/
+
+# Local data & secrets (app database, env)
+*.sqlite
+*.sqlite-*
+*.db
+.env
+.env.*
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
