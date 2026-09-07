@@ -8,15 +8,20 @@ import { rowsToTransactions, type ColumnMap, type StagedTxn, type RowError } fro
 import { money } from "../../ui/format";
 
 const FIELDS: (keyof ColumnMap)[] = ["date","type","ticker","quantity","price","amount","fees"];
+const EMPTY_MAP: ColumnMap = { date:"",type:"",ticker:"",quantity:"",price:"",amount:"",fees:"" };
 
 export function CsvImport() {
   const { data: accounts = [] } = useAccounts();
   const qc = useQueryClient();
   const [accountId, setAccountId] = useState<number | "">("");
+  const [newType, setNewType] = useState("stock");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, string>[]>([]);
-  const [map, setMap] = useState<ColumnMap>({ date:"",type:"",ticker:"",quantity:"",price:"",amount:"",fees:"" });
+  const [map, setMap] = useState<ColumnMap>(EMPTY_MAP);
   const [preview, setPreview] = useState<{ valid: StagedTxn[]; errors: RowError[] } | null>(null);
+  const [parseWarnings, setParseWarnings] = useState<string[]>([]);
+  const [committing, setCommitting] = useState(false);
+  const [error, setError] = useState("");
   const [done, setDone] = useState("");
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -26,34 +31,46 @@ export function CsvImport() {
       complete: (res) => {
         setHeaders(res.meta.fields ?? []);
         setRows(res.data);
-        setPreview(null); setDone("");
+        setMap(EMPTY_MAP); // new file: columns differ, force re-mapping
+        setPreview(null); setDone(""); setError("");
+        setParseWarnings((res.errors ?? []).slice(0, 5).map(
+          (er) => `Row ${er.row != null ? er.row + 2 : "?"}: ${er.message}`,
+        ));
       },
     });
   }
 
   function buildPreview() {
     if (!accountId) return;
+    setDone(""); setError("");
     setPreview(rowsToTransactions(rows, map, Number(accountId)));
   }
 
   async function commit() {
-    if (!preview) return;
-    // resolve tickers → security ids
-    const resolved = [];
-    for (const t of preview.valid) {
-      let security_id = t.security_id;
-      if (t.tickerRaw) {
-        const sec = await api.securities.getOrCreate(t.tickerRaw, null, "stock");
-        security_id = sec.id;
+    if (!preview || committing) return;
+    setCommitting(true);
+    setError("");
+    try {
+      const resolved = [];
+      for (const t of preview.valid) {
+        let security_id = t.security_id;
+        if (t.tickerRaw) {
+          const sec = await api.securities.getOrCreate(t.tickerRaw, null, newType);
+          security_id = sec.id;
+        }
+        resolved.push({ account_id: t.account_id, security_id, type: t.type, date: t.date,
+          quantity: t.quantity, price: t.price, amount: t.amount, fees: t.fees, note: t.note });
       }
-      resolved.push({ account_id: t.account_id, security_id, type: t.type, date: t.date,
-        quantity: t.quantity, price: t.price, amount: t.amount, fees: t.fees, note: t.note });
+      const n = await api.transactions.createMany(resolved);
+      await qc.invalidateQueries({ queryKey: keys.transactions });
+      await qc.invalidateQueries({ queryKey: keys.securities });
+      setDone(`Imported ${n} transactions.`);
+      setPreview(null); setRows([]); setHeaders([]); setMap(EMPTY_MAP);
+    } catch (err) {
+      setError(`Import failed: ${err}. No further rows were written.`);
+    } finally {
+      setCommitting(false);
     }
-    const n = await api.transactions.createMany(resolved);
-    await qc.invalidateQueries({ queryKey: keys.transactions });
-    await qc.invalidateQueries({ queryKey: keys.securities });
-    setDone(`Imported ${n} transactions.`);
-    setPreview(null); setRows([]); setHeaders([]);
   }
 
   return (
@@ -65,8 +82,21 @@ export function CsvImport() {
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
+        <label>New tickers as
+          <select value={newType} onChange={(e) => setNewType(e.target.value)}>
+            <option value="stock">Stock</option>
+            <option value="etf">ETF</option>
+          </select>
+        </label>
         <label>CSV file<input type="file" accept=".csv" onChange={onFile} /></label>
       </div>
+
+      {parseWarnings.length > 0 && (
+        <div className="card">
+          <p className="neg">The file had parsing problems — review your data before importing:</p>
+          {parseWarnings.map((w, i) => <div key={i} className="neg">{w}</div>)}
+        </div>
+      )}
 
       {headers.length > 0 && (
         <div className="row">
@@ -95,9 +125,14 @@ export function CsvImport() {
               ))}
             </tbody>
           </table>
-          <div className="row"><button onClick={commit} disabled={preview.valid.length === 0}>Import {preview.valid.length}</button></div>
+          <div className="row">
+            <button onClick={commit} disabled={preview.valid.length === 0 || committing}>
+              {committing ? "Importing…" : `Import ${preview.valid.length}`}
+            </button>
+          </div>
         </div>
       )}
+      {error && <p className="neg">{error}</p>}
       {done && <p className="pos">{done}</p>}
     </div>
   );

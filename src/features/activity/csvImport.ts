@@ -17,7 +17,14 @@ const TYPES: TxnType[] = ["buy","sell","dividend","deposit","withdrawal","fee","
 const NEEDS_SECURITY: TxnType[] = ["buy","sell","dividend"];
 const NEEDS_QTY_PRICE: TxnType[] = ["buy","sell"];
 
-const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[$,]/g, "").trim()); return isNaN(n) ? 0 : n; };
+/** Parse a possibly-formatted number cell. Returns null for empty or
+ *  non-numeric input so callers can distinguish "absent/garbage" from 0. */
+function parseNum(v: unknown): number | null {
+  const s = String(v ?? "").replace(/[$,]/g, "").trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
 export function rowsToTransactions(
   rows: Record<string, string>[],
@@ -28,7 +35,9 @@ export function rowsToTransactions(
   const errors: RowError[] = [];
 
   rows.forEach((row, i) => {
-    const line = i + 1;
+    // rows[] are data rows only (PapaParse strips the header), so the line in
+    // the user's file is the data index + 2 (1 for the header, 1 for 1-based).
+    const line = i + 2;
     const date = (row[map.date] ?? "").trim();
     const rawType = (row[map.type] ?? "").trim().toLowerCase();
     const ticker = (row[map.ticker] ?? "").trim().toUpperCase();
@@ -38,11 +47,21 @@ export function rowsToTransactions(
     const type = rawType as TxnType;
     if (NEEDS_SECURITY.includes(type) && !ticker) { errors.push({ line, reason: `Type "${type}" needs a ticker` }); return; }
 
-    const quantity = num(row[map.quantity]);
-    const price = num(row[map.price]);
-    const fees = num(row[map.fees]);
-    let amount = num(row[map.amount]);
-    if (NEEDS_QTY_PRICE.includes(type)) amount = quantity * price;
+    const fees = parseNum(row[map.fees]) ?? 0;
+    if (fees < 0) { errors.push({ line, reason: "Fees cannot be negative" }); return; }
+
+    let quantity = 0, price = 0, amount = 0;
+    if (NEEDS_QTY_PRICE.includes(type)) {
+      const q = parseNum(row[map.quantity]);
+      const p = parseNum(row[map.price]);
+      if (q === null || !(q > 0)) { errors.push({ line, reason: `${type} needs a positive quantity` }); return; }
+      if (p === null || !(p > 0)) { errors.push({ line, reason: `${type} needs a positive price` }); return; }
+      quantity = q; price = p; amount = q * p;
+    } else {
+      const a = parseNum(row[map.amount]);
+      if (a === null || !(a > 0)) { errors.push({ line, reason: `${type} needs a positive amount` }); return; }
+      amount = a;
+    }
 
     valid.push({
       account_id: accountId, tickerRaw: NEEDS_SECURITY.includes(type) ? ticker : "",

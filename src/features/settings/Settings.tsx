@@ -16,7 +16,7 @@ export function Settings() {
             {refresh.isPending ? "Refreshing…" : "Refresh prices now"}
           </button>
           {refresh.isSuccess && <span className="pos">Updated {refresh.data} securities.</span>}
-          {refresh.isError && <span className="neg">Refresh failed — check your connection.</span>}
+          {refresh.isError && <span className="neg">Couldn't refresh prices or record today's value. Check your connection and try again.</span>}
         </div>
       </div>
       <div className="card">
