@@ -54,7 +54,7 @@ pub fn prices_set_manual(db: tauri::State<Db>, security_id: i64, date: String, c
 
 #[tauri::command]
 pub fn prices_refresh(db: tauri::State<Db>) -> Result<usize, String> {
-    crate::prices::refresh_all(&db, &crate::prices::StooqProvider)
+    crate::prices::refresh_all(&db, &crate::prices::YahooProvider)
 }
 
 #[cfg(test)]
