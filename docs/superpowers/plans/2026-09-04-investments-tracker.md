@@ -63,7 +63,7 @@ FinTech/
 │  │  ├─ activity/TransactionForm.tsx
 │  │  ├─ activity/AddPositionForm.tsx
 │  │  ├─ activity/csvImport.ts     # parse + map + validate (pure)
-│  │  ├─ activity/CsvImport.tsx    # import wizard UI
+│  │  ├─ activity/CsvImportForm.tsx    # import wizard UI
 │  │  └─ settings/Settings.tsx
 │  ├─ ui/                          # tiny shared presentational bits
 │  │  ├─ format.ts                 # money(), pct(), fmtDate()
@@ -2608,7 +2608,7 @@ git commit -m "feat(dashboard): KPIs, allocation donut, value-over-time chart"
 **Files:**
 - Create: `src/features/activity/csvImport.ts`
 - Create: `src/features/activity/csvImport.test.ts`
-- Create: `src/features/activity/CsvImport.tsx`
+- Create: `src/features/activity/CsvImportForm.tsx`
 - Modify: `src/features/activity/Activity.tsx` (add a third tab)
 
 - [ ] **Step 1: Write the failing test `src/features/activity/csvImport.test.ts`**
@@ -2706,7 +2706,7 @@ export function rowsToTransactions(
 Run: `npm test -- csvImport`
 Expected: PASS.
 
-- [ ] **Step 5: Implement `src/features/activity/CsvImport.tsx`**
+- [ ] **Step 5: Implement `src/features/activity/CsvImportForm.tsx`**
 
 ```tsx
 import { useState } from "react";
@@ -2822,7 +2822,7 @@ line to:
 ```tsx
   const [tab, setTab] = useState<"position" | "transaction" | "csv">("position");
 ```
-Add the import at the top: `import { CsvImport } from "./CsvImport";`
+Add the import at the top: `import { CsvImport } from "./CsvImportForm";`
 Add a third button in the button row:
 ```tsx
           <button className={tab === "csv" ? "" : "secondary"} onClick={() => setTab("csv")}>Import CSV</button>
