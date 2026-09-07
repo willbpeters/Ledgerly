@@ -1,0 +1,47 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, type NewAccount, type NewTransaction } from "./api";
+
+export const keys = {
+  accounts: ["accounts"] as const,
+  securities: ["securities"] as const,
+  transactions: ["transactions"] as const,
+  latest: ["prices", "latest"] as const,
+  previous: ["prices", "previous"] as const,
+  snapshots: ["snapshots"] as const,
+};
+
+export const useAccounts = () => useQuery({ queryKey: keys.accounts, queryFn: api.accounts.list });
+export const useSecurities = () => useQuery({ queryKey: keys.securities, queryFn: api.securities.list });
+export const useTransactions = () => useQuery({ queryKey: keys.transactions, queryFn: api.transactions.list });
+export const useLatestPrices = () => useQuery({ queryKey: keys.latest, queryFn: api.prices.latest });
+export const usePreviousPrices = () => useQuery({ queryKey: keys.previous, queryFn: api.prices.previous });
+export const useSnapshots = () => useQuery({ queryKey: keys.snapshots, queryFn: api.snapshots.list });
+
+export function useCreateAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: NewAccount) => api.accounts.create(a),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.accounts }),
+  });
+}
+export function useDeleteAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.accounts.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.accounts }),
+  });
+}
+export function useCreateTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (t: NewTransaction) => api.transactions.create(t),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.transactions }),
+  });
+}
+export function useDeleteTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.transactions.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.transactions }),
+  });
+}
