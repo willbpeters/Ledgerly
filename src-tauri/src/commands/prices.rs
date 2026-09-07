@@ -44,20 +44,20 @@ pub fn list_for(conn: &Connection, security_id: i64) -> rusqlite::Result<Vec<Pri
 
 #[tauri::command]
 pub fn prices_latest(db: tauri::State<Db>) -> Result<Vec<(i64, f64)>, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     latest_all(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn prices_previous(db: tauri::State<Db>) -> Result<Vec<(i64, f64)>, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     previous_all(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn prices_set_manual(db: tauri::State<Db>, security_id: i64, date: String, close: f64)
     -> Result<(), String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     upsert(&conn, security_id, &date, close, "manual").map_err(|e| e.to_string())
 }
 

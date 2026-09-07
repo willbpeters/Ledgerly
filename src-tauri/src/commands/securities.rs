@@ -30,14 +30,14 @@ fn row_to_security(r: &rusqlite::Row) -> rusqlite::Result<Security> {
 
 #[tauri::command]
 pub fn securities_list(db: tauri::State<Db>) -> Result<Vec<Security>, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     list(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn securities_get_or_create(db: tauri::State<Db>, ticker: String, name: Option<String>, kind: String)
     -> Result<Security, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     get_or_create(&conn, &ticker, name.as_deref(), &kind).map_err(|e| e.to_string())
 }
 

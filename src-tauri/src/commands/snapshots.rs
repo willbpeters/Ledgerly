@@ -19,13 +19,13 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Vec<Snapshot>> {
 
 #[tauri::command]
 pub fn snapshots_list(db: tauri::State<Db>) -> Result<Vec<Snapshot>, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     list(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn snapshots_record(db: tauri::State<Db>, date: String, total_value: f64) -> Result<(), String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     record(&conn, &date, total_value).map_err(|e| e.to_string())
 }
 

@@ -59,25 +59,25 @@ fn row_to_txn(r: &rusqlite::Row) -> rusqlite::Result<Transaction> {
 
 #[tauri::command]
 pub fn transactions_list(db: tauri::State<Db>) -> Result<Vec<Transaction>, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     list(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn transactions_create(db: tauri::State<Db>, txn: NewTransaction) -> Result<Transaction, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     create(&conn, txn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn transactions_create_many(db: tauri::State<Db>, txns: Vec<NewTransaction>) -> Result<usize, String> {
-    let mut conn = db.0.lock().unwrap();
+    let mut conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     create_many(&mut conn, txns).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn transactions_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     delete(&conn, id).map_err(|e| e.to_string())
 }
 

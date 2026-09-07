@@ -47,19 +47,19 @@ fn row_to_account(r: &rusqlite::Row) -> rusqlite::Result<Account> {
 
 #[tauri::command]
 pub fn accounts_list(db: tauri::State<Db>) -> Result<Vec<Account>, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     list(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn accounts_create(db: tauri::State<Db>, account: NewAccount) -> Result<Account, String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     create(&conn, account).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn accounts_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
-    let conn = db.0.lock().unwrap();
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     delete(&conn, id).map_err(|e| e.to_string())
 }
 
