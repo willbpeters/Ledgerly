@@ -1,5 +1,6 @@
 mod db;
 mod models;
+mod commands;
 
 use tauri::Manager;
 
@@ -14,6 +15,11 @@ pub fn run() {
             app.manage(db::Db(std::sync::Mutex::new(conn)));
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            commands::accounts::accounts_list,
+            commands::accounts::accounts_create,
+            commands::accounts::accounts_delete,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
