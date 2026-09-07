@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTransactions, useSecurities, useAccounts, useDeleteTransaction } from "../../data/queries";
 import { AddPositionForm } from "./AddPositionForm";
 import { TransactionForm } from "./TransactionForm";
+import { CsvImport } from "./CsvImportForm";
 import { money, fmtDate } from "../../ui/format";
 
 export function Activity() {
@@ -9,7 +10,7 @@ export function Activity() {
   const { data: securities = [] } = useSecurities();
   const { data: accounts = [] } = useAccounts();
   const del = useDeleteTransaction();
-  const [tab, setTab] = useState<"position" | "transaction">("position");
+  const [tab, setTab] = useState<"position" | "transaction" | "csv">("position");
 
   const secTicker = (id: number | null) => securities.find((s) => s.id === id)?.ticker ?? "—";
   const acctName = (id: number) => accounts.find((a) => a.id === id)?.name ?? `#${id}`;
@@ -21,8 +22,9 @@ export function Activity() {
         <div className="row" style={{ marginBottom: 12 }}>
           <button className={tab === "position" ? "" : "secondary"} onClick={() => setTab("position")}>Quick add position</button>
           <button className={tab === "transaction" ? "" : "secondary"} onClick={() => setTab("transaction")}>Add transaction</button>
+          <button className={tab === "csv" ? "" : "secondary"} onClick={() => setTab("csv")}>Import CSV</button>
         </div>
-        {tab === "position" ? <AddPositionForm /> : <TransactionForm />}
+        {tab === "position" ? <AddPositionForm /> : tab === "transaction" ? <TransactionForm /> : <CsvImport />}
       </div>
       <div className="card">
         {txns.length === 0 ? <p>No transactions yet.</p> : (
