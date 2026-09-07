@@ -28,7 +28,12 @@ export function useDeleteAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.accounts.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.accounts }),
+    // Deleting an account cascades to its transactions in the DB, so the
+    // transaction-derived views (Holdings/Dashboard/Activity) must refetch too.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.accounts });
+      qc.invalidateQueries({ queryKey: keys.transactions });
+    },
   });
 }
 export function useCreateTransaction() {

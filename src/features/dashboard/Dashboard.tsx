@@ -7,7 +7,7 @@ import { money, pct } from "../../ui/format";
 const COLORS = ["#4f46e5", "#16a34a", "#f59e0b", "#db2777", "#0891b2", "#7c3aed"];
 
 export function Dashboard() {
-  const { summary, allocationType, isLoading } = usePortfolio();
+  const { summary, allocationType, allocationAccount, isLoading } = usePortfolio();
   const { data: snapshots = [] } = useSnapshots();
   const series = toValueSeries(snapshots);
   if (isLoading) return <p>Loading…</p>;
@@ -42,7 +42,7 @@ export function Dashboard() {
           )}
         </div>
         <div className="card">
-          <div style={{ fontSize: 12, color: "var(--mut)", marginBottom: 8 }}>Allocation</div>
+          <div style={{ fontSize: 12, color: "var(--mut)", marginBottom: 8 }}>Allocation by type</div>
           {allocationType.length === 0 ? <p style={{ color: "var(--mut)" }}>No holdings yet.</p> : (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
@@ -54,6 +54,19 @@ export function Dashboard() {
             </ResponsiveContainer>
           )}
         </div>
+      </div>
+      <div className="card">
+        <div style={{ fontSize: 12, color: "var(--mut)", marginBottom: 8 }}>Allocation by account</div>
+        {allocationAccount.length === 0 ? <p style={{ color: "var(--mut)" }}>No accounts with value yet.</p> : (
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie data={allocationAccount} dataKey="value" nameKey="label" innerRadius={50} outerRadius={80}>
+                {allocationAccount.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              </Pie>
+              <Tooltip formatter={(v) => money(Number(v))} />
+            </PieChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );

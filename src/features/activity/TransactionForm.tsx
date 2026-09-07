@@ -23,9 +23,11 @@ export function TransactionForm() {
   const [amount, setAmount] = useState("");
   const [fees, setFees] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setError("");
     const acct = Number(accountId);
     if (!acct) { setError("Pick an account."); return; }
@@ -38,11 +40,12 @@ export function TransactionForm() {
     } else if (!(amt > 0)) {
       setError("Enter a positive amount."); return;
     }
+    if (NEEDS_SECURITY.includes(type) && !ticker.trim()) { setError("This type needs a ticker."); return; }
 
+    setBusy(true);
     try {
       let security_id: number | null = null;
       if (NEEDS_SECURITY.includes(type)) {
-        if (!ticker.trim()) { setError("This type needs a ticker."); return; }
         const sec = await api.securities.getOrCreate(ticker.trim(), null, "stock");
         await qc.invalidateQueries({ queryKey: keys.securities });
         security_id = sec.id;
@@ -51,9 +54,12 @@ export function TransactionForm() {
         account_id: acct, security_id, type, date,
         quantity: qty, price: pr, amount: amt, fees: fee, note: null,
       };
-      createTxn.mutate(txn, { onSuccess: () => { setQuantity(""); setPrice(""); setAmount(""); setFees(""); } });
+      await createTxn.mutateAsync(txn);
+      setQuantity(""); setPrice(""); setAmount(""); setFees("");
     } catch (err) {
       setError(`Could not save transaction: ${err}`);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -90,7 +96,7 @@ export function TransactionForm() {
       ) : (
         <label>Amount<input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></label>
       )}
-      <button type="submit">Add</button>
+      <button type="submit" disabled={busy}>{busy ? "Adding…" : "Add"}</button>
       {error && <span className="neg">{error}</span>}
     </form>
   );

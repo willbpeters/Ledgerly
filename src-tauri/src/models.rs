@@ -59,14 +59,6 @@ pub struct NewTransaction {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Price {
-    pub security_id: i64,
-    pub date: String,
-    pub close: f64,
-    pub source: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
 pub struct Snapshot {
     pub date: String,
     pub total_value: f64,

@@ -16,6 +16,7 @@ pub fn open(path: &std::path::Path) -> rusqlite::Result<Connection> {
 }
 
 /// Open an in-memory database (used by tests).
+#[cfg(test)]
 pub fn open_in_memory() -> rusqlite::Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;

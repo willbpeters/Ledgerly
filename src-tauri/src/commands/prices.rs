@@ -1,5 +1,4 @@
 use crate::db::Db;
-use crate::models::Price;
 use rusqlite::Connection;
 
 pub fn upsert(conn: &Connection, security_id: i64, date: &str, close: f64, source: &str)
@@ -31,14 +30,6 @@ pub fn previous_all(conn: &Connection) -> rusqlite::Result<Vec<(i64, f64)>> {
             FROM prices)
          WHERE rn = 2")?;
     let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-    rows.collect()
-}
-
-pub fn list_for(conn: &Connection, security_id: i64) -> rusqlite::Result<Vec<Price>> {
-    let mut stmt = conn.prepare(
-        "SELECT security_id,date,close,source FROM prices WHERE security_id=?1 ORDER BY date DESC")?;
-    let rows = stmt.query_map([security_id], |r| Ok(Price {
-        security_id: r.get(0)?, date: r.get(1)?, close: r.get(2)?, source: r.get(3)? }))?;
     rows.collect()
 }
 

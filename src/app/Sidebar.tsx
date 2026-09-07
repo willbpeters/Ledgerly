@@ -10,7 +10,7 @@ const links = [
 export function Sidebar() {
   return (
     <nav className="sidebar">
-      <div className="brand">◆ MyFinance</div>
+      <div className="brand">◆ Ledgerly</div>
       {links.map((l) => (
         <NavLink key={l.to} to={l.to} end={l.end}
           className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
