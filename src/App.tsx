@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { usePriceAutoRefresh } from "./data/usePriceAutoRefresh";
 import { AppShell } from "./app/AppShell";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Holdings } from "./features/holdings/Holdings";
@@ -22,9 +23,15 @@ const router = createBrowserRouter([
   },
 ]);
 
+function AutoRefresh() {
+  usePriceAutoRefresh();
+  return null;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <AutoRefresh />
       <RouterProvider router={router} />
     </QueryClientProvider>
   );
