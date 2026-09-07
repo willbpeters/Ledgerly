@@ -9,8 +9,8 @@ export function usePortfolio() {
   const { data: txns = [], isLoading: l1 } = useTransactions();
   const { data: securities = [], isLoading: l2 } = useSecurities();
   const { data: accounts = [], isLoading: l3 } = useAccounts();
-  const { data: latest = [] } = useLatestPrices();
-  const { data: previous = [] } = usePreviousPrices();
+  const { data: latest = [], isLoading: l4 } = useLatestPrices();
+  const { data: previous = [], isLoading: l5 } = usePreviousPrices();
 
   return useMemo(() => {
     const latestMap = new Map<number, number>(latest);
@@ -25,7 +25,7 @@ export function usePortfolio() {
       allocationType: allocationByType(holdings, cash),
       allocationAccount: allocationByAccount(acctValues, accounts),
       accountValues: acctValues, accounts,
-      isLoading: l1 || l2 || l3,
+      isLoading: l1 || l2 || l3 || l4 || l5,
     };
-  }, [txns, securities, accounts, latest, previous, l1, l2, l3]);
+  }, [txns, securities, accounts, latest, previous, l1, l2, l3, l4, l5]);
 }

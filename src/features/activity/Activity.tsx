@@ -35,7 +35,9 @@ export function Activity() {
                   <td>{secTicker(t.security_id)}</td>
                   <td>{t.quantity || "—"}</td><td>{t.price ? money(t.price) : "—"}</td>
                   <td>{money(t.amount)}</td>
-                  <td><button className="secondary" onClick={() => del.mutate(t.id)}>Delete</button></td>
+                  <td><button className="secondary" onClick={() => {
+                    if (confirm("Delete this transaction? Holdings and balances will recompute.")) del.mutate(t.id);
+                  }}>Delete</button></td>
                 </tr>
               ))}
             </tbody>

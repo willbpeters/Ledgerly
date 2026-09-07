@@ -2,8 +2,10 @@ import { usePortfolio } from "../../data/usePortfolio";
 import { money, pct } from "../../ui/format";
 
 export function Holdings() {
-  const { holdings, isLoading } = usePortfolio();
+  const { holdings, summary, isLoading } = usePortfolio();
   if (isLoading) return <p>Loading…</p>;
+
+  const totalValue = summary.totalValue;
 
   return (
     <div className="grid" style={{ gap: 16 }}>
@@ -13,7 +15,7 @@ export function Holdings() {
           <table>
             <thead><tr>
               <th>Ticker</th><th>Shares</th><th>Avg cost</th><th>Last</th>
-              <th>Market value</th><th>Unrealized</th><th>%</th>
+              <th>Market value</th><th>Unrealized</th><th>Return %</th><th>% of port.</th>
             </tr></thead>
             <tbody>
               {holdings.map((h) => (
@@ -25,6 +27,7 @@ export function Holdings() {
                   <td>{money(h.marketValue)}</td>
                   <td className={h.unrealized >= 0 ? "pos" : "neg"}>{money(h.unrealized)}</td>
                   <td className={h.unrealizedPct >= 0 ? "pos" : "neg"}>{pct(h.unrealizedPct)}</td>
+                  <td>{totalValue > 0 ? (h.marketValue / totalValue * 100).toFixed(1) + "%" : "—"}</td>
                 </tr>
               ))}
             </tbody>
