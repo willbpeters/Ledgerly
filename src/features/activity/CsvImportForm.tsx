@@ -1,6 +1,5 @@
 import { useState } from "react";
 import Papa from "papaparse";
-import { useAccounts } from "../../data/queries";
 import { api } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
@@ -10,10 +9,8 @@ import { money } from "../../ui/format";
 const FIELDS: (keyof ColumnMap)[] = ["date","type","ticker","quantity","price","amount","fees"];
 const EMPTY_MAP: ColumnMap = { date:"",type:"",ticker:"",quantity:"",price:"",amount:"",fees:"" };
 
-export function CsvImport() {
-  const { data: accounts = [] } = useAccounts();
+export function CsvImport({ accountId }: { accountId: number }) {
   const qc = useQueryClient();
-  const [accountId, setAccountId] = useState<number | "">("");
   const [newType, setNewType] = useState("stock");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, string>[]>([]);
@@ -41,9 +38,8 @@ export function CsvImport() {
   }
 
   function buildPreview() {
-    if (!accountId) return;
     setDone(""); setError("");
-    setPreview(rowsToTransactions(rows, map, Number(accountId)));
+    setPreview(rowsToTransactions(rows, map, accountId));
   }
 
   async function commit() {
@@ -76,12 +72,6 @@ export function CsvImport() {
   return (
     <div className="grid" style={{ gap: 12 }}>
       <div className="row">
-        <label>Into account
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
-            <option value="">Select…</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </label>
         <label>New tickers as
           <select value={newType} onChange={(e) => setNewType(e.target.value)}>
             <option value="stock">Stock</option>
@@ -108,7 +98,7 @@ export function CsvImport() {
               </select>
             </label>
           ))}
-          <button onClick={buildPreview} disabled={!accountId || !map.date || !map.type}>Preview</button>
+          <button onClick={buildPreview} disabled={!map.date || !map.type}>Preview</button>
         </div>
       )}
 

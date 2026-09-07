@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAccounts, useSecurities, useCreateTransaction } from "../../data/queries";
+import { useSecurities, useCreateTransaction } from "../../data/queries";
 import { api, type NewTransaction } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
@@ -8,13 +8,11 @@ import type { TxnType } from "../../domain/types";
 const NEEDS_SECURITY: TxnType[] = ["buy", "sell", "dividend"];
 const NEEDS_QTY_PRICE: TxnType[] = ["buy", "sell"];
 
-export function TransactionForm() {
-  const { data: accounts = [] } = useAccounts();
+export function TransactionForm({ accountId }: { accountId: number }) {
   const { data: securities = [] } = useSecurities();
   const createTxn = useCreateTransaction();
   const qc = useQueryClient();
 
-  const [accountId, setAccountId] = useState<number | "">("");
   const [type, setType] = useState<TxnType>("buy");
   const [ticker, setTicker] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -29,8 +27,6 @@ export function TransactionForm() {
     e.preventDefault();
     if (busy) return;
     setError("");
-    const acct = Number(accountId);
-    if (!acct) { setError("Pick an account."); return; }
 
     const qty = Number(quantity) || 0, pr = Number(price) || 0, fee = Number(fees) || 0;
     let amt = Number(amount) || 0;
@@ -51,7 +47,7 @@ export function TransactionForm() {
         security_id = sec.id;
       }
       const txn: NewTransaction = {
-        account_id: acct, security_id, type, date,
+        account_id: accountId, security_id, type, date,
         quantity: qty, price: pr, amount: amt, fees: fee, note: null,
       };
       await createTxn.mutateAsync(txn);
@@ -68,12 +64,6 @@ export function TransactionForm() {
 
   return (
     <form className="row" onSubmit={submit}>
-      <label>Account
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
-          <option value="">Select…</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-      </label>
       <label>Type
         <select value={type} onChange={(e) => setType(e.target.value as TxnType)}>
           {["buy","sell","dividend","deposit","withdrawal","fee","interest"].map((t) =>

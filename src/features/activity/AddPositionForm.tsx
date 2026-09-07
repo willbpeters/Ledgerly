@@ -1,14 +1,12 @@
 import { useState } from "react";
-import { useAccounts, useCreateTransaction } from "../../data/queries";
+import { useCreateTransaction } from "../../data/queries";
 import { api } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
 
-export function AddPositionForm() {
-  const { data: accounts = [] } = useAccounts();
+export function AddPositionForm({ accountId }: { accountId: number }) {
   const createTxn = useCreateTransaction();
   const qc = useQueryClient();
-  const [accountId, setAccountId] = useState<number | "">("");
   const [ticker, setTicker] = useState("");
   const [kind, setKind] = useState("stock");
   const [shares, setShares] = useState("");
@@ -21,16 +19,16 @@ export function AddPositionForm() {
     e.preventDefault();
     if (busy) return;
     setError("");
-    const acct = Number(accountId), qty = Number(shares), price = Number(avgCost);
-    if (!acct || !ticker.trim() || !(qty > 0) || !(price >= 0)) {
-      setError("Fill account, ticker, positive shares, and cost."); return;
+    const qty = Number(shares), price = Number(avgCost);
+    if (!ticker.trim() || !(qty > 0) || !(price >= 0)) {
+      setError("Fill ticker, positive shares, and cost."); return;
     }
     setBusy(true);
     try {
       const sec = await api.securities.getOrCreate(ticker.trim(), null, kind);
       await qc.invalidateQueries({ queryKey: keys.securities });
       await createTxn.mutateAsync(
-        { account_id: acct, security_id: sec.id, type: "buy", date,
+        { account_id: accountId, security_id: sec.id, type: "buy", date,
           quantity: qty, price, amount: qty * price, fees: 0, note: "Quick add" },
       );
       setTicker(""); setShares(""); setAvgCost("");
@@ -43,12 +41,6 @@ export function AddPositionForm() {
 
   return (
     <form className="row" onSubmit={submit}>
-      <label>Account
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
-          <option value="">Select…</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-      </label>
       <label>Ticker<input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="VOO" /></label>
       <label>Type
         <select value={kind} onChange={(e) => setKind(e.target.value)}>
