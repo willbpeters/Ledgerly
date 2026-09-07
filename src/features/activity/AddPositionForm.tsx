@@ -23,13 +23,17 @@ export function AddPositionForm() {
     if (!acct || !ticker.trim() || !(qty > 0) || !(price >= 0)) {
       setError("Fill account, ticker, positive shares, and cost."); return;
     }
-    const sec = await api.securities.getOrCreate(ticker.trim(), null, kind);
-    await qc.invalidateQueries({ queryKey: keys.securities });
-    createTxn.mutate(
-      { account_id: acct, security_id: sec.id, type: "buy", date,
-        quantity: qty, price, amount: qty * price, fees: 0, note: "Quick add" },
-      { onSuccess: () => { setTicker(""); setShares(""); setAvgCost(""); } },
-    );
+    try {
+      const sec = await api.securities.getOrCreate(ticker.trim(), null, kind);
+      await qc.invalidateQueries({ queryKey: keys.securities });
+      createTxn.mutate(
+        { account_id: acct, security_id: sec.id, type: "buy", date,
+          quantity: qty, price, amount: qty * price, fees: 0, note: "Quick add" },
+        { onSuccess: () => { setTicker(""); setShares(""); setAvgCost(""); } },
+      );
+    } catch (err) {
+      setError(`Could not add position: ${err}`);
+    }
   }
 
   return (

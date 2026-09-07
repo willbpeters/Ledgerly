@@ -30,22 +30,31 @@ export function TransactionForm() {
     const acct = Number(accountId);
     if (!acct) { setError("Pick an account."); return; }
 
-    let security_id: number | null = null;
-    if (NEEDS_SECURITY.includes(type)) {
-      if (!ticker.trim()) { setError("This type needs a ticker."); return; }
-      const sec = await api.securities.getOrCreate(ticker.trim(), null, "stock");
-      await qc.invalidateQueries({ queryKey: keys.securities });
-      security_id = sec.id;
-    }
     const qty = Number(quantity) || 0, pr = Number(price) || 0, fee = Number(fees) || 0;
     let amt = Number(amount) || 0;
-    if (NEEDS_QTY_PRICE.includes(type)) amt = qty * pr;
+    if (NEEDS_QTY_PRICE.includes(type)) {
+      if (!(qty > 0) || !(pr > 0)) { setError("Enter a positive quantity and price."); return; }
+      amt = qty * pr;
+    } else if (!(amt > 0)) {
+      setError("Enter a positive amount."); return;
+    }
 
-    const txn: NewTransaction = {
-      account_id: acct, security_id, type, date,
-      quantity: qty, price: pr, amount: amt, fees: fee, note: null,
-    };
-    createTxn.mutate(txn, { onSuccess: () => { setQuantity(""); setPrice(""); setAmount(""); setFees(""); } });
+    try {
+      let security_id: number | null = null;
+      if (NEEDS_SECURITY.includes(type)) {
+        if (!ticker.trim()) { setError("This type needs a ticker."); return; }
+        const sec = await api.securities.getOrCreate(ticker.trim(), null, "stock");
+        await qc.invalidateQueries({ queryKey: keys.securities });
+        security_id = sec.id;
+      }
+      const txn: NewTransaction = {
+        account_id: acct, security_id, type, date,
+        quantity: qty, price: pr, amount: amt, fees: fee, note: null,
+      };
+      createTxn.mutate(txn, { onSuccess: () => { setQuantity(""); setPrice(""); setAmount(""); setFees(""); } });
+    } catch (err) {
+      setError(`Could not save transaction: ${err}`);
+    }
   }
 
   const showSec = NEEDS_SECURITY.includes(type);

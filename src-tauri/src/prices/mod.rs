@@ -27,7 +27,7 @@ impl PriceProvider for StooqProvider {
 /// run because one ticker errored.
 pub fn refresh_all(db: &Db, provider: &dyn PriceProvider) -> Result<usize, String> {
     let tickers: Vec<(i64, String)> = {
-        let conn = db.0.lock().unwrap();
+        let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare("SELECT id, ticker FROM securities").map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?;
@@ -38,7 +38,7 @@ pub fn refresh_all(db: &Db, provider: &dyn PriceProvider) -> Result<usize, Strin
     for (sid, ticker) in tickers {
         match provider.recent(&ticker) {
             Ok(rows) if !rows.is_empty() => {
-                let conn = db.0.lock().unwrap();
+                let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
                 for (date, close) in rows.iter().rev().take(2) {
                     let _ = upsert(&conn, sid, date, *close, provider.name());
                 }
