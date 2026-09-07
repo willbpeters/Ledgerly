@@ -1,6 +1,7 @@
 mod db;
 mod models;
 mod commands;
+mod prices;
 
 use tauri::Manager;
 
@@ -28,6 +29,7 @@ pub fn run() {
             commands::prices::prices_latest,
             commands::prices::prices_previous,
             commands::prices::prices_set_manual,
+            commands::prices::prices_refresh,
             commands::snapshots::snapshots_list,
             commands::snapshots::snapshots_record,
         ])

@@ -61,6 +61,11 @@ pub fn prices_set_manual(db: tauri::State<Db>, security_id: i64, date: String, c
     upsert(&conn, security_id, &date, close, "manual").map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn prices_refresh(db: tauri::State<Db>) -> Result<usize, String> {
+    crate::prices::refresh_all(&db, &crate::prices::StooqProvider)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
