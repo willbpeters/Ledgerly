@@ -19,6 +19,12 @@ pub fn run() {
             commands::accounts::accounts_list,
             commands::accounts::accounts_create,
             commands::accounts::accounts_delete,
+            commands::securities::securities_list,
+            commands::securities::securities_get_or_create,
+            commands::transactions::transactions_list,
+            commands::transactions::transactions_create,
+            commands::transactions::transactions_create_many,
+            commands::transactions::transactions_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
