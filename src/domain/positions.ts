@@ -28,12 +28,18 @@ export function buildPositions(
       cur.shares += t.quantity;
       cur.cost += t.quantity * t.price + t.fees;
     } else {
+      // Sell: match only against shares actually held. A sell of more than is
+      // held realizes the held portion and ignores the excess (assumed a data
+      // entry error); a sell with nothing to match is ignored entirely — no
+      // phantom realized loss. Both are deliberate, tested policies.
       const avg = cur.shares > 0 ? cur.cost / cur.shares : 0;
       const qty = Math.min(t.quantity, cur.shares);
-      cur.realized += qty * t.price - t.fees - avg * qty;
-      cur.shares -= qty;
-      cur.cost -= avg * qty;
-      if (cur.shares <= 1e-9) { cur.shares = 0; cur.cost = 0; }
+      if (qty > 0) {
+        cur.realized += qty * t.price - t.fees - avg * qty;
+        cur.shares -= qty;
+        cur.cost -= avg * qty;
+        if (cur.shares <= 1e-9) { cur.shares = 0; cur.cost = 0; }
+      }
     }
     acc.set(k, cur);
   }

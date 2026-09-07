@@ -10,14 +10,21 @@ export function buildSummary(
   const unrealized = holdings.reduce((s, h) => s + h.unrealized, 0);
   const realized = holdings.reduce((s, h) => s + h.realized, 0);
 
+  // Day change reflects only holdings with a real previous close. For the
+  // baseline (denominator) every holding contributes its prior value, falling
+  // back to its current price when no previous close is known — so a holding
+  // without prior data counts as "no change" on both sides and never skews the
+  // percentage.
   let dayChange = 0;
   let priorInvested = 0;
   let hasPrev = false;
   for (const h of holdings) {
-    const prev = previousPrices.get(h.security_id);
-    if (prev == null) continue;
-    hasPrev = true;
-    dayChange += h.shares * (h.lastPrice - prev);
+    const prevReal = previousPrices.get(h.security_id);
+    const prev = prevReal ?? h.lastPrice;
+    if (prevReal != null) {
+      hasPrev = true;
+      dayChange += h.shares * (h.lastPrice - prevReal);
+    }
     priorInvested += h.shares * prev;
   }
   const priorTotal = priorInvested + cash;

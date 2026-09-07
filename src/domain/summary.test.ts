@@ -29,4 +29,17 @@ describe("buildSummary", () => {
     expect(s.dayChange).toBe(0);
     expect(s.dayChangePct).toBe(0);
   });
+
+  it("keeps a consistent baseline when only some holdings have a previous price", () => {
+    const holdings = [
+      h({ security_id: 1, shares: 10, lastPrice: 130, marketValue: 1300 }), // has prev
+      h({ security_id: 2, shares: 5, lastPrice: 200, marketValue: 1000 }),  // no prev
+    ];
+    const prev = new Map([[1, 125]]);
+    const s = buildSummary(holdings, 0, prev);
+    // dayChange only from holding 1: 10*(130-125)=50
+    expect(s.dayChange).toBe(50);
+    // baseline includes holding 2 at its current price (1000), so 1250+1000=2250
+    expect(s.dayChangePct).toBeCloseTo((50 / 2250) * 100, 6);
+  });
 });

@@ -44,6 +44,35 @@ describe("buildPositions (average cost)", () => {
     expect(pos[0].shares).toBe(0);
     expect(pos[0].realized).toBe(150);
   });
+
+  it("clamps an oversell to shares held and realizes only the matched portion", () => {
+    // buy 5, then sell 10: only 5 shares can be realized; excess ignored.
+    const txns = [
+      txn({ type: "buy", quantity: 5, price: 100 }),
+      txn({ type: "sell", quantity: 10, price: 130, fees: 1 }),
+    ];
+    const pos = buildPositions(txns, new Map([[10, 130]]));
+    expect(pos[0].shares).toBe(0);
+    expect(pos[0].realized).toBe(149); // 5*130 - 1 fee - 5*100
+  });
+
+  it("ignores a sell with no shares held (no phantom realized loss)", () => {
+    const txns = [txn({ type: "sell", quantity: 5, price: 130, fees: 1 })];
+    const pos = buildPositions(txns, new Map([[10, 130]]));
+    expect(pos[0].shares).toBe(0);
+    expect(pos[0].realized).toBe(0);
+  });
+
+  it("orders same-date transactions by id, not array order", () => {
+    // Sell appears first in the array but has the later id, so the buy is
+    // folded first and the sell matches against it.
+    const txns = [
+      txn({ id: 2, type: "sell", date: "2026-01-01", quantity: 10, price: 100 }),
+      txn({ id: 1, type: "buy", date: "2026-01-01", quantity: 10, price: 100 }),
+    ];
+    const pos = buildPositions(txns, new Map([[10, 100]]));
+    expect(pos[0].shares).toBe(0); // buy(10) then sell(10) → flat
+  });
 });
 
 describe("aggregateHoldings", () => {
