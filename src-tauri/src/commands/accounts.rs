@@ -13,18 +13,18 @@ pub fn create(conn: &Connection, a: NewAccount) -> rusqlite::Result<Account> {
     get(conn, id)
 }
 
+const COLS: &str = "id,name,type,institution,currency,created_at,source,external_id,synced_balance,last_synced_at";
+
 pub fn get(conn: &Connection, id: i64) -> rusqlite::Result<Account> {
     conn.query_row(
-        "SELECT id,name,type,institution,currency,created_at FROM accounts WHERE id=?1",
+        &format!("SELECT {COLS} FROM accounts WHERE id=?1"),
         [id],
         row_to_account,
     )
 }
 
 pub fn list(conn: &Connection) -> rusqlite::Result<Vec<Account>> {
-    let mut stmt = conn.prepare(
-        "SELECT id,name,type,institution,currency,created_at FROM accounts ORDER BY name",
-    )?;
+    let mut stmt = conn.prepare(&format!("SELECT {COLS} FROM accounts ORDER BY name"))?;
     let rows = stmt.query_map([], row_to_account)?;
     rows.collect()
 }
@@ -42,6 +42,10 @@ fn row_to_account(r: &rusqlite::Row) -> rusqlite::Result<Account> {
         institution: r.get(3)?,
         currency: r.get(4)?,
         created_at: r.get(5)?,
+        source: r.get(6)?,
+        external_id: r.get(7)?,
+        synced_balance: r.get(8)?,
+        last_synced_at: r.get(9)?,
     })
 }
 
@@ -76,5 +80,7 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name, "Brokerage");
         assert_eq!(all[0].currency, "USD");
+        assert_eq!(all[0].source, "manual");
+        assert!(all[0].external_id.is_none());
     }
 }
