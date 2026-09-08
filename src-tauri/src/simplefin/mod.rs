@@ -6,4 +6,4 @@ pub mod client;
 pub mod sync;
 
 pub use parse::{SfAccount, SfAccountSet, SfHolding};
-// pub use sync::SyncReport; // restored in Task 5
+pub use sync::SyncReport;
