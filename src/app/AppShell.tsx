@@ -5,7 +5,7 @@ export function AppShell() {
   return (
     <div className="layout">
       <Sidebar />
-      <main className="main"><Outlet /></main>
+      <main className="main"><div className="page"><Outlet /></div></main>
     </div>
   );
 }
