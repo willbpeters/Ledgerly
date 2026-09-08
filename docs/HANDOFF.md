@@ -12,20 +12,26 @@ app is free to run and uses no paid services.
 
 **Stack:** Tauri v2 + React 19 + TypeScript + Vite + SQLite (rusqlite).
 
-## Current state: v1 investments + UI redesign + SimpleFIN sync
+## Current state: investments, SimpleFIN sync, and the command-rail UI
 
-The v1 investments module (22 tasks) shipped to `master`. Phase 2 — the light/dark
-UI redesign and SimpleFIN balance/holdings sync — was built on
-`feat/ui-simplefin` from the 2026-09-07 spec and plan.
+The v1 investments module (22 tasks) shipped to `master`. Phase 2 added SimpleFIN
+balance and holdings sync plus a themed component kit. Phase 3 replaced the shell
+and palette with the "command rail" direction on warm off-white, chosen by the
+owner from four mockups.
 
-- **Tests:** 45 TypeScript (Vitest) + 34 Rust (`cargo test`), plus 2 network
-  tests marked `#[ignore]` that hit SimpleFIN's public demo — all passing.
+- **Tests:** 54 TypeScript (Vitest) + 34 Rust (`cargo test`), plus 3 tests marked
+  `#[ignore]` that touch the network or the OS credential store — all passing.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
 
 ### What's built
-- **App shell**: left sidebar — Dashboard, Holdings, Accounts, Activity,
-  Settings ("Budget" shown as *coming soon*).
+- **App shell** (the "command rail" design, chosen from four mockups): a 64px
+  **icon rail** on the left, a **command bar** across the top carrying the
+  screen name, a Ctrl-K search that jumps to filtered Holdings, sync status and
+  the Sync button, and a 322px **insight rail** on the right with tabs for
+  recent Activity, today's Movers and Accounts, plus a "needs attention" block.
+  The right rail is collapsible from the command bar (remembered in
+  `localStorage`) and hides itself under 1180px.
 - **Accounts**: create/list/delete, types `brokerage` and `cash`.
 - **Activity**: an **account context selector at the top** — the entry forms and
   the transaction list below all operate on the selected account. Three tabs:
@@ -33,23 +39,28 @@ UI redesign and SimpleFIN balance/holdings sync — was built on
   (file → column mapping → preview → commit).
 - **Holdings**: overall table, a **per-account breakdown** below it, and a **⚙
   column picker** (persisted to localStorage).
-- **Dashboard**: hero total with day-change chip, four stat cards, a
-  value-over-time area chart, and allocation donuts with legends.
+- **Dashboard**: a serif net-worth figure with today, all-time and cash beside
+  it; a value-over-time area chart with a 1M/3M/1Y/All range picker whose Y axis
+  zooms to the data rather than anchoring at zero; and a positions table.
 - **Prices**: keyless Yahoo Finance provider; **auto-refresh** ~5s during US
   market hours and every 15 min outside them; manual refresh in Settings;
   daily portfolio snapshots feed the chart.
 - **Domain layer** (pure TypeScript, heavily tested): average-cost basis,
   realized/unrealized gains, positions → holdings aggregation, portfolio
   summary with day change, allocation, value series.
-- **Theme**: light / dark / follow-Windows, chosen from the sidebar footer or
-  Settings and remembered in `localStorage` under `ledgerly.theme`. Colours are
-  CSS variables on `:root` and `:root[data-theme="dark"]`; charts read the same
+- **Theme**: warm off-white paper by default, with dark and follow-Windows in
+  Settings, remembered in `localStorage` under `ledgerly.theme`. Colours are CSS
+  variables on `:root` and `:root[data-theme="dark"]`; charts read the same
   tokens so they re-theme too.
+- **Type**: Instrument Sans for the interface, Newsreader for the headline
+  figure, both **bundled as woff2** in `src/assets/fonts` and declared with
+  `@font-face` in `styles.css`. They are deliberately not loaded from Google so
+  the app looks right with no network.
 - **Shared UI kit** (`src/ui/`): PageHeader, Card, StatCard, Button, Badge,
   EmptyState, DataTable, Tabs, Field, Segmented, ThemeToggle, toasts. Screens
   are built from these, so restyling happens in one place.
 - **SimpleFIN sync**: connect in Settings by pasting a setup token *or* an
-  access URL, then sync from Settings or the sidebar button. Pulls account
+  access URL, then sync from Settings or the command bar. Pulls account
   balances and, where the institution provides them, holdings. Synced accounts
   show a badge and last-synced time in Accounts, and their manual entry forms
   are disabled in Activity.
@@ -139,6 +150,9 @@ being bolted on ad hoc. Suggested order:
 
 ## Reference documents
 
+- **Design canvas:** the four dashboard directions and the type study live in
+  `design/ledgerly-dashboard/` as `.dc.html` sources; the 2.5MB seeded canvas is
+  git-ignored and rebuilt from them.
 - **Design specs:** `docs/superpowers/specs/2026-09-04-investments-tracker-design.md`
   and `docs/superpowers/specs/2026-09-07-ui-redesign-and-simplefin-design.md`
 - **Original implementation plan (fully executed):**
