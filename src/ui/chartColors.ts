@@ -7,8 +7,8 @@ export interface ChartColors {
 }
 
 const FALLBACK: ChartColors = {
-  series: ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6"],
-  grid: "#e5e8ef", text: "#64748b", accent: "#4f46e5", pos: "#15803d", neg: "#b91c1c",
+  series: ["#0f6b4f", "#b45309", "#0e7490", "#9d174d", "#4d7c0f", "#475569"],
+  grid: "#eae5da", text: "#857f73", accent: "#0f6b4f", pos: "#15803d", neg: "#b3261e",
 };
 
 /** Read the chart tokens currently in force on <html>. */

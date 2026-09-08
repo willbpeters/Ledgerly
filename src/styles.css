@@ -29,13 +29,15 @@
   --line: #e2ddd1;
   --line-2: #d2cdc0;
   --line-soft: #f0ece3;
-  --accent: #4338ca;
+  /* Pine for the brand, a lighter grass green for gains: both read as green,
+     but they never sit in the same role, so a gain still stands out. */
+  --accent: #0f6b4f;
   --accent-ink: #fffdf9;
-  --accent-soft: #e7e4f7;
+  --accent-soft: #dceee6;
   --pos: #15803d;
   --pos-soft: #dcf3e4;
-  --neg: #b91c1c;
-  --neg-soft: #fbe4e4;
+  --neg: #b3261e;
+  --neg-soft: #fbe4e2;
   --warn: #92400e;
   --warn-soft: #fdf6e3;
   --warn-line: #ecdcae;
@@ -43,12 +45,12 @@
   --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(28, 26, 23, .04);
   --shadow-pop: 0 8px 24px rgba(28, 26, 23, .12);
-  --chart-1: #4338ca;
-  --chart-2: #0e7490;
-  --chart-3: #15803d;
-  --chart-4: #b45309;
-  --chart-5: #9d174d;
-  --chart-6: #6d28d9;
+  --chart-1: #0f6b4f;
+  --chart-2: #b45309;
+  --chart-3: #0e7490;
+  --chart-4: #9d174d;
+  --chart-5: #4d7c0f;
+  --chart-6: #475569;
   --chart-grid: #eae5da;
 }
 :root[data-theme="dark"] {
@@ -62,11 +64,11 @@
   --line: #2b2825;
   --line-2: #3a3631;
   --line-soft: #211f1c;
-  --accent: #a5b4fc;
+  --accent: #34d399;
   --accent-ink: #131211;
-  --accent-soft: rgba(165, 180, 252, .15);
-  --pos: #4ade80;
-  --pos-soft: rgba(74, 222, 128, .15);
+  --accent-soft: rgba(52, 211, 153, .15);
+  --pos: #6ee7a5;
+  --pos-soft: rgba(110, 231, 165, .15);
   --neg: #f87171;
   --neg-soft: rgba(248, 113, 113, .15);
   --warn: #fbbf24;
@@ -74,12 +76,12 @@
   --warn-line: rgba(251, 191, 36, .28);
   --shadow: 0 1px 2px rgba(0, 0, 0, .4);
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, .45);
-  --chart-1: #a5b4fc;
-  --chart-2: #5eead4;
-  --chart-3: #4ade80;
-  --chart-4: #fbbf24;
-  --chart-5: #f9a8d4;
-  --chart-6: #c4b5fd;
+  --chart-1: #34d399;
+  --chart-2: #fbbf24;
+  --chart-3: #5eead4;
+  --chart-4: #f9a8d4;
+  --chart-5: #a3e635;
+  --chart-6: #94a3b8;
   --chart-grid: #2b2825;
 }
 
