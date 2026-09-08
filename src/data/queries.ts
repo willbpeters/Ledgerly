@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type NewAccount, type NewTransaction } from "./api";
+import { writeLastSync, clearLastSync } from "./lastSync";
 
 export const keys = {
   accounts: ["accounts"] as const,
@@ -29,16 +30,25 @@ function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
 }
 export function useSimplefinConnect() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (token: string) => api.simplefin.connect(token), onSettled: () => invalidateAfterSync(qc) });
+  return useMutation({
+    mutationFn: (token: string) => api.simplefin.connect(token),
+    onSuccess: writeLastSync,
+    onSettled: () => invalidateAfterSync(qc),
+  });
 }
 export function useSimplefinSync() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: () => api.simplefin.sync(), onSettled: () => invalidateAfterSync(qc) });
+  return useMutation({
+    mutationFn: () => api.simplefin.sync(),
+    onSuccess: writeLastSync,
+    onSettled: () => invalidateAfterSync(qc),
+  });
 }
 export function useSimplefinDisconnect() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (deleteAccounts: boolean) => api.simplefin.disconnect(deleteAccounts),
+    onSuccess: clearLastSync,
     onSettled: () => { invalidateAfterSync(qc); qc.invalidateQueries({ queryKey: keys.transactions }); },
   });
 }

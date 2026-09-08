@@ -1,0 +1,236 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+    a { color: #818cf8; } a:hover { color: #a5b4fc; }
+    .n { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+    .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: #8a90a2; font-weight: 600; }
+  </style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; background: #0e1015; color: #e7e9ef; font-size: 13px; line-height: 1.45;">
+
+  <!-- rail -->
+  <div style="width: 196px; flex-shrink: 0; background: #12141b; border-right: 1px solid #262b37; padding: 16px 12px; display: flex; flex-direction: column; gap: 1px;">
+    <div style="display: flex; align-items: center; gap: 9px; padding: 2px 8px 16px; font-weight: 700; font-size: 15px;">
+      <span style="width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: #818cf8; color: #0e1015; font-size: 12px;">◆</span>Ledgerly
+    </div>
+    <div class="lbl" style="padding: 8px 8px 4px;">Portfolio</div>
+    <div style="display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; background: rgba(129,140,248,.16); color: #818cf8; font-weight: 600;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard</div>
+    <div style="display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; color: #c5c9d3;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>Holdings</div>
+    <div style="display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; color: #c5c9d3;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>Accounts</div>
+    <div style="display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; color: #c5c9d3;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>Activity</div>
+    <div class="lbl" style="padding: 14px 8px 4px;">Spending</div>
+    <div style="display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; color: #c5c9d3; opacity: .4;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M12 3v9h9"/></svg>Budget<span style="margin-left: auto; font-size: 9px; letter-spacing: .06em;">SOON</span></div>
+
+    <div style="margin-top: auto; border-top: 1px solid #262b37; padding-top: 12px; display: grid; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: #8a90a2;">
+        <span style="width: 6px; height: 6px; border-radius: 50%; background: #34d399;"></span>SimpleFIN · 6 min ago</div>
+      <div style="display: flex; background: #1e222d; border-radius: 8px; padding: 2px; gap: 2px;">
+        <div style="flex: 1; text-align: center; padding: 4px; font-size: 11px; color: #8a90a2;">Light</div>
+        <div style="flex: 1; text-align: center; padding: 4px; font-size: 11px; background: #161922; border-radius: 6px;">Dark</div>
+        <div style="flex: 1; text-align: center; padding: 4px; font-size: 11px; color: #8a90a2;">Auto</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+
+    <!-- metric strip -->
+    <div style="border-bottom: 1px solid #262b37; padding: 16px 24px; display: flex; align-items: flex-end; gap: 0;">
+      <div style="padding-right: 28px;">
+        <div class="lbl">Net worth</div>
+        <div class="n" style="font-size: 30px; font-weight: 600; line-height: 1.15; margin-top: 3px;">$95,324.90</div>
+      </div>
+      <div style="border-left: 1px solid #262b37; padding: 0 24px; align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end;">
+        <div class="lbl">Today</div>
+        <div class="n" style="font-size: 17px; font-weight: 500; color: #34d399; margin-top: 3px;">+$610.40</div>
+        <div class="n" style="font-size: 11px; color: #34d399; opacity: .75;">+0.64%</div>
+      </div>
+      <div style="border-left: 1px solid #262b37; padding: 0 24px; align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end;">
+        <div class="lbl">Unrealized</div>
+        <div class="n" style="font-size: 17px; font-weight: 500; color: #34d399; margin-top: 3px;">+$11,444.00</div>
+        <div class="n" style="font-size: 11px; color: #34d399; opacity: .75;">+17.90%</div>
+      </div>
+      <div style="border-left: 1px solid #262b37; padding: 0 24px; align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end;">
+        <div class="lbl">Realized</div>
+        <div class="n" style="font-size: 17px; font-weight: 500; margin-top: 3px;">$400.00</div>
+      </div>
+      <div style="border-left: 1px solid #262b37; padding: 0 24px; align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end;">
+        <div class="lbl">Invested</div>
+        <div class="n" style="font-size: 17px; font-weight: 500; margin-top: 3px;">$75,344.00</div>
+      </div>
+      <div style="border-left: 1px solid #262b37; padding: 0 24px; align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end;">
+        <div class="lbl">Cash</div>
+        <div class="n" style="font-size: 17px; font-weight: 500; margin-top: 3px;">$19,980.90</div>
+      </div>
+      <div style="margin-left: auto; display: flex; gap: 6px;">
+        <div style="border: 1px solid #353b4a; border-radius: 8px; padding: 6px 11px; font-size: 12px; font-weight: 600; color: #c5c9d3;">Refresh</div>
+        <div style="background: #818cf8; color: #0e1015; border-radius: 8px; padding: 6px 11px; font-size: 12px; font-weight: 600;">Sync</div>
+      </div>
+    </div>
+
+    <div style="flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 316px; gap: 0; min-height: 0;">
+
+      <!-- left column -->
+      <div style="display: flex; flex-direction: column; min-width: 0; border-right: 1px solid #262b37;">
+        <div style="padding: 14px 24px 6px; display: flex; align-items: center; gap: 12px;">
+          <div class="lbl">Portfolio value</div>
+          <div style="margin-left: auto; display: flex; gap: 2px; background: #161922; border-radius: 7px; padding: 2px;">
+            <div style="padding: 3px 9px; font-size: 11px; color: #8a90a2;">1M</div>
+            <div style="padding: 3px 9px; font-size: 11px; color: #8a90a2;">3M</div>
+            <div style="padding: 3px 9px; font-size: 11px; background: #1e222d; border-radius: 5px; color: #e7e9ef; font-weight: 600;">1Y</div>
+            <div style="padding: 3px 9px; font-size: 11px; color: #8a90a2;">ALL</div>
+          </div>
+        </div>
+        <div style="padding: 0 16px;">
+          <svg viewBox="0 0 860 210" style="width: 100%; height: 210px; display: block;">
+            <defs><linearGradient id="af" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".28"></stop><stop offset="100%" stop-color="#818cf8" stop-opacity="0"></stop></linearGradient></defs>
+            <line x1="52" y1="24" x2="852" y2="24" stroke="#1e222d"></line>
+            <line x1="52" y1="70" x2="852" y2="70" stroke="#1e222d"></line>
+            <line x1="52" y1="116" x2="852" y2="116" stroke="#1e222d"></line>
+            <line x1="52" y1="162" x2="852" y2="162" stroke="#1e222d"></line>
+            <path d="M52,150 L119,144 L186,156 L253,128 L320,136 L387,100 L454,112 L521,78 L588,86 L655,56 L722,64 L789,40 L852,32 L852,162 L52,162 Z" fill="url(#af)"></path>
+            <path d="M52,150 L119,144 L186,156 L253,128 L320,136 L387,100 L454,112 L521,78 L588,86 L655,56 L722,64 L789,40 L852,32" fill="none" stroke="#818cf8" stroke-width="1.75"></path>
+            <circle cx="852" cy="32" r="3" fill="#818cf8"></circle>
+            <text x="8" y="27" fill="#8a90a2" font-size="10" font-family="JetBrains Mono, monospace">100k</text>
+            <text x="14" y="73" fill="#8a90a2" font-size="10" font-family="JetBrains Mono, monospace">85k</text>
+            <text x="14" y="119" fill="#8a90a2" font-size="10" font-family="JetBrains Mono, monospace">70k</text>
+            <text x="14" y="165" fill="#8a90a2" font-size="10" font-family="JetBrains Mono, monospace">55k</text>
+          </svg>
+        </div>
+
+        <!-- holdings table -->
+        <div style="border-top: 1px solid #262b37; margin-top: 8px; flex: 1; min-height: 0;">
+          <div style="padding: 12px 24px 8px; display: flex; align-items: center;">
+            <div class="lbl">Holdings</div>
+            <div style="margin-left: auto; font-size: 11px; color: #8a90a2;">3 positions · 2 accounts</div>
+          </div>
+          <div style="display: grid; grid-template-columns: 150px 62px 90px 96px 108px 96px 78px; gap: 0; padding: 0 24px 6px; border-bottom: 1px solid #262b37;">
+            <div class="lbl">Ticker</div><div class="lbl" style="text-align: right;">Shares</div><div class="lbl" style="text-align: right;">Last</div><div class="lbl" style="text-align: right;">Value</div><div class="lbl" style="text-align: right;">Gain</div><div class="lbl" style="text-align: right;">30d</div><div class="lbl" style="text-align: right;">Weight</div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 150px 62px 90px 96px 108px 96px 78px; align-items: center; padding: 11px 24px; border-bottom: 1px solid #1a1e28;">
+            <div><div style="font-weight: 600;">VTI</div><div style="font-size: 11px; color: #8a90a2;">Vanguard Total Stock</div></div>
+            <div class="n" style="text-align: right;">160</div>
+            <div class="n" style="text-align: right;">$281.50</div>
+            <div class="n" style="text-align: right; font-weight: 600;">$45,040</div>
+            <div class="n" style="text-align: right; color: #34d399;">+$5,040<span style="opacity:.7"> · 12.6%</span></div>
+            <div style="text-align: right;"><svg width="80" height="20" viewBox="0 0 80 20"><path d="M0,14 L11,15 L22,11 L33,13 L44,8 L55,10 L66,5 L80,3" fill="none" stroke="#34d399" stroke-width="1.5"/></svg></div>
+            <div class="n" style="text-align: right; color: #c5c9d3;">47.2%</div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 150px 62px 90px 96px 108px 96px 78px; align-items: center; padding: 11px 24px; border-bottom: 1px solid #1a1e28;">
+            <div><div style="font-weight: 600;">MSFT</div><div style="font-size: 11px; color: #8a90a2;">Microsoft Corp.</div></div>
+            <div class="n" style="text-align: right;">40</div>
+            <div class="n" style="text-align: right;">$462.10</div>
+            <div class="n" style="text-align: right; font-weight: 600;">$18,484</div>
+            <div class="n" style="text-align: right; color: #34d399;">+$3,084<span style="opacity:.7"> · 20.0%</span></div>
+            <div style="text-align: right;"><svg width="80" height="20" viewBox="0 0 80 20"><path d="M0,12 L11,9 L22,13 L33,7 L44,10 L55,6 L66,8 L80,4" fill="none" stroke="#34d399" stroke-width="1.5"/></svg></div>
+            <div class="n" style="text-align: right; color: #c5c9d3;">19.4%</div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 150px 62px 90px 96px 108px 96px 78px; align-items: center; padding: 11px 24px;">
+            <div><div style="font-weight: 600;">AAPL</div><div style="font-size: 11px; color: #8a90a2;">Apple Inc.</div></div>
+            <div class="n" style="text-align: right;">50</div>
+            <div class="n" style="text-align: right;">$236.40</div>
+            <div class="n" style="text-align: right; font-weight: 600;">$11,820</div>
+            <div class="n" style="text-align: right; color: #34d399;">+$3,320<span style="opacity:.7"> · 39.1%</span></div>
+            <div style="text-align: right;"><svg width="80" height="20" viewBox="0 0 80 20"><path d="M0,6 L11,8 L22,5 L33,9 L44,7 L55,12 L66,10 L80,13" fill="none" stroke="#f87171" stroke-width="1.5"/></svg></div>
+            <div class="n" style="text-align: right; color: #c5c9d3;">12.4%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- right column -->
+      <div style="display: flex; flex-direction: column; min-width: 0;">
+        <div style="padding: 14px 20px 10px; border-bottom: 1px solid #262b37;">
+          <div class="lbl" style="margin-bottom: 10px;">Movers today</div>
+          <div style="display: grid; gap: 9px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 42px; font-weight: 600;">MSFT</div>
+              <div style="flex: 1; height: 5px; background: #1e222d; border-radius: 999px; overflow: hidden;"><div style="width: 78%; height: 100%; background: #34d399; border-radius: 999px;"></div></div>
+              <div class="n" style="width: 62px; text-align: right; color: #34d399; font-size: 12px;">+$342</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 42px; font-weight: 600;">VTI</div>
+              <div style="flex: 1; height: 5px; background: #1e222d; border-radius: 999px; overflow: hidden;"><div style="width: 55%; height: 100%; background: #34d399; border-radius: 999px;"></div></div>
+              <div class="n" style="width: 62px; text-align: right; color: #34d399; font-size: 12px;">+$416</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 42px; font-weight: 600;">AAPL</div>
+              <div style="flex: 1; height: 5px; background: #1e222d; border-radius: 999px; overflow: hidden;"><div style="width: 22%; height: 100%; background: #f87171; border-radius: 999px;"></div></div>
+              <div class="n" style="width: 62px; text-align: right; color: #f87171; font-size: 12px;">-$148</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding: 14px 20px 12px; border-bottom: 1px solid #262b37;">
+          <div class="lbl" style="margin-bottom: 10px;">Accounts</div>
+          <div style="display: grid; gap: 11px;">
+            <div>
+              <div style="display: flex; align-items: baseline; gap: 8px;">
+                <span style="font-weight: 600;">Fidelity Brokerage</span>
+                <span class="n" style="margin-left: auto; font-size: 12px;">$68,462.75</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 5px;">
+                <span style="font-size: 10px; padding: 1px 6px; border-radius: 999px; background: #1e222d; color: #c5c9d3;">Manual</span>
+                <div style="flex: 1; height: 4px; background: #1e222d; border-radius: 999px; overflow: hidden;"><div style="width: 72%; height: 100%; background: #818cf8;"></div></div>
+              </div>
+            </div>
+            <div>
+              <div style="display: flex; align-items: baseline; gap: 8px;">
+                <span style="font-weight: 600;">Roth IRA</span>
+                <span class="n" style="margin-left: auto; font-size: 12px;">$18,441.60</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 5px;">
+                <span style="font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(129,140,248,.16); color: #818cf8;">SimpleFIN</span>
+                <div style="flex: 1; height: 4px; background: #1e222d; border-radius: 999px; overflow: hidden;"><div style="width: 19%; height: 100%; background: #818cf8;"></div></div>
+              </div>
+            </div>
+            <div>
+              <div style="display: flex; align-items: baseline; gap: 8px;">
+                <span style="font-weight: 600;">Chase Checking</span>
+                <span class="n" style="margin-left: auto; font-size: 12px;">$8,420.55</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 5px;">
+                <span style="font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(129,140,248,.16); color: #818cf8;">SimpleFIN</span>
+                <div style="flex: 1; height: 4px; background: #1e222d; border-radius: 999px; overflow: hidden;"><div style="width: 9%; height: 100%; background: #818cf8;"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding: 14px 20px;">
+          <div class="lbl" style="margin-bottom: 10px;">Allocation</div>
+          <div style="display: flex; height: 10px; border-radius: 999px; overflow: hidden; gap: 2px;">
+            <div style="width: 47.2%; background: #818cf8;"></div>
+            <div style="width: 31.8%; background: #38bdf8;"></div>
+            <div style="width: 21%; background: #34d399;"></div>
+          </div>
+          <div style="display: grid; gap: 7px; margin-top: 12px; font-size: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #818cf8;"></span>ETFs<span class="n" style="margin-left: auto; color: #c5c9d3;">47.2%</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #38bdf8;"></span>Stocks<span class="n" style="margin-left: auto; color: #c5c9d3;">31.8%</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #34d399;"></span>Cash<span class="n" style="margin-left: auto; color: #c5c9d3;">21.0%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

@@ -23,3 +23,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Seeded design-canvas output (2.5MB, regenerated from the .dc.html sources)
+design/**/ledgerly-dashboard-directions.html

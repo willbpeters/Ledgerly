@@ -5,12 +5,19 @@ export type ResolvedTheme = "light" | "dark";
 
 const KEY = "ledgerly.theme";
 
+/**
+ * Light is the default: the off-white palette is the designed look, so a fresh
+ * install opens on it rather than following Windows into dark mode. "System"
+ * remains available, it just isn't where you start.
+ */
+export const DEFAULT_PREF: ThemePref = "light";
+
 export function loadPref(): ThemePref {
   try {
     const v = localStorage.getItem(KEY);
     if (v === "light" || v === "dark" || v === "system") return v;
   } catch { /* storage unavailable */ }
-  return "system";
+  return DEFAULT_PREF;
 }
 
 export function savePref(p: ThemePref) {

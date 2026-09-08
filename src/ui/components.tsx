@@ -1,13 +1,15 @@
 import type { ReactNode, ButtonHTMLAttributes } from "react";
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+/**
+ * The row under the command bar. The screen's name lives in the command bar,
+ * so this carries only the supporting line and any screen-level actions.
+ */
+export function PageHeader({ subtitle, actions }: { subtitle?: ReactNode; actions?: ReactNode }) {
+  if (!subtitle && !actions) return null;
   return (
-    <div className="page-header">
-      <div>
-        <h1>{title}</h1>
-        {subtitle && <div className="subtitle">{subtitle}</div>}
-      </div>
-      {actions && <div className="page-actions">{actions}</div>}
+    <div className="row center between" style={{ gap: 16 }}>
+      <div className="muted">{subtitle}</div>
+      {actions && <div className="row center" style={{ gap: 8 }}>{actions}</div>}
     </div>
   );
 }

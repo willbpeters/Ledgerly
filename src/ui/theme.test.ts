@@ -4,10 +4,10 @@ import { loadPref, savePref, resolve, applyTheme } from "./theme";
 describe("theme preference", () => {
   beforeEach(() => localStorage.clear());
 
-  it("defaults to system when nothing is stored or stored value is junk", () => {
-    expect(loadPref()).toBe("system");
+  it("defaults to light when nothing is stored or the stored value is junk", () => {
+    expect(loadPref()).toBe("light");
     localStorage.setItem("ledgerly.theme", "purple");
-    expect(loadPref()).toBe("system");
+    expect(loadPref()).toBe("light");
   });
 
   it("round-trips a saved preference", () => {

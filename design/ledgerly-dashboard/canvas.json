@@ -1,0 +1,22 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Direction D — off-white" },
+    { "id": "page-2", "name": "Earlier options" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Direction D — off-white, Instrument Sans + Newsreader", "page": "page-1", "x": 0, "y": 0, "w": 1440, "h": 900 },
+    { "file": "TypeStudy.dc.html", "title": "Type study — three treatments", "page": "page-1", "x": 1560, "y": 0, "w": 1440, "h": 900 },
+
+    { "file": "DirectionD.dc.html", "title": "Direction D — original dark version", "page": "page-2", "x": 0, "y": 0, "w": 1440, "h": 900 },
+    { "file": "Current.dc.html", "title": "Today — what Ledgerly looks like now", "page": "page-2", "x": 1560, "y": 0, "w": 1440, "h": 900 },
+    { "file": "DirectionA.dc.html", "title": "Direction A — Dense desk", "page": "page-2", "x": 0, "y": 1120, "w": 1440, "h": 900 },
+    { "file": "DirectionB.dc.html", "title": "Direction B — Editorial ledger", "page": "page-2", "x": 1560, "y": 1120, "w": 1440, "h": 900 },
+    { "file": "DirectionC.dc.html", "title": "Direction C — Layered bento", "page": "page-2", "x": 0, "y": 2240, "w": 1440, "h": 900 }
+  ],
+  "annotations": [
+    { "id": "note-main", "x": 0, "y": -250, "w": 620, "page": "page-1", "text": "Direction D, rebuilt light\n\nOff-white paper (#f7f5f0) with warm greys instead of the cool slate, a deeper indigo that sits better on paper, and teal and violet replacing the bright cyan in the data colours.\n\nType here is option 1 from the study: Instrument Sans for the interface, Newsreader for the headline figure. Dark mode still exists, it is just no longer the default.\n\nSample numbers, not your real portfolio." },
+    { "id": "note-type", "x": 1560, "y": -250, "w": 620, "page": "page-1", "text": "Which typeface?\n\nThree treatments on the same palette and layout. Option 1 is what the screen next door uses.\n\n1 — Instrument Sans + Newsreader. Modern sans, elegant serif on the big number only.\n2 — Libre Franklin throughout. One family, no serif, most conservative.\n3 — Instrument Sans + Spectral. Serif carries every figure, including the table. Most distinctive, hardest to keep tidy.\n\nTell me a number and I'll build the app with it." },
+    { "id": "note-old", "x": 0, "y": -250, "w": 560, "page": "page-2", "text": "The earlier round, kept for reference. Direction D here is the dark original you picked from." }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

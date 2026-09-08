@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+    a { color: #818cf8; } a:hover { color: #a5b4fc; }
+    .n { font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; background: #0e1015; color: #e7e9ef; font-size: 14px; line-height: 1.5;">
+
+  <!-- sidebar -->
+  <div style="width: 224px; flex-shrink: 0; background: #161922; border-right: 1px solid #262b37; padding: 20px 14px; display: flex; flex-direction: column; gap: 2px;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; font-weight: 700; font-size: 16px;">
+      <span style="width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: #818cf8; color: #0e1015;">◆</span>Ledgerly
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; background: rgba(129,140,248,.16); color: #818cf8; font-weight: 500;">Dashboard</div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #c5c9d3; font-weight: 500;">Holdings</div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #c5c9d3; font-weight: 500;">Accounts</div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #c5c9d3; font-weight: 500;">Activity</div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #c5c9d3; font-weight: 500; opacity: .45;">Budget</div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #c5c9d3; font-weight: 500;">Settings</div>
+  </div>
+
+  <!-- main -->
+  <div style="flex: 1; padding: 28px 32px; display: flex; flex-direction: column; gap: 20px;">
+    <div>
+      <div style="font-size: 22px; font-weight: 650; letter-spacing: -.01em;">Dashboard</div>
+      <div style="color: #8a90a2; margin-top: 2px;">Your whole portfolio at a glance</div>
+    </div>
+
+    <div style="display: grid; gap: 4px;">
+      <div style="font-size: 12px; color: #8a90a2;">Total portfolio value</div>
+      <div class="n" style="font-size: 38px; font-weight: 750; letter-spacing: -.02em; line-height: 1.1;">$95,324.90</div>
+      <div style="display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; width: fit-content; background: rgba(52,211,153,.16); color: #34d399;">$610.40 today · +0.6%</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px;">
+      <div style="background: #161922; border: 1px solid #262b37; border-radius: 14px; padding: 18px 20px; display: grid; gap: 4px;">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8a90a2; font-weight: 600;">Total gain</div>
+        <div class="n" style="font-size: 20px; font-weight: 650; color: #34d399;">$11,444.00</div>
+        <div style="font-size: 12px; color: #8a90a2;">on $63,900.00 invested</div>
+      </div>
+      <div style="background: #161922; border: 1px solid #262b37; border-radius: 14px; padding: 18px 20px; display: grid; gap: 4px;">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8a90a2; font-weight: 600;">Return</div>
+        <div class="n" style="font-size: 20px; font-weight: 650; color: #34d399;">+17.9%</div>
+      </div>
+      <div style="background: #161922; border: 1px solid #262b37; border-radius: 14px; padding: 18px 20px; display: grid; gap: 4px;">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8a90a2; font-weight: 600;">Realized</div>
+        <div class="n" style="font-size: 20px; font-weight: 650; color: #34d399;">$400.00</div>
+      </div>
+      <div style="background: #161922; border: 1px solid #262b37; border-radius: 14px; padding: 18px 20px; display: grid; gap: 4px;">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8a90a2; font-weight: 600;">Cash</div>
+        <div class="n" style="font-size: 20px; font-weight: 650;">$19,980.90</div>
+        <div style="font-size: 12px; color: #8a90a2;">$75,344.00 in holdings</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 12px;">
+      <div style="background: #161922; border: 1px solid #262b37; border-radius: 14px; padding: 18px 20px;">
+        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #8a90a2; margin-bottom: 12px;">Value over time</div>
+        <svg viewBox="0 0 760 240" style="width: 100%; height: 240px; display: block;">
+          <defs><linearGradient id="cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".35"></stop><stop offset="100%" stop-color="#818cf8" stop-opacity="0"></stop></linearGradient></defs>
+          <line x1="60" y1="30" x2="740" y2="30" stroke="#262b37"></line>
+          <line x1="60" y1="90" x2="740" y2="90" stroke="#262b37"></line>
+          <line x1="60" y1="150" x2="740" y2="150" stroke="#262b37"></line>
+          <line x1="60" y1="210" x2="740" y2="210" stroke="#262b37"></line>
+          <path d="M60,175 L128,168 L196,180 L264,150 L332,158 L400,120 L468,132 L536,96 L604,104 L672,72 L740,58 L740,210 L60,210 Z" fill="url(#cf)"></path>
+          <path d="M60,175 L128,168 L196,180 L264,150 L332,158 L400,120 L468,132 L536,96 L604,104 L672,72 L740,58" fill="none" stroke="#818cf8" stroke-width="2"></path>
+          <text x="20" y="34" fill="#8a90a2" font-size="11">$120k</text>
+          <text x="24" y="94" fill="#8a90a2" font-size="11">$90k</text>
+          <text x="24" y="154" fill="#8a90a2" font-size="11">$60k</text>
+          <text x="24" y="214" fill="#8a90a2" font-size="11">$30k</text>
+        </svg>
+      </div>
+      <div style="background: #161922; border: 1px solid #262b37; border-radius: 14px; padding: 18px 20px;">
+        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #8a90a2; margin-bottom: 12px;">Allocation by type</div>
+        <div style="display: grid; grid-template-columns: 150px 1fr; gap: 16px; align-items: center;">
+          <svg viewBox="0 0 150 150" style="width: 150px; height: 150px;">
+            <circle cx="75" cy="75" r="59" fill="none" stroke="#818cf8" stroke-width="22" stroke-dasharray="174 197" transform="rotate(-90 75 75)"></circle>
+            <circle cx="75" cy="75" r="59" fill="none" stroke="#38bdf8" stroke-width="22" stroke-dasharray="118 253" transform="rotate(80 75 75)"></circle>
+            <circle cx="75" cy="75" r="59" fill="none" stroke="#34d399" stroke-width="22" stroke-dasharray="78 293" transform="rotate(195 75 75)"></circle>
+          </svg>
+          <div style="display: grid; gap: 6px; font-size: 13px;">
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: #818cf8;"></span><span>ETFs</span><span class="n" style="margin-left: auto; color: #c5c9d3;">$45,040.00</span><span class="n" style="width: 48px; text-align: right; color: #8a90a2;">47.2%</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: #38bdf8;"></span><span>Stocks</span><span class="n" style="margin-left: auto; color: #c5c9d3;">$30,304.00</span><span class="n" style="width: 48px; text-align: right; color: #8a90a2;">31.8%</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: #34d399;"></span><span>Cash</span><span class="n" style="margin-left: auto; color: #c5c9d3;">$19,980.90</span><span class="n" style="width: 48px; text-align: right; color: #8a90a2;">21.0%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

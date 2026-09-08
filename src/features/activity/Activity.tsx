@@ -47,7 +47,6 @@ export function Activity() {
   if (accounts.length === 0) {
     return (
       <>
-        <PageHeader title="Activity" />
         <Card><EmptyState title="You need an account first"
           body={<>Create one in <Link to="/accounts">Accounts</Link>, then come back here.</>} /></Card>
       </>
@@ -56,7 +55,7 @@ export function Activity() {
 
   return (
     <>
-      <PageHeader title="Activity" subtitle="Record trades, cash moves, or import a CSV"
+      <PageHeader subtitle="Record trades, cash moves, or import a CSV"
         actions={
           <select value={accountId ?? ""} onChange={(e) => setAccountId(Number(e.target.value))}>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.source === "simplefin" ? " (synced)" : ""}</option>)}

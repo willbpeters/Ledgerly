@@ -1,5 +1,5 @@
 import { useRefreshPrices } from "../../data/useRefresh";
-import { PageHeader, Card, Button } from "../../ui/components";
+import { Card, Button } from "../../ui/components";
 import { ThemeToggle } from "../../ui/ThemeToggle";
 import { SimplefinCard } from "./SimplefinCard";
 
@@ -7,8 +7,6 @@ export function Settings() {
   const refresh = useRefreshPrices();
   return (
     <>
-      <PageHeader title="Settings" />
-
       <Card title="Appearance" subtitle="Light, dark, or follow Windows.">
         <ThemeToggle />
       </Card>

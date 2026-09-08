@@ -28,7 +28,7 @@ export function Accounts() {
 
   return (
     <>
-      <PageHeader title="Accounts" subtitle="Where your money lives" />
+      <PageHeader subtitle="Where your money lives" />
       <Card title="Add an account"><AccountForm /></Card>
       <Card title="All accounts">
         {isLoading ? <p className="muted">Loading…</p> : accounts.length === 0

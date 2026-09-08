@@ -1,12 +1,34 @@
+import { useState } from "react";
 import { Outlet } from "react-router-dom";
-import { Sidebar } from "./Sidebar";
-import { SyncButton } from "./SyncButton";
+import { IconRail } from "./IconRail";
+import { CommandBar } from "./CommandBar";
+import { InsightRail } from "./InsightRail";
+
+const KEY = "ledgerly.insightRail";
+
+function loadOpen(): boolean {
+  try { return localStorage.getItem(KEY) !== "closed"; } catch { return true; }
+}
 
 export function AppShell() {
+  const [open, setOpen] = useState(loadOpen);
+
+  function toggle() {
+    setOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(KEY, next ? "open" : "closed"); } catch { /* storage unavailable */ }
+      return next;
+    });
+  }
+
   return (
     <div className="layout">
-      <Sidebar footer={<SyncButton />} />
-      <main className="main"><div className="page"><Outlet /></div></main>
+      <IconRail />
+      <div className="centre">
+        <CommandBar onToggleInsight={toggle} />
+        <main className="workspace"><div className="page"><Outlet /></div></main>
+      </div>
+      {open && <InsightRail />}
     </div>
   );
 }
