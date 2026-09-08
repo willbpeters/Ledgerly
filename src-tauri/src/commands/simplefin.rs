@@ -52,7 +52,7 @@ pub fn simplefin_status(db: tauri::State<Db>) -> Result<SimplefinStatus, String>
 
 #[tauri::command]
 pub fn simplefin_connect(db: tauri::State<Db>, setup_token: String) -> Result<SyncReport, String> {
-    let access_url = client::claim(&setup_token)?;
+    let access_url = client::resolve_access_url(&setup_token)?;
     secrets::set(KEY, &access_url)?;
     run_sync(&db, &access_url)
 }

@@ -4,7 +4,10 @@ import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
 import type { SyncReport } from "../../domain/types";
 
-const DEMO_TOKEN = "aHR0cHM6Ly9iZXRhLWJyaWRnZS5zaW1wbGVmaW4ub3JnL3NpbXBsZWZpbi9jbGFpbS9kZW1v";
+// SimpleFIN's public demo. Its shared *setup token* is permanently claimed and
+// answers 403 to everyone, so the demo uses the access URL, which Ledgerly
+// accepts directly. Three sample cash accounts, no holdings.
+const DEMO_ACCESS_URL = "https://demo:demo@beta-bridge.simplefin.org/simplefin";
 
 function Report({ r }: { r: SyncReport }) {
   return (
@@ -76,10 +79,11 @@ export function SimplefinCard() {
           Setup token
           <textarea rows={3} value={token} onChange={(e) => setToken(e.target.value)}
             placeholder="Paste your SimpleFIN setup token here" spellCheck={false} />
+          <span className="field-hint">Already have an access URL instead? Paste that here and it will be used as-is.</span>
         </label>
         <div className="row center">
           <Button onClick={doConnect} loading={connect.isPending} disabled={!token.trim()}>Connect and sync</Button>
-          <Button variant="ghost" size="sm" onClick={() => setToken(DEMO_TOKEN)}>Try the demo</Button>
+          <Button variant="ghost" size="sm" onClick={() => setToken(DEMO_ACCESS_URL)}>Try the demo</Button>
         </div>
         <p className="muted" style={{ fontSize: 12 }}>
           Your access credentials are kept in Windows Credential Manager, never in the database. Only account balances and holdings are downloaded.

@@ -16,6 +16,22 @@ fn http() -> Result<reqwest::blocking::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Turn whatever the user pasted into an access URL.
+///
+/// SimpleFIN Bridge hands out one-time *setup tokens*, but some setups (and the
+/// public demo, whose shared token is permanently claimed) give you the *access
+/// URL* directly. Accepting both means a paste that already looks like a URL is
+/// used as-is instead of being sent to a claim endpoint that would reject it.
+pub fn resolve_access_url(pasted: &str) -> Result<String, String> {
+    let trimmed = pasted.trim();
+    if trimmed.starts_with("https://") {
+        // Validate the shape now so a typo fails here rather than at sync time.
+        accounts_request_parts(trimmed)?;
+        return Ok(trimmed.to_string());
+    }
+    claim(trimmed)
+}
+
 /// Exchange a one-time setup token for a permanent access URL.
 pub fn claim(setup_token: &str) -> Result<String, String> {
     let claim_url = parse::decode_setup_token(setup_token)?;
@@ -97,6 +113,26 @@ mod tests {
     #[test]
     fn rejects_invalid_url() {
         assert!(accounts_request_parts("nope").is_err());
+    }
+
+    #[test]
+    fn resolve_uses_a_pasted_access_url_as_is() {
+        // No network call: an https paste is taken directly.
+        assert_eq!(
+            resolve_access_url("  https://demo:demo@beta-bridge.simplefin.org/simplefin \n").unwrap(),
+            "https://demo:demo@beta-bridge.simplefin.org/simplefin"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_a_malformed_access_url() {
+        assert!(resolve_access_url("https://").is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_garbage_without_calling_the_network() {
+        // Not https and not valid base64 → fails in decode_setup_token.
+        assert!(resolve_access_url("not a token!!").is_err());
     }
 
     #[test]

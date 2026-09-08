@@ -203,4 +203,44 @@ mod tests {
         assert_eq!(r.errors, vec!["Bank needs attention".to_string()]);
         assert_eq!(r.accounts_synced, 0);
     }
+
+    /// The whole SimpleFIN path against the public demo bridge: resolve what
+    /// the user pasted into an access URL, fetch the feed, and write it to a
+    /// database. Ignored by default because it needs the network; run with
+    /// `cargo test live_demo_end_to_end -- --ignored --nocapture`.
+    ///
+    /// Uses the demo *access URL* rather than the demo setup token: the shared
+    /// token at bridge.simplefin.org/simplefin/claim/demo is permanently
+    /// claimed and answers 403 to everyone.
+    #[test]
+    #[ignore = "hits the network"]
+    fn live_demo_end_to_end() {
+        const DEMO_ACCESS_URL: &str = "https://demo:demo@beta-bridge.simplefin.org/simplefin";
+        let access_url = crate::simplefin::client::resolve_access_url(DEMO_ACCESS_URL).unwrap();
+        assert!(access_url.starts_with("https://"));
+
+        let set = crate::simplefin::client::fetch_accounts(&access_url).unwrap();
+        assert!(!set.accounts.is_empty(), "demo feed should have accounts");
+
+        let mut conn = db::open_in_memory().unwrap();
+        let first = apply(&mut conn, &set).unwrap();
+        assert_eq!(first.accounts_synced, set.accounts.len());
+
+        // Syncing the same feed again must update in place, not duplicate.
+        let second = apply(&mut conn, &set).unwrap();
+        assert_eq!(second.accounts_synced, set.accounts.len());
+        let accounts: i64 = conn
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(accounts, set.accounts.len() as i64);
+
+        let unsynced: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM accounts WHERE source!='simplefin' OR synced_balance IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unsynced, 0, "every account should be marked synced");
+    }
 }
