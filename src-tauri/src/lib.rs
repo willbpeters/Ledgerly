@@ -2,6 +2,7 @@ mod db;
 mod models;
 mod commands;
 mod prices;
+mod secrets;
 
 use tauri::Manager;
 
