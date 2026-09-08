@@ -68,9 +68,11 @@ budgeting and spending module.
   are built from these, so restyling happens in one place.
 - **SimpleFIN sync**: connect in Settings by pasting a setup token *or* an
   access URL, then sync from Settings or the command bar. Pulls account
-  balances and, where the institution provides them, holdings. Synced accounts
-  show a badge and last-synced time in Accounts, and their manual entry forms
-  are disabled in Activity.
+  balances, holdings where the institution provides them, and **transactions**.
+  Syncing is incremental from a few days before the newest row held; "Import
+  2 years" pages backwards in 45-day windows, which is what SimpleFIN asks for.
+  Synced accounts show a badge and last-synced time in Accounts, and their
+  manual entry forms are disabled in Activity.
 
 ## Architecture — keep these seams intact
 
