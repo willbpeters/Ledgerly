@@ -5,84 +5,87 @@ import { AddPositionForm } from "./AddPositionForm";
 import { TransactionForm } from "./TransactionForm";
 import { CsvImport } from "./CsvImportForm";
 import { money, fmtDate } from "../../ui/format";
+import { PageHeader, Card, Button, Badge, Tabs, EmptyState } from "../../ui/components";
+import { DataTable, type Column } from "../../ui/DataTable";
+import type { Transaction } from "../../domain/types";
+
+type Tab = "position" | "transaction" | "csv";
+const TXN_TONE: Record<string, "pos" | "neg" | "neutral" | "accent" | "warn"> = {
+  buy: "accent", sell: "warn", dividend: "pos", interest: "pos", deposit: "pos", withdrawal: "neg", fee: "neg",
+};
 
 export function Activity() {
   const { data: txns = [] } = useTransactions();
   const { data: securities = [] } = useSecurities();
   const { data: accounts = [] } = useAccounts();
   const del = useDeleteTransaction();
-  const [tab, setTab] = useState<"position" | "transaction" | "csv">("position");
+  const [tab, setTab] = useState<Tab>("position");
   const [accountId, setAccountId] = useState<number | null>(null);
 
-  // Default to the first account, and keep the selection valid if accounts change.
   useEffect(() => {
     if (accounts.length === 0) { setAccountId(null); return; }
-    if (accountId == null || !accounts.some((a) => a.id === accountId)) {
-      setAccountId(accounts[0].id);
-    }
+    if (accountId == null || !accounts.some((a) => a.id === accountId)) setAccountId(accounts[0].id);
   }, [accounts, accountId]);
 
   const secTicker = (id: number | null) => securities.find((s) => s.id === id)?.ticker ?? "—";
+  const account = accounts.find((a) => a.id === accountId) ?? null;
+  const accountTxns = accountId == null ? [] : txns.filter((t) => t.account_id === accountId);
+
+  const columns: Column<Transaction>[] = [
+    { key: "date", label: "Date", align: "left", render: (t) => fmtDate(t.date) },
+    { key: "type", label: "Type", align: "left", render: (t) => <Badge tone={TXN_TONE[t.type] ?? "neutral"}>{t.type}</Badge> },
+    { key: "ticker", label: "Ticker", align: "left", render: (t) => <span className="cell-primary">{secTicker(t.security_id)}</span> },
+    { key: "qty", label: "Qty", render: (t) => t.quantity || "—" },
+    { key: "price", label: "Price", render: (t) => (t.price ? money(t.price) : "—") },
+    { key: "amount", label: "Amount", render: (t) => money(t.amount) },
+    { key: "actions", label: "", render: (t) => (
+        <Button variant="ghost" size="sm" onClick={() => {
+          if (confirm("Delete this transaction? Holdings and balances will recompute.")) del.mutate(t.id);
+        }}>Delete</Button>) },
+  ];
 
   if (accounts.length === 0) {
     return (
-      <div className="grid" style={{ gap: 16 }}>
-        <h1>Activity</h1>
-        <div className="card">
-          <p>You need an account first. <Link to="/accounts">Create one in Accounts</Link>, then come back here.</p>
-        </div>
-      </div>
+      <>
+        <PageHeader title="Activity" />
+        <Card><EmptyState title="You need an account first"
+          body={<>Create one in <Link to="/accounts">Accounts</Link>, then come back here.</>} /></Card>
+      </>
     );
   }
 
-  const accountTxns = accountId == null ? [] : txns.filter((t) => t.account_id === accountId);
-
   return (
-    <div className="grid" style={{ gap: 16 }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Activity</h1>
-        <label style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          Account
+    <>
+      <PageHeader title="Activity" subtitle="Record trades, cash moves, or import a CSV"
+        actions={
           <select value={accountId ?? ""} onChange={(e) => setAccountId(Number(e.target.value))}>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.source === "simplefin" ? " (synced)" : ""}</option>)}
           </select>
-        </label>
-      </div>
+        } />
 
-      {accountId != null && (
-        <>
-          <div className="card">
-            <div className="row" style={{ marginBottom: 12 }}>
-              <button className={tab === "position" ? "" : "secondary"} onClick={() => setTab("position")}>Quick add position</button>
-              <button className={tab === "transaction" ? "" : "secondary"} onClick={() => setTab("transaction")}>Add transaction</button>
-              <button className={tab === "csv" ? "" : "secondary"} onClick={() => setTab("csv")}>Import CSV</button>
-            </div>
-            {tab === "position" ? <AddPositionForm accountId={accountId} />
-              : tab === "transaction" ? <TransactionForm accountId={accountId} />
-              : <CsvImport accountId={accountId} />}
+      {account && account.source === "simplefin" ? (
+        <Card>
+          <div className="notice info">
+            This account is synced from SimpleFIN. Its balance and holdings update on each sync, so manual entries are turned off here.
           </div>
-          <div className="card">
-            {accountTxns.length === 0 ? <p>No transactions in this account yet.</p> : (
-              <table>
-                <thead><tr><th>Date</th><th>Type</th><th>Ticker</th><th>Qty</th><th>Price</th><th>Amount</th><th></th></tr></thead>
-                <tbody>
-                  {accountTxns.map((t) => (
-                    <tr key={t.id}>
-                      <td>{fmtDate(t.date)}</td><td>{t.type}</td>
-                      <td>{secTicker(t.security_id)}</td>
-                      <td>{t.quantity || "—"}</td><td>{t.price ? money(t.price) : "—"}</td>
-                      <td>{money(t.amount)}</td>
-                      <td><button className="secondary" onClick={() => {
-                        if (confirm("Delete this transaction? Holdings and balances will recompute.")) del.mutate(t.id);
-                      }}>Delete</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </>
+        </Card>
+      ) : accountId != null && (
+        <Card>
+          <Tabs<Tab> value={tab} onChange={setTab} items={[
+            { value: "position", label: "Quick add position" },
+            { value: "transaction", label: "Add transaction" },
+            { value: "csv", label: "Import CSV" },
+          ]} />
+          {tab === "position" ? <AddPositionForm accountId={accountId} />
+            : tab === "transaction" ? <TransactionForm accountId={accountId} />
+            : <CsvImport accountId={accountId} />}
+        </Card>
       )}
-    </div>
+
+      <Card title="Transactions" subtitle={account?.name}>
+        {accountTxns.length === 0 ? <EmptyState title="No transactions in this account yet" />
+          : <DataTable columns={columns} rows={accountTxns} getKey={(t) => t.id} />}
+      </Card>
+    </>
   );
 }
