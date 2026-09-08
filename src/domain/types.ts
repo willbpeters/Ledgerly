@@ -36,3 +36,12 @@ export interface PortfolioSummary {
 }
 export interface AllocationSlice { label: string; value: number; pct: number; }
 export interface SeriesPoint { date: string; value: number; }
+
+export interface SyncedHolding {
+  id: number; account_id: number; security_id: number;
+  shares: number; cost_basis: number; market_value: number; as_of: string;
+}
+export interface SyncReport {
+  accounts_synced: number; holdings_synced: number; holdings_skipped: number; errors: string[];
+}
+export interface SimplefinStatus { connected: boolean; last_synced_at: string | null; }

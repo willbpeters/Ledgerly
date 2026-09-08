@@ -1,8 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { keys } from "./queries";
-import { buildPositions, aggregateHoldings } from "../domain/positions";
-import { totalCash } from "../domain/cash";
+import { derivePortfolio } from "../domain/portfolio";
 
 export function useRefreshPrices() {
   const qc = useQueryClient();
@@ -12,14 +11,14 @@ export function useRefreshPrices() {
       await qc.invalidateQueries({ queryKey: keys.latest });
       await qc.invalidateQueries({ queryKey: keys.previous });
 
-      // recompute total value and record today's snapshot
-      const [txns, securities, latest] = await Promise.all([
-        api.transactions.list(), api.securities.list(), api.prices.latest(),
+      // Recompute total value with the same derivation the screens use, then
+      // record today's snapshot for the chart.
+      const [txns, securities, accounts, latest, previous, synced] = await Promise.all([
+        api.transactions.list(), api.securities.list(), api.accounts.list(),
+        api.prices.latest(), api.prices.previous(), api.syncedHoldings.list(),
       ]);
-      const holdings = aggregateHoldings(buildPositions(txns, new Map(latest)), securities);
-      const invested = holdings.reduce((s, h) => s + h.marketValue, 0);
-      const total = invested + totalCash(txns);
-      await api.snapshots.record(new Date().toISOString().slice(0, 10), total);
+      const { summary } = derivePortfolio({ txns, securities, accounts, latest, previous, synced });
+      await api.snapshots.record(new Date().toISOString().slice(0, 10), summary.totalValue);
       await qc.invalidateQueries({ queryKey: keys.snapshots });
       return updated;
     },

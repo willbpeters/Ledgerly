@@ -8,6 +8,8 @@ export const keys = {
   latest: ["prices", "latest"] as const,
   previous: ["prices", "previous"] as const,
   snapshots: ["snapshots"] as const,
+  synced: ["synced_holdings"] as const,
+  simplefin: ["simplefin", "status"] as const,
 };
 
 export const useAccounts = () => useQuery({ queryKey: keys.accounts, queryFn: api.accounts.list });
@@ -16,6 +18,30 @@ export const useTransactions = () => useQuery({ queryKey: keys.transactions, que
 export const useLatestPrices = () => useQuery({ queryKey: keys.latest, queryFn: api.prices.latest });
 export const usePreviousPrices = () => useQuery({ queryKey: keys.previous, queryFn: api.prices.previous });
 export const useSnapshots = () => useQuery({ queryKey: keys.snapshots, queryFn: api.snapshots.list });
+export const useSyncedHoldings = () => useQuery({ queryKey: keys.synced, queryFn: api.syncedHoldings.list });
+export const useSimplefinStatus = () => useQuery({ queryKey: keys.simplefin, queryFn: api.simplefin.status });
+
+/** Everything a sync can change. */
+function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
+  for (const k of [keys.accounts, keys.securities, keys.synced, keys.latest, keys.previous, keys.simplefin]) {
+    qc.invalidateQueries({ queryKey: k });
+  }
+}
+export function useSimplefinConnect() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (token: string) => api.simplefin.connect(token), onSettled: () => invalidateAfterSync(qc) });
+}
+export function useSimplefinSync() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => api.simplefin.sync(), onSettled: () => invalidateAfterSync(qc) });
+}
+export function useSimplefinDisconnect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deleteAccounts: boolean) => api.simplefin.disconnect(deleteAccounts),
+    onSettled: () => { invalidateAfterSync(qc); qc.invalidateQueries({ queryKey: keys.transactions }); },
+  });
+}
 
 export function useCreateAccount() {
   const qc = useQueryClient();
@@ -33,6 +59,7 @@ export function useDeleteAccount() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: keys.accounts });
       qc.invalidateQueries({ queryKey: keys.transactions });
+      qc.invalidateQueries({ queryKey: keys.synced });
     },
   });
 }

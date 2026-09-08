@@ -1,0 +1,31 @@
+import { describe, it, expect } from "vitest";
+import { derivePortfolio } from "./portfolio";
+import type { Account, Security, SyncedHolding, Transaction } from "./types";
+
+const accounts: Account[] = [
+  { id: 1, name: "Manual", type: "brokerage", institution: null, currency: "USD", created_at: "", source: "manual", external_id: null, synced_balance: null, last_synced_at: null },
+  { id: 2, name: "Synced", type: "brokerage", institution: "Demo", currency: "USD", created_at: "", source: "simplefin", external_id: "x", synced_balance: 100, last_synced_at: "2026-09-07T00:00:00Z" },
+];
+const securities: Security[] = [{ id: 10, ticker: "VTI", name: null, type: "etf", currency: "USD" }];
+const txns: Transaction[] = [
+  { id: 1, account_id: 1, security_id: null, type: "deposit", date: "2026-01-01", quantity: 0, price: 0, amount: 1000, fees: 0, note: null },
+  { id: 2, account_id: 1, security_id: 10, type: "buy", date: "2026-01-02", quantity: 2, price: 200, amount: 400, fees: 0, note: null },
+  // a stray transaction in the synced account must not affect cash or shares
+  { id: 3, account_id: 2, security_id: 10, type: "buy", date: "2026-01-03", quantity: 50, price: 1, amount: 50, fees: 0, note: null },
+];
+const synced: SyncedHolding[] = [{ id: 1, account_id: 2, security_id: 10, shares: 3, cost_basis: 600, market_value: 750, as_of: "2026-09-07" }];
+
+describe("derivePortfolio", () => {
+  it("merges manual and synced accounts without double counting", () => {
+    const p = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
+    expect(p.holdings).toHaveLength(1);
+    expect(p.holdings[0].shares).toBe(5);           // 2 manual + 3 synced
+    expect(p.holdings[0].marketValue).toBe(1250);
+    expect(p.cash).toBe(600 + 100);                  // manual: 1000 - 400; synced: 100
+    expect(p.summary.totalValue).toBe(1250 + 700);
+    expect(p.accountValues.get(1)).toBe(600 + 500);
+    expect(p.accountValues.get(2)).toBe(100 + 750);
+    expect(p.byAccount.find((b) => b.account.id === 2)?.holdings[0].shares).toBe(3);
+    expect(p.summary.dayChange).toBe(5 * 10);
+  });
+});
