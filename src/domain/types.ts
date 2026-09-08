@@ -3,9 +3,12 @@ export type SecurityType = "stock" | "etf";
 export type TxnType =
   | "buy" | "sell" | "dividend" | "deposit" | "withdrawal" | "fee" | "interest";
 
+export type AccountSource = "manual" | "simplefin";
 export interface Account {
   id: number; name: string; type: AccountType;
   institution: string | null; currency: string; created_at: string;
+  source: AccountSource; external_id: string | null;
+  synced_balance: number | null; last_synced_at: string | null;
 }
 export interface Security {
   id: number; ticker: string; name: string | null;
