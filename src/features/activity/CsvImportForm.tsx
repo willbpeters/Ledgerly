@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
 import { rowsToTransactions, type ColumnMap, type StagedTxn, type RowError } from "./csvImport";
 import { money } from "../../ui/format";
+import { Button, Field } from "../../ui/components";
 
 const FIELDS: (keyof ColumnMap)[] = ["date","type","ticker","quantity","price","amount","fees"];
 const EMPTY_MAP: ColumnMap = { date:"",type:"",ticker:"",quantity:"",price:"",amount:"",fees:"" };
@@ -72,13 +73,13 @@ export function CsvImport({ accountId }: { accountId: number }) {
   return (
     <div className="grid" style={{ gap: 12 }}>
       <div className="row">
-        <label>New tickers as
+        <Field label="New tickers as">
           <select value={newType} onChange={(e) => setNewType(e.target.value)}>
             <option value="stock">Stock</option>
             <option value="etf">ETF</option>
           </select>
-        </label>
-        <label>CSV file<input type="file" accept=".csv" onChange={onFile} /></label>
+        </Field>
+        <Field label="CSV file"><input type="file" accept=".csv" onChange={onFile} /></Field>
       </div>
 
       {parseWarnings.length > 0 && (
@@ -98,7 +99,7 @@ export function CsvImport({ accountId }: { accountId: number }) {
               </select>
             </label>
           ))}
-          <button onClick={buildPreview} disabled={!map.date || !map.type}>Preview</button>
+          <Button onClick={buildPreview} disabled={!map.date || !map.type}>Preview</Button>
         </div>
       )}
 
@@ -116,9 +117,9 @@ export function CsvImport({ accountId }: { accountId: number }) {
             </tbody>
           </table>
           <div className="row">
-            <button onClick={commit} disabled={preview.valid.length === 0 || committing}>
+            <Button onClick={commit} disabled={preview.valid.length === 0 || committing}>
               {committing ? "Importing…" : `Import ${preview.valid.length}`}
-            </button>
+            </Button>
           </div>
         </div>
       )}

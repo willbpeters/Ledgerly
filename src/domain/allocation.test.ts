@@ -22,8 +22,10 @@ describe("allocationByType", () => {
 describe("allocationByAccount", () => {
   it("labels slices by account name", () => {
     const accounts: Account[] = [
-      { id: 1, name: "Brokerage", type: "brokerage", institution: null, currency: "USD", created_at: "" },
-      { id: 2, name: "Savings", type: "cash", institution: null, currency: "USD", created_at: "" },
+      { id: 1, name: "Brokerage", type: "brokerage", institution: null, currency: "USD", created_at: "",
+        source: "manual", external_id: null, synced_balance: null, last_synced_at: null },
+      { id: 2, name: "Savings", type: "cash", institution: null, currency: "USD", created_at: "",
+        source: "manual", external_id: null, synced_balance: null, last_synced_at: null },
     ];
     const values = new Map([[1, 700], [2, 300]]);
     const slices = allocationByAccount(values, accounts);

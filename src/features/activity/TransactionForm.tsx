@@ -4,6 +4,7 @@ import { api, type NewTransaction } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
 import type { TxnType } from "../../domain/types";
+import { Button, Field } from "../../ui/components";
 
 const NEEDS_SECURITY: TxnType[] = ["buy", "sell", "dividend"];
 const NEEDS_QTY_PRICE: TxnType[] = ["buy", "sell"];
@@ -64,29 +65,29 @@ export function TransactionForm({ accountId }: { accountId: number }) {
 
   return (
     <form className="row" onSubmit={submit}>
-      <label>Type
+      <Field label="Type">
         <select value={type} onChange={(e) => setType(e.target.value as TxnType)}>
           {["buy","sell","dividend","deposit","withdrawal","fee","interest"].map((t) =>
             <option key={t} value={t}>{t}</option>)}
         </select>
-      </label>
+      </Field>
       {showSec && (
-        <label>Ticker
+        <Field label="Ticker">
           <input list="sec-list" value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} />
           <datalist id="sec-list">{securities.map((s) => <option key={s.id} value={s.ticker} />)}</datalist>
-        </label>
+        </Field>
       )}
-      <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+      <Field label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
       {showQtyPrice ? (
         <>
-          <label>Quantity<input value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="decimal" /></label>
-          <label>Price<input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" /></label>
-          <label>Fees<input value={fees} onChange={(e) => setFees(e.target.value)} inputMode="decimal" /></label>
+          <Field label="Quantity"><input value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="decimal" /></Field>
+          <Field label="Price"><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" /></Field>
+          <Field label="Fees"><input value={fees} onChange={(e) => setFees(e.target.value)} inputMode="decimal" /></Field>
         </>
       ) : (
-        <label>Amount<input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></label>
+        <Field label="Amount"><input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></Field>
       )}
-      <button type="submit" disabled={busy}>{busy ? "Adding…" : "Add"}</button>
+      <Button type="submit" disabled={busy}>{busy ? "Adding…" : "Add"}</Button>
       {error && <span className="neg">{error}</span>}
     </form>
   );

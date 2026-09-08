@@ -9,6 +9,14 @@ pub struct Account {
     pub institution: Option<String>,
     pub currency: String,
     pub created_at: String,
+    /// "manual" or "simplefin"
+    pub source: String,
+    /// SimpleFIN account id when source == "simplefin"
+    pub external_id: Option<String>,
+    /// Cash balance reported by SimpleFIN at the last sync
+    pub synced_balance: Option<f64>,
+    /// RFC3339 timestamp of the last successful sync
+    pub last_synced_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -62,4 +70,15 @@ pub struct NewTransaction {
 pub struct Snapshot {
     pub date: String,
     pub total_value: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SyncedHolding {
+    pub id: i64,
+    pub account_id: i64,
+    pub security_id: i64,
+    pub shares: f64,
+    pub cost_basis: f64,
+    pub market_value: f64,
+    pub as_of: String,
 }

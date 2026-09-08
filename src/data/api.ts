@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, Security, Transaction, Snapshot } from "../domain/types";
+import type {
+  Account, Security, Transaction, Snapshot,
+  SyncedHolding, SyncReport, SimplefinStatus,
+} from "../domain/types";
 
 export interface NewAccount { name: string; type: string; institution: string | null; }
 export interface NewTransaction {
@@ -35,5 +38,14 @@ export const api = {
     list: () => invoke<Snapshot[]>("snapshots_list"),
     record: (date: string, total_value: number) =>
       invoke<void>("snapshots_record", { date, totalValue: total_value }),
+  },
+  syncedHoldings: {
+    list: () => invoke<SyncedHolding[]>("synced_holdings_list"),
+  },
+  simplefin: {
+    status: () => invoke<SimplefinStatus>("simplefin_status"),
+    connect: (setupToken: string) => invoke<SyncReport>("simplefin_connect", { setupToken }),
+    sync: () => invoke<SyncReport>("simplefin_sync"),
+    disconnect: (deleteAccounts: boolean) => invoke<void>("simplefin_disconnect", { deleteAccounts }),
   },
 };

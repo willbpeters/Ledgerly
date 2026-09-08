@@ -3,6 +3,7 @@ import { useCreateTransaction } from "../../data/queries";
 import { api } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
+import { Button, Field } from "../../ui/components";
 
 export function AddPositionForm({ accountId }: { accountId: number }) {
   const createTxn = useCreateTransaction();
@@ -41,16 +42,16 @@ export function AddPositionForm({ accountId }: { accountId: number }) {
 
   return (
     <form className="row" onSubmit={submit}>
-      <label>Ticker<input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="VOO" /></label>
-      <label>Type
+      <Field label="Ticker"><input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="VOO" /></Field>
+      <Field label="Type">
         <select value={kind} onChange={(e) => setKind(e.target.value)}>
           <option value="stock">Stock</option><option value="etf">ETF</option>
         </select>
-      </label>
-      <label>Shares<input value={shares} onChange={(e) => setShares(e.target.value)} inputMode="decimal" /></label>
-      <label>Avg cost<input value={avgCost} onChange={(e) => setAvgCost(e.target.value)} inputMode="decimal" /></label>
-      <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-      <button type="submit" disabled={busy}>{busy ? "Adding…" : "Add position"}</button>
+      </Field>
+      <Field label="Shares"><input value={shares} onChange={(e) => setShares(e.target.value)} inputMode="decimal" /></Field>
+      <Field label="Avg cost"><input value={avgCost} onChange={(e) => setAvgCost(e.target.value)} inputMode="decimal" /></Field>
+      <Field label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+      <Button type="submit" disabled={busy}>{busy ? "Adding…" : "Add position"}</Button>
       {error && <span className="neg">{error}</span>}
     </form>
   );

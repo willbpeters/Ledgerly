@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useCreateAccount } from "../../data/queries";
+import { Button, Field } from "../../ui/components";
 
 export function AccountForm() {
   const create = useCreateAccount();
@@ -18,15 +19,16 @@ export function AccountForm() {
 
   return (
     <form className="row" onSubmit={submit}>
-      <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Brokerage" /></label>
-      <label>Type
+      <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Brokerage" /></Field>
+      <Field label="Type">
         <select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="brokerage">Brokerage</option>
           <option value="cash">Cash / Savings</option>
         </select>
-      </label>
-      <label>Institution<input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="Fidelity" /></label>
-      <button type="submit" disabled={create.isPending}>Add account</button>
+      </Field>
+      <Field label="Institution"><input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="Fidelity" /></Field>
+      <Button type="submit" loading={create.isPending}>Add account</Button>
+      {create.isError && <span className="field-error">Couldn't add the account. Try again.</span>}
     </form>
   );
 }

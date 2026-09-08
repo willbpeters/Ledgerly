@@ -2,6 +2,8 @@ mod db;
 mod models;
 mod commands;
 mod prices;
+mod secrets;
+mod simplefin;
 
 use tauri::Manager;
 
@@ -32,6 +34,11 @@ pub fn run() {
             commands::prices::prices_refresh,
             commands::snapshots::snapshots_list,
             commands::snapshots::snapshots_record,
+            commands::simplefin::simplefin_status,
+            commands::simplefin::simplefin_connect,
+            commands::simplefin::simplefin_sync,
+            commands::simplefin::simplefin_disconnect,
+            commands::simplefin::synced_holdings_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -27,6 +27,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1"
 chrono = { version = "0.4", features = ["clock"] }
+keyring = { version = "3", features = ["windows-native"] }
+base64 = "0.22"
+percent-encoding = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

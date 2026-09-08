@@ -1,71 +1,51 @@
 import { useState } from "react";
 import { usePortfolio } from "../../data/usePortfolio";
+import { useSecurities } from "../../data/queries";
 import { money, pct } from "../../ui/format";
+import { PageHeader, Card, Button, EmptyState } from "../../ui/components";
+import { DataTable, type Column } from "../../ui/DataTable";
 import type { Holding } from "../../domain/types";
 
-// Toggleable columns (Ticker is always shown). `weight` is passed in per table
-// so the same column can mean "% of all holdings" or "% of this account".
-interface Col {
-  key: string;
-  label: string;
-  render: (h: Holding, weight: number | null) => React.ReactNode;
-  cls?: (h: Holding) => string;
-}
+interface Row extends Holding { weight: number | null; name: string | null; }
 
-const COLS: Col[] = [
-  { key: "shares", label: "Shares", render: (h) => h.shares },
-  { key: "avgCost", label: "Avg cost", render: (h) => money(h.avgCost) },
-  { key: "lastPrice", label: "Last", render: (h) => (h.lastPrice ? money(h.lastPrice) : "—") },
-  { key: "marketValue", label: "Market value", render: (h) => money(h.marketValue) },
-  { key: "unrealized", label: "Unrealized", render: (h) => money(h.unrealized), cls: (h) => (h.unrealized >= 0 ? "pos" : "neg") },
-  { key: "returnPct", label: "Return %", render: (h) => pct(h.unrealizedPct), cls: (h) => (h.unrealizedPct >= 0 ? "pos" : "neg") },
-  { key: "weight", label: "% of holdings", render: (_h, w) => (w == null ? "—" : w.toFixed(1) + "%") },
+const COLS: Column<Row>[] = [
+  { key: "ticker", label: "Ticker", align: "left", render: (r) => (
+      <div><div className="cell-primary">{r.ticker}</div>{r.name && <div className="cell-secondary">{r.name}</div>}</div>) },
+  { key: "shares", label: "Shares", render: (r) => r.shares },
+  { key: "avgCost", label: "Avg cost", render: (r) => money(r.avgCost) },
+  { key: "lastPrice", label: "Last", render: (r) => (r.lastPrice ? money(r.lastPrice) : "—") },
+  { key: "marketValue", label: "Market value", render: (r) => <span className="cell-primary">{money(r.marketValue)}</span> },
+  { key: "unrealized", label: "Unrealized", render: (r) => money(r.unrealized), className: (r) => (r.unrealized >= 0 ? "pos" : "neg") },
+  { key: "returnPct", label: "Return", render: (r) => pct(r.unrealizedPct), className: (r) => (r.unrealizedPct >= 0 ? "pos" : "neg") },
+  { key: "weight", label: "Weight", render: (r) => r.weight == null ? "—" : (
+      <span className="bar"><span className="bar-track"><span className="bar-fill" style={{ width: `${Math.min(100, r.weight)}%` }} /></span>{r.weight.toFixed(1)}%</span>) },
 ];
 
 const STORAGE_KEY = "ledgerly.holdings.cols";
-const DEFAULT_VISIBLE = COLS.map((c) => c.key);
+const TOGGLEABLE = COLS.filter((c) => c.key !== "ticker");
 
 function loadVisible(): string[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as string[];
-      const known = parsed.filter((k) => COLS.some((c) => c.key === k));
+      const known = (JSON.parse(raw) as string[]).filter((k) => TOGGLEABLE.some((c) => c.key === k));
       if (known.length) return known;
     }
   } catch { /* ignore */ }
-  return DEFAULT_VISIBLE;
-}
-
-function HoldingsTable({ holdings, visible, denom }: { holdings: Holding[]; visible: string[]; denom: number }) {
-  if (holdings.length === 0) return <p style={{ color: "var(--mut)" }}>No holdings.</p>;
-  const cols = COLS.filter((c) => visible.includes(c.key));
-  return (
-    <table>
-      <thead><tr><th>Ticker</th>{cols.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
-      <tbody>
-        {holdings.map((h) => {
-          const weight = denom > 0 ? (h.marketValue / denom) * 100 : null;
-          return (
-            <tr key={h.security_id}>
-              <td>{h.ticker}</td>
-              {cols.map((c) => (
-                <td key={c.key} className={c.cls ? c.cls(h) : undefined}>{c.render(h, weight)}</td>
-              ))}
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
+  return TOGGLEABLE.map((c) => c.key);
 }
 
 export function Holdings() {
   const { holdings, summary, byAccount, isLoading } = usePortfolio();
+  const { data: securities = [] } = useSecurities();
   const [visible, setVisible] = useState<string[]>(loadVisible);
   const [showCols, setShowCols] = useState(false);
+  if (isLoading) return <p className="muted">Loading…</p>;
 
-  if (isLoading) return <p>Loading…</p>;
+  const nameOf = new Map(securities.map((s) => [s.id, s.name]));
+  const toRows = (hs: Holding[], denom: number): Row[] =>
+    hs.map((h) => ({ ...h, name: nameOf.get(h.security_id) ?? null, weight: denom > 0 ? (h.marketValue / denom) * 100 : null }));
+  const cols = COLS.filter((c) => c.key === "ticker" || visible.includes(c.key));
 
   function toggle(key: string) {
     setVisible((prev) => {
@@ -75,53 +55,38 @@ export function Holdings() {
     });
   }
 
-  // accounts that actually hold something, for the per-account breakdown
   const accountsWithHoldings = byAccount.filter((b) => b.holdings.length > 0);
 
   return (
-    <div className="grid" style={{ gap: 16 }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Holdings</h1>
-        <div style={{ position: "relative" }}>
-          <button className="secondary" onClick={() => setShowCols((s) => !s)} title="Choose columns">⚙ Columns</button>
-          {showCols && (
-            <div className="card" style={{ position: "absolute", right: 0, top: "110%", zIndex: 10, minWidth: 180 }}>
-              {COLS.map((c) => (
-                <label key={c.key} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <input type="checkbox" checked={visible.includes(c.key)} onChange={() => toggle(c.key)} />
-                  {c.label}
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="card">
-        <div style={{ fontSize: 12, color: "var(--mut)", marginBottom: 8 }}>All accounts</div>
-        {holdings.length === 0
-          ? <p>No holdings yet. Add a position in Activity.</p>
-          : <HoldingsTable holdings={holdings} visible={visible} denom={summary.investedValue} />}
-      </div>
-
-      {accountsWithHoldings.length > 1 && (
-        <>
-          <div style={{ fontSize: 12, color: "var(--mut)", textTransform: "uppercase", letterSpacing: ".5px" }}>
-            By account
-          </div>
-          {accountsWithHoldings.map((b) => (
-            <div className="card" key={b.account.id}>
-              <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-                <strong>{b.account.name}</strong>
-                <span style={{ color: "var(--mut)" }}>
-                  {money(b.holdingsValue)} in holdings{b.cash ? ` · ${money(b.cash)} cash` : ""}
-                </span>
+    <>
+      <PageHeader title="Holdings" subtitle={`${holdings.length} securities · ${money(summary.investedValue)} invested`}
+        actions={
+          <div style={{ position: "relative" }}>
+            <Button variant="secondary" size="sm" onClick={() => setShowCols((s) => !s)}>⚙ Columns</Button>
+            {showCols && (
+              <div className="popover">
+                {TOGGLEABLE.map((c) => (
+                  <label key={c.key}>
+                    <input type="checkbox" checked={visible.includes(c.key)} onChange={() => toggle(c.key)} />{c.label}
+                  </label>
+                ))}
               </div>
-              <HoldingsTable holdings={b.holdings} visible={visible} denom={b.holdingsValue} />
-            </div>
-          ))}
-        </>
-      )}
-    </div>
+            )}
+          </div>
+        } />
+
+      <Card title="All accounts">
+        {holdings.length === 0
+          ? <EmptyState title="No holdings yet" body="Add a position in Activity or connect SimpleFIN in Settings." />
+          : <DataTable columns={cols} rows={toRows(holdings, summary.investedValue)} getKey={(r) => r.security_id} />}
+      </Card>
+
+      {accountsWithHoldings.length > 1 && accountsWithHoldings.map((b) => (
+        <Card key={b.account.id} title={b.account.name}
+          subtitle={`${money(b.holdingsValue)} in holdings${b.cash ? ` · ${money(b.cash)} cash` : ""}`}>
+          <DataTable columns={cols} rows={toRows(b.holdings, b.holdingsValue)} getKey={(r) => r.security_id} />
+        </Card>
+      ))}
+    </>
   );
 }
