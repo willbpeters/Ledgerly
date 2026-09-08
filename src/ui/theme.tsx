@@ -33,6 +33,12 @@ export function applyTheme(resolved: ResolvedTheme) {
   root.style.colorScheme = resolved;
 }
 
+// Apply the stored theme the moment this module loads, before any component
+// renders. Waiting for ThemeProvider's effect would mean the first paint uses
+// the light palette, and anything reading CSS variables during that first
+// render (the charts) would capture the wrong colours and keep them.
+if (typeof document !== "undefined") applyTheme(resolve(loadPref()));
+
 interface ThemeCtx { pref: ThemePref; resolved: ResolvedTheme; setPref: (p: ThemePref) => void; }
 const Ctx = createContext<ThemeCtx | null>(null);
 
