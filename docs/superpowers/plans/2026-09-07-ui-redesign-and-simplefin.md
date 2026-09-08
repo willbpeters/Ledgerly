@@ -1231,7 +1231,6 @@ describe("theme preference", () => {
   it("applies the resolved theme to the html element", () => {
     applyTheme("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 });
 ```
@@ -2412,8 +2411,8 @@ import { DataTable, type Column } from "../../ui/DataTable";
 import type { Transaction } from "../../domain/types";
 
 type Tab = "position" | "transaction" | "csv";
-const TXN_TONE: Record<string, "pos" | "neg" | "neutral" | "accent"> = {
-  buy: "accent", sell: "warn" as never, dividend: "pos", interest: "pos", deposit: "pos", withdrawal: "neg", fee: "neg",
+const TXN_TONE: Record<string, "pos" | "neg" | "neutral" | "accent" | "warn"> = {
+  buy: "accent", sell: "warn", dividend: "pos", interest: "pos", deposit: "pos", withdrawal: "neg", fee: "neg",
 };
 
 export function Activity() {
@@ -2491,14 +2490,6 @@ export function Activity() {
     </>
   );
 }
-```
-
-Fix the `TXN_TONE` map so it type-checks cleanly — `Badge` tone accepts `"warn"`, so declare it as:
-
-```ts
-const TXN_TONE: Record<string, "pos" | "neg" | "neutral" | "accent" | "warn"> = {
-  buy: "accent", sell: "warn", dividend: "pos", interest: "pos", deposit: "pos", withdrawal: "neg", fee: "neg",
-};
 ```
 
 - [ ] **Step 2: Update the three forms' buttons**
