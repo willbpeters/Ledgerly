@@ -31,3 +31,39 @@ pub fn delete(key: &str) -> Result<(), String> {
         Err(e) => Err(format!("Couldn't remove from the credential store: {e}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trips a value through the real Windows Credential Manager under a
+    /// throwaway key, then removes it. Ignored by default because it touches
+    /// the machine's credential store; run with
+    /// `cargo test credential_store_round_trip -- --ignored`.
+    #[test]
+    #[ignore = "touches the OS credential store"]
+    fn credential_store_round_trip() {
+        const KEY: &str = "ledgerly_test_round_trip";
+        // Start clean even if a previous run died halfway.
+        delete(KEY).unwrap();
+        assert_eq!(get(KEY).unwrap(), None, "should start with nothing stored");
+
+        set(KEY, "https://user:pass@example.com/simplefin").unwrap();
+        assert_eq!(
+            get(KEY).unwrap().as_deref(),
+            Some("https://user:pass@example.com/simplefin")
+        );
+
+        // Overwriting replaces rather than erroring.
+        set(KEY, "https://user:pass2@example.com/simplefin").unwrap();
+        assert_eq!(
+            get(KEY).unwrap().as_deref(),
+            Some("https://user:pass2@example.com/simplefin")
+        );
+
+        delete(KEY).unwrap();
+        assert_eq!(get(KEY).unwrap(), None, "delete should remove the entry");
+        // Deleting again is a no-op, not an error.
+        delete(KEY).unwrap();
+    }
+}
