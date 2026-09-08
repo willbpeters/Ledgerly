@@ -3,6 +3,7 @@ mod models;
 mod commands;
 mod prices;
 mod secrets;
+mod simplefin;
 
 use tauri::Manager;
 
