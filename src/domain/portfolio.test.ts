@@ -29,3 +29,30 @@ describe("derivePortfolio", () => {
     expect(p.summary.dayChange).toBe(5 * 10);
   });
 });
+
+describe("derivePortfolio with a credit card", () => {
+  const card: Account = { id: 3, name: "Card", type: "credit", institution: "Chase", currency: "USD",
+    created_at: "", source: "simplefin", external_id: "c", synced_balance: -1200, last_synced_at: null };
+
+  it("subtracts what is owed from net worth without touching cash", () => {
+    const withCard = derivePortfolio({ txns, securities, accounts: [...accounts, card],
+      latest: [[10, 250]], previous: [[10, 240]], synced });
+    const without = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
+
+    expect(withCard.summary.liabilities).toBe(-1200);
+    expect(withCard.summary.cash).toBe(without.summary.cash);
+    expect(withCard.summary.totalValue).toBe(without.summary.totalValue - 1200);
+  });
+
+  it("keeps a debt out of the allocation chart", () => {
+    const p = derivePortfolio({ txns, securities, accounts: [...accounts, card],
+      latest: [[10, 250]], previous: [[10, 240]], synced });
+    expect(p.allocationAccount.some((s) => s.label === "Card")).toBe(false);
+    expect(p.allocationAccount.every((s) => s.value > 0)).toBe(true);
+  });
+
+  it("reports no liabilities when there is no credit account", () => {
+    const p = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
+    expect(p.summary.liabilities).toBe(0);
+  });
+});

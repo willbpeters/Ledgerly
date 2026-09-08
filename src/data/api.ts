@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, Security, Transaction, Snapshot,
   SyncedHolding, SyncReport, SimplefinStatus,
+  Category, BankTransaction, CategoryRule, Budget,
 } from "../domain/types";
 
 export interface NewAccount { name: string; type: string; institution: string | null; }
@@ -46,6 +47,34 @@ export const api = {
     status: () => invoke<SimplefinStatus>("simplefin_status"),
     connect: (setupToken: string) => invoke<SyncReport>("simplefin_connect", { setupToken }),
     sync: () => invoke<SyncReport>("simplefin_sync"),
+    backfill: (days: number) => invoke<SyncReport>("simplefin_backfill", { days }),
     disconnect: (deleteAccounts: boolean) => invoke<void>("simplefin_disconnect", { deleteAccounts }),
+  },
+  categories: {
+    list: () => invoke<Category[]>("categories_list"),
+    create: (name: string, kind: string, colour: string) =>
+      invoke<Category>("categories_create", { name, kind, colour }),
+    update: (id: number, name: string, colour: string) =>
+      invoke<void>("categories_update", { id, name, colour }),
+    delete: (id: number) => invoke<void>("categories_delete", { id }),
+  },
+  bankTransactions: {
+    list: (from: string, to: string) =>
+      invoke<BankTransaction[]>("bank_transactions_list", { from, to }),
+    range: () => invoke<[string | null, string | null]>("bank_transactions_range"),
+    setCategory: (id: number, categoryId: number | null, applyToPayee: boolean) =>
+      invoke<number>("bank_transaction_set_category", { id, categoryId, applyToPayee }),
+  },
+  rules: {
+    list: () => invoke<CategoryRule[]>("rules_list"),
+    delete: (id: number) => invoke<void>("rules_delete", { id }),
+  },
+  budgets: {
+    list: () => invoke<Budget[]>("budgets_list"),
+    set: (categoryId: number, month: string | null, amount: number) =>
+      invoke<void>("budget_set", { categoryId, month, amount }),
+  },
+  accountTypes: {
+    set: (id: number, kind: string) => invoke<void>("accounts_set_type", { id, kind }),
   },
 };

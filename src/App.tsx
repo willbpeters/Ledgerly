@@ -7,6 +7,7 @@ import { Holdings } from "./features/holdings/Holdings";
 import { Accounts } from "./features/accounts/Accounts";
 import { Activity } from "./features/activity/Activity";
 import { Settings } from "./features/settings/Settings";
+import { Spending } from "./features/spending/Spending";
 import { ThemeProvider } from "./ui/theme";
 import { ToastProvider } from "./ui/toast";
 import "./styles.css";
@@ -20,6 +21,7 @@ const router = createBrowserRouter([
       { path: "holdings", element: <Holdings /> },
       { path: "accounts", element: <Accounts /> },
       { path: "activity", element: <Activity /> },
+      { path: "spending", element: <Spending /> },
       { path: "settings", element: <Settings /> },
     ],
   },

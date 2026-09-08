@@ -6,6 +6,7 @@ const links = [
   { to: "/holdings", label: "Holdings", icon: Icons.holdings },
   { to: "/accounts", label: "Accounts", icon: Icons.accounts },
   { to: "/activity", label: "Activity", icon: Icons.activity },
+  { to: "/spending", label: "Spending", icon: Icons.budget },
 ];
 
 export function IconRail() {
@@ -18,7 +19,6 @@ export function IconRail() {
           <l.icon />
         </NavLink>
       ))}
-      <span className="rail-btn disabled" title="Budget — coming soon" aria-hidden><Icons.budget /></span>
       <div className="rail-foot">
         <NavLink to="/settings" title="Settings" aria-label="Settings"
           className={({ isActive }) => "rail-btn" + (isActive ? " active" : "")}>

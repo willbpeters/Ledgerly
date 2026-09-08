@@ -87,3 +87,90 @@ export function useDeleteTransaction() {
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.transactions }),
   });
 }
+
+// ---------- budgeting ----------
+
+export const budgetKeys = {
+  categories: ["categories"] as const,
+  rules: ["rules"] as const,
+  budgets: ["budgets"] as const,
+  txns: (from: string, to: string) => ["bankTxns", from, to] as const,
+  range: ["bankTxns", "range"] as const,
+};
+
+export const useCategories = () => useQuery({ queryKey: budgetKeys.categories, queryFn: api.categories.list });
+export const useRules = () => useQuery({ queryKey: budgetKeys.rules, queryFn: api.rules.list });
+export const useBudgets = () => useQuery({ queryKey: budgetKeys.budgets, queryFn: api.budgets.list });
+export const useBankTransactions = (from: string, to: string) =>
+  useQuery({ queryKey: budgetKeys.txns(from, to), queryFn: () => api.bankTransactions.list(from, to) });
+export const useBankTransactionRange = () =>
+  useQuery({ queryKey: budgetKeys.range, queryFn: api.bankTransactions.range });
+
+/** A category change can move rows and rewrite rules, so refetch both. */
+function invalidateSpending(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["bankTxns"] });
+  qc.invalidateQueries({ queryKey: budgetKeys.categories });
+  qc.invalidateQueries({ queryKey: budgetKeys.rules });
+}
+
+export function useSetTransactionCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; categoryId: number | null; applyToPayee: boolean }) =>
+      api.bankTransactions.setCategory(v.id, v.categoryId, v.applyToPayee),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+export function useCreateCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { name: string; kind: string; colour: string }) =>
+      api.categories.create(v.name, v.kind, v.colour),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+export function useUpdateCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; name: string; colour: string }) =>
+      api.categories.update(v.id, v.name, v.colour),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+export function useDeleteCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.categories.delete(id),
+    onSuccess: () => { invalidateSpending(qc); qc.invalidateQueries({ queryKey: budgetKeys.budgets }); },
+  });
+}
+export function useDeleteRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.rules.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: budgetKeys.rules }),
+  });
+}
+export function useSetBudget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { categoryId: number; month: string | null; amount: number }) =>
+      api.budgets.set(v.categoryId, v.month, v.amount),
+    onSuccess: () => qc.invalidateQueries({ queryKey: budgetKeys.budgets }),
+  });
+}
+export function useSetAccountType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; kind: string }) => api.accountTypes.set(v.id, v.kind),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.accounts }),
+  });
+}
+export function useSimplefinBackfill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (days: number) => api.simplefin.backfill(days),
+    onSuccess: writeLastSync,
+    onSettled: () => { invalidateAfterSync(qc); qc.invalidateQueries({ queryKey: ["bankTxns"] }); },
+  });
+}

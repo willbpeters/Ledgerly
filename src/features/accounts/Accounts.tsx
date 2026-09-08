@@ -1,4 +1,4 @@
-import { useAccounts, useDeleteAccount } from "../../data/queries";
+import { useAccounts, useDeleteAccount, useSetAccountType } from "../../data/queries";
 import { usePortfolio } from "../../data/usePortfolio";
 import { AccountForm } from "./AccountForm";
 import { PageHeader, Card, Button, Badge, EmptyState } from "../../ui/components";
@@ -10,11 +10,21 @@ export function Accounts() {
   const { data: accounts = [], isLoading } = useAccounts();
   const { accountValues } = usePortfolio();
   const del = useDeleteAccount();
+  const setType = useSetAccountType();
 
   const columns: Column<Account>[] = [
     { key: "name", label: "Account", align: "left", render: (a) => (
         <div><div className="cell-primary">{a.name}</div><div className="cell-secondary">{a.institution ?? "—"}</div></div>) },
-    { key: "type", label: "Type", align: "left", render: (a) => <Badge>{a.type === "brokerage" ? "Brokerage" : "Cash"}</Badge> },
+    // SimpleFIN never says what kind of account something is, so it is a guess
+    // from the balance sign and can be corrected here.
+    { key: "type", label: "Type", align: "left", render: (a) => (
+        <select value={a.type} aria-label={`Type of `}
+          onChange={(e) => setType.mutate({ id: a.id, kind: e.target.value })}
+          style={{ padding: "3px 6px", fontSize: 12 }}>
+          <option value="brokerage">Brokerage</option>
+          <option value="cash">Cash</option>
+          <option value="credit">Credit card</option>
+        </select>) },
     { key: "source", label: "Source", align: "left", render: (a) =>
         a.source === "simplefin" ? <Badge tone="accent">SimpleFIN</Badge> : <Badge>Manual</Badge> },
     { key: "synced", label: "Last synced", render: (a) => a.source === "simplefin" ? timeAgo(a.last_synced_at) : "—" },

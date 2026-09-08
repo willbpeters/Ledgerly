@@ -4,6 +4,7 @@ export function buildSummary(
   holdings: Holding[],
   cash: number,
   previousPrices: Map<number, number>,
+  liabilities: number = 0,
 ): PortfolioSummary {
   const investedValue = holdings.reduce((s, h) => s + h.marketValue, 0);
   const totalCostBasis = holdings.reduce((s, h) => s + h.costBasis, 0);
@@ -27,11 +28,13 @@ export function buildSummary(
     }
     priorInvested += h.shares * prev;
   }
-  const priorTotal = priorInvested + cash;
-  const totalValue = investedValue + cash;
+  // Debts are negative, so they simply join the sum: net worth is what you own
+  // minus what you owe.
+  const priorTotal = priorInvested + cash + liabilities;
+  const totalValue = investedValue + cash + liabilities;
 
   return {
-    totalValue, investedValue, cash, totalCostBasis, unrealized,
+    totalValue, investedValue, cash, liabilities, totalCostBasis, unrealized,
     unrealizedPct: totalCostBasis > 0 ? (unrealized / totalCostBasis) * 100 : 0,
     realized,
     dayChange: hasPrev ? dayChange : 0,

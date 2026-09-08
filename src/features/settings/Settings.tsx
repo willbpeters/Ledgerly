@@ -2,6 +2,7 @@ import { useRefreshPrices } from "../../data/useRefresh";
 import { Card, Button } from "../../ui/components";
 import { ThemeToggle } from "../../ui/ThemeToggle";
 import { SimplefinCard } from "./SimplefinCard";
+import { CategoriesCard } from "./CategoriesCard";
 
 export function Settings() {
   const refresh = useRefreshPrices();
@@ -24,11 +25,13 @@ export function Settings() {
 
       <SimplefinCard />
 
+      <CategoriesCard />
+
       <Card title="About">
         <div className="grid" style={{ gap: 4, fontSize: 13 }}>
           <div><span className="muted">Version</span> · Ledgerly 0.1.0</div>
           <div><span className="muted">Data</span> · stored locally in <code>%APPDATA%\com.ledgerly.app\finance.sqlite</code></div>
-          <div><span className="muted">Coming later</span> · encrypted database + app lock, budgeting</div>
+          <div><span className="muted">Coming later</span> · encrypted database + app lock</div>
         </div>
       </Card>
     </>

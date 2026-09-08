@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect } from "../../data/queries";
+import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill } from "../../data/queries";
 import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
 import type { SyncReport } from "../../domain/types";
@@ -14,6 +14,7 @@ function Report({ r }: { r: SyncReport }) {
     <div className="grid" style={{ gap: 6 }}>
       <div className="notice pos">
         Synced {r.accounts_synced} account{r.accounts_synced === 1 ? "" : "s"} and {r.holdings_synced} holding{r.holdings_synced === 1 ? "" : "s"}.
+        {r.transactions_added > 0 && ` Imported ${r.transactions_added} new transaction${r.transactions_added === 1 ? "" : "s"}.`}
         {r.holdings_skipped > 0 && ` ${r.holdings_skipped} holding${r.holdings_skipped === 1 ? "" : "s"} had no ticker symbol and were skipped.`}
       </div>
       {r.errors.map((e, i) => <div key={i} className="notice warn">{e}</div>)}
@@ -26,6 +27,7 @@ export function SimplefinCard() {
   const connect = useSimplefinConnect();
   const sync = useSimplefinSync();
   const disconnect = useSimplefinDisconnect();
+  const backfill = useSimplefinBackfill();
   const [token, setToken] = useState("");
   const [report, setReport] = useState<SyncReport | null>(null);
   const [error, setError] = useState("");
@@ -57,6 +59,10 @@ export function SimplefinCard() {
           <div className="muted">Last synced {timeAgo(status.last_synced_at)}. Balances and holdings update each time you sync.</div>
           <div className="row center">
             <Button onClick={doSync} loading={sync.isPending}>Sync now</Button>
+            <Button variant="secondary" loading={backfill.isPending} onClick={() => {
+              setError(""); setReport(null);
+              backfill.mutate(730, { onSuccess: setReport, onError: (e) => setError(String(e)) });
+            }}>Import 2 years</Button>
             <Button variant="danger" onClick={doDisconnect} loading={disconnect.isPending}>Disconnect</Button>
           </div>
           {report && <Report r={report} />}

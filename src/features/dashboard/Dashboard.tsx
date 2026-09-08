@@ -112,6 +112,12 @@ export function Dashboard() {
           <div className="cap">Cash</div>
           <div className="n">{money(summary.cash)}</div>
         </div>
+        {summary.liabilities !== 0 && (
+          <div className="headline-side">
+            <div className="cap">Owed</div>
+            <div className="n neg">{money(summary.liabilities)}</div>
+          </div>
+        )}
       </div>
 
       <Card title="Portfolio value" actions={

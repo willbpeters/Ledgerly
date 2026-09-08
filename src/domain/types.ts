@@ -1,4 +1,4 @@
-export type AccountType = "brokerage" | "cash";
+export type AccountType = "brokerage" | "cash" | "credit";
 export type SecurityType = "stock" | "etf";
 export type TxnType =
   | "buy" | "sell" | "dividend" | "deposit" | "withdrawal" | "fee" | "interest";
@@ -31,6 +31,8 @@ export interface Holding {
 }
 export interface PortfolioSummary {
   totalValue: number; investedValue: number; cash: number;
+  /** Money owed on credit accounts, as a negative number (0 when none). */
+  liabilities: number;
   totalCostBasis: number; unrealized: number; unrealizedPct: number;
   realized: number; dayChange: number; dayChangePct: number;
 }
@@ -42,6 +44,27 @@ export interface SyncedHolding {
   shares: number; cost_basis: number; market_value: number; as_of: string;
 }
 export interface SyncReport {
-  accounts_synced: number; holdings_synced: number; holdings_skipped: number; errors: string[];
+  accounts_synced: number; holdings_synced: number; holdings_skipped: number;
+  transactions_added: number; transactions_updated: number; errors: string[];
 }
 export interface SimplefinStatus { connected: boolean; last_synced_at: string | null; }
+
+export type CategoryKind = "spending" | "income" | "transfer";
+export interface Category {
+  id: number; name: string; kind: CategoryKind;
+  colour: string; sort: number; is_builtin: boolean;
+}
+export interface BankTransaction {
+  id: number; account_id: number; external_id: string;
+  posted: string; amount: number; description: string;
+  payee: string | null; memo: string | null; mcc: string | null;
+  pending: boolean; category_id: number | null;
+  category_source: "auto" | "manual";
+}
+export interface CategoryRule {
+  id: number; match_type: "payee" | "description" | "mcc";
+  pattern: string; category_id: number; created_at: string;
+}
+export interface Budget {
+  id: number; category_id: number; month: string | null; limit_amount: number;
+}
