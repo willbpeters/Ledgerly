@@ -12,14 +12,15 @@ app is free to run and uses no paid services.
 
 **Stack:** Tauri v2 + React 19 + TypeScript + Vite + SQLite (rusqlite).
 
-## Current state: investments, SimpleFIN sync, and the command-rail UI
+## Current state: investments, SimpleFIN sync, budgeting, command-rail UI
 
 The v1 investments module (22 tasks) shipped to `master`. Phase 2 added SimpleFIN
 balance and holdings sync plus a themed component kit. Phase 3 replaced the shell
 and palette with the "command rail" direction on warm off-white, chosen by the
-owner from four mockups.
+owner from four mockups, later moved from indigo to green. Phase 4 added the
+budgeting and spending module.
 
-- **Tests:** 54 TypeScript (Vitest) + 34 Rust (`cargo test`), plus 3 tests marked
+- **Tests:** 68 TypeScript (Vitest) + 68 Rust (`cargo test`), plus 4 tests marked
   `#[ignore]` that touch the network or the OS credential store — all passing.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
@@ -32,7 +33,13 @@ owner from four mockups.
   recent Activity, today's Movers and Accounts, plus a "needs attention" block.
   The right rail is collapsible from the command bar (remembered in
   `localStorage`) and hides itself under 1180px.
-- **Accounts**: create/list/delete, types `brokerage` and `cash`.
+- **Spending** (the budgeting module): a month stepper; spent, income, left over
+  and a needs-a-category count; every spending category with its monthly limit,
+  progress bar and remainder; and the month's transactions with an inline
+  category picker. Changing a category can write a payee rule that later syncs
+  obey. Categories and the learned rules are managed in Settings.
+- **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
+  the type editable because SimpleFIN never says which accounts are cards.
 - **Activity**: an **account context selector at the top** — the entry forms and
   the transaction list below all operate on the selected account. Three tabs:
   quick-add position, full transaction form, and CSV import
@@ -103,9 +110,20 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **2**; migrations are
+  **unencrypted**. The schema is at `user_version` **3**; migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
+- **v3 rebuilds the accounts table** to widen its `type` CHECK to accept
+  `credit`, because SQLite cannot alter a CHECK. It runs with foreign keys off
+  so the rebuild does not cascade-delete transactions, and switches them back on
+  afterwards. Tested against a populated v1 database.
+- **Categorising happens in Rust at sync time**, not in the UI, so categories
+  are right before any screen opens. The ladder is in `budget/categorize.rs`: a
+  manual choice is never overruled, then user rules (MCC, payee, description),
+  then the merchant-code map in `budget/mcc.rs`, then the sign of the amount.
+- **SimpleFIN transactions carry an `mcc`** — the card network's merchant
+  category code — which is what makes auto-categorisation accurate. Do not
+  replace it with text matching on the description.
 - **SimpleFIN's demo *setup token* is permanently claimed** and returns 403 to
   everyone, so it cannot be used to test the claim flow. Connecting therefore
   accepts an **access URL** as well as a setup token, and "Try the demo" fills in
@@ -132,24 +150,21 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 Each item below should get its own **spec → plan → implement** cycle rather than
 being bolted on ad hoc. Suggested order:
 
-1. **Budgeting / spending module** — the other half of the product, and the
-   largest remaining piece. Deserves its own design spec.
-2. **SimpleFIN transaction import** — the feed already carries transactions; we
-   fetch with `balances-only=1` today. This is the natural input to budgeting.
-3. **SimpleFIN scheduled auto-sync** — sync is manual today. A timer alongside
+1. **SimpleFIN scheduled auto-sync** — sync is manual today. A timer alongside
    the price auto-refresh would do it.
-4. **Encrypted database (SQLCipher) + app lock** — Windows Hello / passkey /
+2. **Encrypted database (SQLCipher) + app lock** — Windows Hello / passkey /
    master password, with an auto-lock timeout.
-5. **Holding detail drill-down** — a per-holding view showing individual lots.
+3. **Holding detail drill-down** — a per-holding view showing individual lots.
    This is in the design spec but was scoped out of v1.
-6. **Crypto and manual/other asset types** (real estate, private assets).
-7. **Advanced returns** (XIRR / time-weighted return, benchmarks) and
+4. **Crypto and manual/other asset types** (real estate, private assets).
+5. **Advanced returns** (XIRR / time-weighted return, benchmarks) and
    **historical backfill** for the value-over-time chart (today it only builds
    forward from daily snapshots).
-8. **Multi-currency** (v1 is USD-only).
+6. **Multi-currency** (v1 is USD-only).
 
 ## Reference documents
 
+- **Budgeting spec:** `docs/superpowers/specs/2026-09-07-budgeting-design.md`
 - **Design canvas:** the four dashboard directions and the type study live in
   `design/ledgerly-dashboard/` as `.dc.html` sources; the 2.5MB seeded canvas is
   git-ignored and rebuilt from them.
