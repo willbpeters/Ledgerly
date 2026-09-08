@@ -24,6 +24,24 @@ pub struct SfAccount {
     /// YYYY-MM-DD derived from `balance-date`
     pub balance_date: String,
     pub holdings: Vec<SfHolding>,
+    pub transactions: Vec<SfTransaction>,
+}
+
+/// One posted (or pending) transaction on an account.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SfTransaction {
+    /// Stable per account, so it is the deduplication key.
+    pub id: String,
+    /// YYYY-MM-DD derived from `posted`.
+    pub posted: String,
+    /// Negative is money out.
+    pub amount: f64,
+    pub description: String,
+    pub payee: Option<String>,
+    pub memo: Option<String>,
+    /// Merchant category code, the backbone of auto-categorisation.
+    pub mcc: Option<String>,
+    pub pending: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -136,7 +154,35 @@ fn parse_account(a: &Value, connections: &HashMap<String, String>) -> Option<SfA
         .and_then(Value::as_array)
         .map(|arr| arr.iter().map(parse_holding).collect())
         .unwrap_or_default();
-    Some(SfAccount { id, name, institution, currency, balance, balance_date, holdings })
+    let transactions = a
+        .get("transactions")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(parse_transaction).collect())
+        .unwrap_or_default();
+    Some(SfAccount { id, name, institution, currency, balance, balance_date, holdings, transactions })
+}
+
+fn parse_transaction(t: &Value) -> Option<SfTransaction> {
+    // Without an id we cannot deduplicate, so such a row is dropped rather than
+    // risking a duplicate on every sync.
+    let id = t.get("id").and_then(Value::as_str).map(str::to_string)
+        .or_else(|| t.get("id").and_then(Value::as_i64).map(|n| n.to_string()))?;
+    let text = |k: &str| t.get(k).and_then(Value::as_str).map(str::trim)
+        .filter(|s| !s.is_empty()).map(str::to_string);
+    Some(SfTransaction {
+        id,
+        posted: t.get("posted").map(epoch_to_date).unwrap_or_else(today),
+        amount: t.get("amount").map(money).unwrap_or(0.0),
+        description: text("description").unwrap_or_else(|| "Transaction".to_string()),
+        payee: text("payee"),
+        memo: text("memo"),
+        mcc: t.get("mcc").and_then(|v| match v {
+            Value::String(s) => Some(s.trim().to_string()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }).filter(|s| !s.is_empty()),
+        pending: t.get("pending").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 fn parse_holding(h: &Value) -> SfHolding {
@@ -213,6 +259,47 @@ mod tests {
         assert!((a.balance - 114405.51).abs() < 1e-9);
         assert_eq!(a.balance_date, "2026-09-09"); // 1788912000 = 2026-09-09T00:00:00Z
         assert!(a.holdings.is_empty());
+    }
+
+    #[test]
+    fn parses_transactions_with_merchant_codes() {
+        // Shaped exactly like the live demo feed, which carries payee/memo/mcc.
+        const JSON: &str = r#"{"errors":[],"accounts":[{"id":"A1","name":"Card","currency":"USD",
+          "balance":"-240.10","balance-date":1788912000,"transactions":[
+            {"id":"1783768170","posted":1783768170,"amount":"-55.50","description":"Fishing bait",
+             "payee":"John's Fishin Shack","memo":"JOHNS FISHIN SHACK BAIT","transacted_at":1783768170,"mcc":"5812"},
+            {"id":1783796970,"posted":1783796970,"amount":"-85.50","description":"Grocery store","mcc":5411},
+            {"id":"p1","posted":1783796970,"amount":"-9.00","description":"Coffee","pending":true},
+            {"posted":1783796970,"amount":"-1.00","description":"No id, must be dropped"}
+          ],"org":{"name":"Demo Bank"}}]}"#;
+        let set = parse_accounts_json(JSON).unwrap();
+        let a = &set.accounts[0];
+        assert_eq!(a.transactions.len(), 3, "the row without an id is dropped");
+
+        let t = &a.transactions[0];
+        assert_eq!(t.id, "1783768170");
+        assert_eq!(t.posted, "2026-07-11");
+        assert!((t.amount + 55.5).abs() < 1e-9);
+        assert_eq!(t.description, "Fishing bait");
+        assert_eq!(t.payee.as_deref(), Some("John's Fishin Shack"));
+        assert_eq!(t.memo.as_deref(), Some("JOHNS FISHIN SHACK BAIT"));
+        assert_eq!(t.mcc.as_deref(), Some("5812"));
+        assert!(!t.pending);
+
+        // Numeric id and numeric mcc are both accepted.
+        assert_eq!(a.transactions[1].id, "1783796970");
+        assert_eq!(a.transactions[1].mcc.as_deref(), Some("5411"));
+        assert_eq!(a.transactions[1].payee, None);
+
+        assert!(a.transactions[2].pending);
+        assert!((a.balance + 240.10).abs() < 1e-9, "a card balance stays negative");
+    }
+
+    #[test]
+    fn an_account_with_no_transactions_key_parses_to_an_empty_list() {
+        const JSON: &str = r#"{"errors":[],"accounts":[{"id":"A1","name":"S","currency":"USD",
+          "balance":"1.00","balance-date":1788912000,"org":{"name":"D"}}]}"#;
+        assert!(parse_accounts_json(JSON).unwrap().accounts[0].transactions.is_empty());
     }
 
     #[test]

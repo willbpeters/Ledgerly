@@ -25,9 +25,10 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 }
 
 /// Version-gated migrations. v1 is the whole base schema; v2 adds SimpleFIN
-/// sync columns and the synced_holdings table. To add a change later: bump
-/// TARGET_VERSION and add another `if current < N` block.
-const TARGET_VERSION: i64 = 2;
+/// sync columns and the synced_holdings table; v3 adds budgeting and the
+/// `credit` account type. To add a change later: bump TARGET_VERSION and add
+/// another `if current < N` block.
+const TARGET_VERSION: i64 = 3;
 
 const MIGRATION_2: &str = "
 ALTER TABLE accounts ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'
@@ -49,6 +50,73 @@ CREATE TABLE IF NOT EXISTS synced_holdings (
 );
 ";
 
+/// v3: budgeting. `accounts.type` must accept 'credit', and SQLite cannot alter
+/// a CHECK constraint, so the table is rebuilt. Foreign keys are suspended
+/// around the rebuild because transactions and synced_holdings reference it.
+const MIGRATION_3: &str = "
+CREATE TABLE accounts_v3 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('brokerage','cash','credit')),
+  institution TEXT,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  created_at TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','simplefin')),
+  external_id TEXT,
+  synced_balance REAL,
+  last_synced_at TEXT
+);
+INSERT INTO accounts_v3 (id,name,type,institution,currency,created_at,source,external_id,synced_balance,last_synced_at)
+  SELECT id,name,type,institution,currency,created_at,source,external_id,synced_balance,last_synced_at FROM accounts;
+DROP TABLE accounts;
+ALTER TABLE accounts_v3 RENAME TO accounts;
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_external_id
+  ON accounts(external_id) WHERE external_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('spending','income','transfer')),
+  colour TEXT NOT NULL DEFAULT 'chart-1',
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_builtin INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  external_id TEXT NOT NULL,
+  posted TEXT NOT NULL,
+  amount REAL NOT NULL,
+  description TEXT NOT NULL,
+  payee TEXT,
+  memo TEXT,
+  mcc TEXT,
+  pending INTEGER NOT NULL DEFAULT 0,
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  category_source TEXT NOT NULL DEFAULT 'auto' CHECK (category_source IN ('auto','manual')),
+  UNIQUE (account_id, external_id)
+);
+CREATE INDEX IF NOT EXISTS bank_transactions_posted ON bank_transactions(posted);
+
+CREATE TABLE IF NOT EXISTS category_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  match_type TEXT NOT NULL CHECK (match_type IN ('payee','description','mcc')),
+  pattern TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  UNIQUE (match_type, pattern)
+);
+
+CREATE TABLE IF NOT EXISTS budgets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  month TEXT,
+  limit_amount REAL NOT NULL,
+  UNIQUE (category_id, month)
+);
+";
+
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if current < 1 {
@@ -56,6 +124,14 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     }
     if current < 2 {
         conn.execute_batch(MIGRATION_2)?;
+    }
+    if current < 3 {
+        // The accounts rebuild must not cascade-delete rows in referencing tables.
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        let result = conn.execute_batch(MIGRATION_3);
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        result?;
+        crate::budget::seed::insert_builtin_categories(conn)?;
     }
     conn.execute_batch(&format!("PRAGMA user_version = {};", TARGET_VERSION))?;
     Ok(())
@@ -81,9 +157,8 @@ mod tests {
         assert_eq!(count, 5);
     }
 
-    #[test]
-    fn migrates_v1_database_to_v2() {
-        // Build a v1 database by hand, then run the migrations on it.
+    /// A v1 database with one account and one transaction in it.
+    fn v1_database() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         conn.execute_batch(SCHEMA).unwrap();
@@ -93,23 +168,75 @@ mod tests {
              VALUES ('Old','brokerage',NULL,'USD','2026-01-01')",
             [],
         ).unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_id,type,date,amount) VALUES (1,'deposit','2026-01-02',500)",
+            [],
+        ).unwrap();
+        conn
+    }
 
+    #[test]
+    fn migrates_a_v1_database_all_the_way_forward() {
+        let conn = v1_database();
         apply_migrations(&conn).unwrap();
 
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 2);
-        // existing rows default to manual
+        assert_eq!(version, TARGET_VERSION);
+        // v2: existing rows default to manual
         let source: String = conn
             .query_row("SELECT source FROM accounts WHERE name='Old'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(source, "manual");
-        let has_table: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='synced_holdings'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(has_table, 1);
+        for table in ["synced_holdings", "categories", "bank_transactions", "category_rules", "budgets"] {
+            let has: i64 = conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(has, 1, "{table} should exist");
+        }
+    }
+
+    #[test]
+    fn the_v3_rebuild_keeps_rows_and_accepts_credit_accounts() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+
+        // The accounts rebuild must not lose the row, nor cascade away its transaction.
+        let accounts: i64 = conn.query_row("SELECT count(*) FROM accounts", [], |r| r.get(0)).unwrap();
+        assert_eq!(accounts, 1);
+        let txns: i64 = conn.query_row("SELECT count(*) FROM transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(txns, 1, "the rebuild must not cascade-delete transactions");
+
+        // The widened CHECK now allows a credit card.
+        conn.execute(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Card','credit','USD','2026-01-01')",
+            [],
+        ).unwrap();
+        // And still rejects nonsense.
+        assert!(conn.execute(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('X','nonsense','USD','2026-01-01')",
+            [],
+        ).is_err());
+    }
+
+    #[test]
+    fn v3_seeds_the_builtin_categories_once() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM categories WHERE is_builtin=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(n as usize, crate::budget::seed::BUILTIN.len());
+
+        // Running migrations again must not duplicate them.
+        apply_migrations(&conn).unwrap();
+        let again: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(again, n);
+    }
+
+    #[test]
+    fn foreign_keys_are_back_on_after_the_rebuild() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        let on: i64 = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
+        assert_eq!(on, 1);
     }
 }

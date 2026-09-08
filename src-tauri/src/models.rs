@@ -82,3 +82,52 @@ pub struct SyncedHolding {
     pub market_value: f64,
     pub as_of: String,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Category {
+    pub id: i64,
+    pub name: String,
+    /// "spending", "income" or "transfer"
+    pub kind: String,
+    /// A chart token name such as "chart-1".
+    pub colour: String,
+    pub sort: i64,
+    pub is_builtin: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BankTransaction {
+    pub id: i64,
+    pub account_id: i64,
+    pub external_id: String,
+    /// YYYY-MM-DD
+    pub posted: String,
+    /// Negative is money out.
+    pub amount: f64,
+    pub description: String,
+    pub payee: Option<String>,
+    pub memo: Option<String>,
+    pub mcc: Option<String>,
+    pub pending: bool,
+    pub category_id: Option<i64>,
+    /// "auto" or "manual"
+    pub category_source: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CategoryRule {
+    pub id: i64,
+    pub match_type: String,
+    pub pattern: String,
+    pub category_id: i64,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Budget {
+    pub id: i64,
+    pub category_id: i64,
+    /// "YYYY-MM", or null for the limit that applies to every month.
+    pub month: Option<String>,
+    pub limit_amount: f64,
+}

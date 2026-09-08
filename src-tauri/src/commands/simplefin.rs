@@ -35,11 +35,68 @@ pub fn last_synced_at(conn: &Connection) -> rusqlite::Result<Option<String>> {
     )
 }
 
-fn run_sync(db: &Db, access_url: &str) -> Result<SyncReport, String> {
-    // Network first, without holding the DB lock.
-    let set = client::fetch_accounts(access_url)?;
-    let mut conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    sync::apply(&mut conn, &set)
+/// Re-fetch a few days either side of what we already hold, so a transaction
+/// that was pending last time settles rather than lingering.
+const OVERLAP_DAYS: i64 = 5;
+/// How far back a first import reaches when the user has not chosen.
+const DEFAULT_BACKFILL_DAYS: i64 = 365;
+
+fn merge(total: &mut SyncReport, part: SyncReport) {
+    // Accounts are counted once, not once per window.
+    total.accounts_synced = total.accounts_synced.max(part.accounts_synced);
+    total.holdings_synced = total.holdings_synced.max(part.holdings_synced);
+    total.holdings_skipped = total.holdings_skipped.max(part.holdings_skipped);
+    total.transactions_added += part.transactions_added;
+    total.transactions_updated += part.transactions_updated;
+    for e in part.errors {
+        if !total.errors.contains(&e) {
+            total.errors.push(e);
+        }
+    }
+}
+
+/// Pull transactions as well as balances.
+///
+/// `days_back` beyond SimpleFIN's 45-day guidance is walked in windows, oldest
+/// first, because the bridge warns (and may one day refuse) on a wider ask.
+fn run_sync_with_transactions(db: &Db, access_url: &str, days_back: i64) -> Result<SyncReport, String> {
+    let now = chrono::Utc::now().timestamp();
+    let window = client::MAX_WINDOW_DAYS * 86_400;
+    let mut start = now - days_back.max(1) * 86_400;
+    let mut total = SyncReport::default();
+
+    loop {
+        let end = start + window;
+        let range = if end >= now {
+            client::Range { since: start, until: None }
+        } else {
+            client::Range { since: start, until: Some(end) }
+        };
+        let set = client::fetch_accounts_in(access_url, range)?;
+        {
+            let mut conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+            merge(&mut total, sync::apply(&mut conn, &set)?);
+        }
+        if end >= now {
+            break;
+        }
+        start = end;
+    }
+    Ok(total)
+}
+
+/// How far back this sync needs to reach: from just before the newest
+/// transaction we hold, or a full backfill when we hold none.
+fn days_back_for_incremental(conn: &Connection) -> i64 {
+    let newest: Option<String> = conn
+        .query_row("SELECT MAX(posted) FROM bank_transactions", [], |r| r.get(0))
+        .unwrap_or(None);
+    let Some(newest) = newest else { return DEFAULT_BACKFILL_DAYS };
+    let Ok(date) = chrono::NaiveDate::parse_from_str(&newest, "%Y-%m-%d") else {
+        return DEFAULT_BACKFILL_DAYS;
+    };
+    let age = (chrono::Utc::now().date_naive() - date).num_days();
+    (age + OVERLAP_DAYS).clamp(1, DEFAULT_BACKFILL_DAYS)
 }
 
 #[tauri::command]
@@ -54,14 +111,31 @@ pub fn simplefin_status(db: tauri::State<Db>) -> Result<SimplefinStatus, String>
 pub fn simplefin_connect(db: tauri::State<Db>, setup_token: String) -> Result<SyncReport, String> {
     let access_url = client::resolve_access_url(&setup_token)?;
     secrets::set(KEY, &access_url)?;
-    run_sync(&db, &access_url)
+    // A first connect brings a year of history so budgeting has something to show.
+    run_sync_with_transactions(&db, &access_url, DEFAULT_BACKFILL_DAYS)
 }
 
 #[tauri::command]
 pub fn simplefin_sync(db: tauri::State<Db>) -> Result<SyncReport, String> {
-    let access_url = secrets::get(KEY)?
-        .ok_or_else(|| "SimpleFIN isn't connected yet. Paste a setup token in Settings to connect.".to_string())?;
-    run_sync(&db, &access_url)
+    let access_url = access_url()?;
+    let days = {
+        let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        days_back_for_incremental(&conn)
+    };
+    run_sync_with_transactions(&db, &access_url, days)
+}
+
+/// Reach further back than the routine sync does, for someone who wants more
+/// history than they started with.
+#[tauri::command]
+pub fn simplefin_backfill(db: tauri::State<Db>, days: i64) -> Result<SyncReport, String> {
+    let access_url = access_url()?;
+    run_sync_with_transactions(&db, &access_url, days.clamp(1, 2000))
+}
+
+fn access_url() -> Result<String, String> {
+    secrets::get(KEY)?
+        .ok_or_else(|| "SimpleFIN isn't connected yet. Paste a setup token in Settings to connect.".to_string())
 }
 
 #[tauri::command]

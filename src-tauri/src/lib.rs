@@ -4,6 +4,7 @@ mod commands;
 mod prices;
 mod secrets;
 mod simplefin;
+mod budget;
 
 use tauri::Manager;
 
@@ -37,8 +38,21 @@ pub fn run() {
             commands::simplefin::simplefin_status,
             commands::simplefin::simplefin_connect,
             commands::simplefin::simplefin_sync,
+            commands::simplefin::simplefin_backfill,
             commands::simplefin::simplefin_disconnect,
             commands::simplefin::synced_holdings_list,
+            commands::budget::categories_list,
+            commands::budget::categories_create,
+            commands::budget::categories_update,
+            commands::budget::categories_delete,
+            commands::budget::bank_transactions_list,
+            commands::budget::bank_transactions_range,
+            commands::budget::bank_transaction_set_category,
+            commands::budget::rules_list,
+            commands::budget::rules_delete,
+            commands::budget::budgets_list,
+            commands::budget::budget_set,
+            commands::budget::accounts_set_type,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

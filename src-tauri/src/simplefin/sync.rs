@@ -10,20 +10,34 @@ pub struct SyncReport {
     pub accounts_synced: usize,
     pub holdings_synced: usize,
     pub holdings_skipped: usize,
+    pub transactions_added: usize,
+    pub transactions_updated: usize,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct AccountResult {
+    holdings_synced: usize,
+    holdings_skipped: usize,
+    transactions_added: usize,
+    transactions_updated: usize,
 }
 
 pub fn apply(conn: &mut Connection, set: &SfAccountSet) -> Result<SyncReport, String> {
     let mut report = SyncReport { errors: set.errors.clone(), ..Default::default() };
     let now = chrono::Utc::now().to_rfc3339();
+    // Rules are read once: they change only when the user edits a category.
+    let rules = crate::budget::store::load_rules(conn).map_err(|e| e.to_string())?;
     for sf in &set.accounts {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
-        match apply_account(&tx, sf, &now) {
-            Ok((synced, skipped)) => {
+        match apply_account(&tx, sf, &now, &rules) {
+            Ok(r) => {
                 tx.commit().map_err(|e| e.to_string())?;
                 report.accounts_synced += 1;
-                report.holdings_synced += synced;
-                report.holdings_skipped += skipped;
+                report.holdings_synced += r.holdings_synced;
+                report.holdings_skipped += r.holdings_skipped;
+                report.transactions_added += r.transactions_added;
+                report.transactions_updated += r.transactions_updated;
             }
             Err(e) => {
                 // tx drops → rolled back
@@ -34,24 +48,40 @@ pub fn apply(conn: &mut Connection, set: &SfAccountSet) -> Result<SyncReport, St
     Ok(report)
 }
 
+/// SimpleFIN does not say what kind of account something is, so infer it:
+/// anything reporting holdings is a brokerage, a negative balance is money
+/// owed, and everything else is cash. The user can correct it in Accounts.
+fn infer_type(sf: &SfAccount) -> &'static str {
+    if !sf.holdings.is_empty() {
+        "brokerage"
+    } else if sf.balance < 0.0 {
+        "credit"
+    } else {
+        "cash"
+    }
+}
+
 fn is_fund(description: &str) -> bool {
     let d = description.to_lowercase();
     d.contains("etf") || d.contains("fund") || d.contains("index") || d.contains("trust")
 }
 
-/// Returns (holdings synced, holdings skipped).
-fn apply_account(tx: &Connection, sf: &SfAccount, now: &str) -> rusqlite::Result<(usize, usize)> {
+fn apply_account(
+    tx: &Connection,
+    sf: &SfAccount,
+    now: &str,
+    rules: &[crate::budget::categorize::Rule],
+) -> rusqlite::Result<AccountResult> {
     let existing: Option<i64> = tx
         .query_row("SELECT id FROM accounts WHERE external_id=?1", [&sf.id], |r| r.get(0))
         .optional()?;
     let account_id = match existing {
         Some(id) => id,
         None => {
-            let type_ = if sf.holdings.is_empty() { "cash" } else { "brokerage" };
             tx.execute(
                 "INSERT INTO accounts (name,type,institution,currency,created_at,source,external_id)
                  VALUES (?1,?2,?3,'USD',?4,'simplefin',?5)",
-                params![sf.name, type_, sf.institution, now, sf.id],
+                params![sf.name, infer_type(sf), sf.institution, now, sf.id],
             )?;
             tx.last_insert_rowid()
         }
@@ -99,7 +129,31 @@ fn apply_account(tx: &Connection, sf: &SfAccount, now: &str) -> rusqlite::Result
             [account_id],
         )?;
     }
-    Ok((kept.len(), skipped))
+
+    // Bank transactions arrive only when the fetch asked for them, so an
+    // empty list here means "not requested", never "delete what we hold".
+    let incoming: Vec<crate::budget::store::IncomingTxn> = sf
+        .transactions
+        .iter()
+        .map(|t| crate::budget::store::IncomingTxn {
+            external_id: t.id.clone(),
+            posted: t.posted.clone(),
+            amount: t.amount,
+            description: t.description.clone(),
+            payee: t.payee.clone(),
+            memo: t.memo.clone(),
+            mcc: t.mcc.clone(),
+            pending: t.pending,
+        })
+        .collect();
+    let counts = crate::budget::store::upsert_transactions(tx, account_id, &incoming, rules)?;
+
+    Ok(AccountResult {
+        holdings_synced: kept.len(),
+        holdings_skipped: skipped,
+        transactions_added: counts.added,
+        transactions_updated: counts.updated,
+    })
 }
 
 #[cfg(test)]
@@ -115,6 +169,7 @@ mod tests {
         SfAccount {
             id: id.into(), name: format!("Acct {id}"), institution: "Demo Bank".into(),
             currency: "USD".into(), balance, balance_date: "2026-09-07".into(), holdings,
+            transactions: vec![],
         }
     }
     fn count(conn: &rusqlite::Connection, sql: &str) -> i64 {
@@ -196,6 +251,56 @@ mod tests {
     }
 
     #[test]
+    fn account_type_is_inferred_from_holdings_and_balance_sign() {
+        let mut conn = db::open_in_memory().unwrap();
+        let mut card = account("card1", -240.10, vec![]);
+        card.transactions = vec![crate::simplefin::parse::SfTransaction {
+            id: "t1".into(), posted: "2026-09-01".into(), amount: -55.5,
+            description: "Fishing bait".into(), payee: Some("John's Fishin Shack".into()),
+            memo: None, mcc: Some("5812".into()), pending: false,
+        }];
+        let set = SfAccountSet { errors: vec![], accounts: vec![
+            card,
+            account("cash1", 8420.55, vec![]),
+            account("brk1", 5.0, vec![holding("VTI", 10.0, 2000.0, 2500.0)]),
+        ] };
+        let r = apply(&mut conn, &set).unwrap();
+        assert_eq!(r.transactions_added, 1);
+        assert_eq!(r.transactions_updated, 0);
+
+        let type_of = |ext: &str| -> String {
+            conn.query_row("SELECT type FROM accounts WHERE external_id=?1", [ext], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(type_of("card1"), "credit", "a negative balance is money owed");
+        assert_eq!(type_of("cash1"), "cash");
+        assert_eq!(type_of("brk1"), "brokerage");
+
+        // The transaction was categorised from its merchant code on the way in.
+        let category: Option<String> = conn.query_row(
+            "SELECT c.name FROM bank_transactions t LEFT JOIN categories c ON c.id=t.category_id",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(category.as_deref(), Some("Dining"));
+    }
+
+    #[test]
+    fn a_sync_without_transactions_never_deletes_the_ones_we_hold() {
+        let mut conn = db::open_in_memory().unwrap();
+        let mut with = account("card1", -10.0, vec![]);
+        with.transactions = vec![crate::simplefin::parse::SfTransaction {
+            id: "t1".into(), posted: "2026-09-01".into(), amount: -5.0,
+            description: "Coffee".into(), payee: None, memo: None, mcc: None, pending: false,
+        }];
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![with] }).unwrap();
+
+        // A later balances-only sync carries no transactions at all.
+        let r = apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("card1", -10.0, vec![])] }).unwrap();
+        assert_eq!(r.transactions_added, 0);
+        let n: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "the stored transaction must survive");
+    }
+
+    #[test]
     fn feed_errors_are_passed_through() {
         let mut conn = db::open_in_memory().unwrap();
         let set = SfAccountSet { errors: vec!["Bank needs attention".into()], accounts: vec![] };
@@ -212,6 +317,37 @@ mod tests {
     /// Uses the demo *access URL* rather than the demo setup token: the shared
     /// token at bridge.simplefin.org/simplefin/claim/demo is permanently
     /// claimed and answers 403 to everyone.
+    #[test]
+    #[ignore = "hits the network"]
+    fn live_demo_categorises_real_transactions() {
+        use crate::simplefin::client::{fetch_accounts_in, Range, MAX_WINDOW_DAYS};
+        let set = fetch_accounts_in(
+            "https://demo:demo@beta-bridge.simplefin.org/simplefin",
+            Range::last_days(MAX_WINDOW_DAYS),
+        ).unwrap();
+
+        let mut conn = db::open_in_memory().unwrap();
+        let report = apply(&mut conn, &set).unwrap();
+        assert!(report.transactions_added > 0, "the demo feed should import transactions");
+
+        // Re-applying the same feed must update rather than duplicate.
+        let again = apply(&mut conn, &set).unwrap();
+        assert_eq!(again.transactions_added, 0);
+        assert_eq!(again.transactions_updated, report.transactions_added);
+
+        // The merchant codes in the feed should land real categories.
+        let categorised: i64 = conn.query_row(
+            "SELECT count(*) FROM bank_transactions WHERE category_id IS NOT NULL", [], |r| r.get(0),
+        ).unwrap();
+        assert!(categorised > 0, "merchant codes should have categorised something");
+
+        let groceries: i64 = conn.query_row(
+            "SELECT count(*) FROM bank_transactions t JOIN categories c ON c.id=t.category_id
+             WHERE c.name='Groceries'", [], |r| r.get(0),
+        ).unwrap();
+        assert!(groceries > 0, "the demo's 5411 rows should be Groceries");
+    }
+
     #[test]
     #[ignore = "hits the network"]
     fn live_demo_end_to_end() {
