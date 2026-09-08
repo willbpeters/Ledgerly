@@ -7,6 +7,7 @@ import { Holdings } from "./features/holdings/Holdings";
 import { Accounts } from "./features/accounts/Accounts";
 import { Activity } from "./features/activity/Activity";
 import { Settings } from "./features/settings/Settings";
+import { ThemeProvider } from "./ui/theme";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -30,9 +31,11 @@ function AutoRefresh() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AutoRefresh />
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <AutoRefresh />
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
