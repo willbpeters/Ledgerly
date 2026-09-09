@@ -8,6 +8,7 @@ import { money, pct, fmtDate } from "../../ui/format";
 import { Card, EmptyState, Segmented } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { useChartColors } from "../../ui/chartColors";
+import { RiskCard } from "./RiskCard";
 import type { Holding, SeriesPoint } from "../../domain/types";
 
 type Range = "1m" | "3m" | "1y" | "all";
@@ -151,6 +152,8 @@ export function Dashboard() {
           </ResponsiveContainer>
         )}
       </Card>
+
+      <RiskCard holdings={holdings} cash={summary.cash} />
 
       <Card title="Positions" actions={<Link to="/holdings" style={{ fontSize: 11, fontWeight: 600 }}>View all</Link>}>
         {rows.length === 0 ? (

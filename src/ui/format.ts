@@ -19,3 +19,9 @@ export function timeAgo(iso: string | null | undefined, now: Date = new Date()):
   if (h < 24) return `${h} h ago`;
   return `${Math.round(h / 24)} d ago`;
 }
+
+/** A proportion (0..1) as a percentage. Unlike `pct`, no +/- sign: a share of
+ *  something is never "negative 40%". */
+export function share(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
+}

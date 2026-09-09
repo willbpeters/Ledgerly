@@ -326,3 +326,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 
 /* Hidden accounts: still readable, visibly set aside. */
 .dim { opacity: 0.55; }
+
+/* A row of small figures inside a card. */
+.stat-row { display: flex; flex-wrap: wrap; gap: 32px; margin-bottom: 14px; }

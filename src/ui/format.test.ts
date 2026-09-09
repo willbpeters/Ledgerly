@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { money, pct, fmtDate, timeAgo } from "./format";
+import { money, pct, share, fmtDate, timeAgo } from "./format";
 
 describe("format helpers", () => {
   it("money formats USD with two decimals", () => {
@@ -23,5 +23,16 @@ describe("timeAgo", () => {
     expect(timeAgo("2026-09-07T09:00:00Z", now)).toBe("3 h ago");
     expect(timeAgo("2026-09-05T12:00:00Z", now)).toBe("2 d ago");
     expect(timeAgo(null, now)).toBe("never");
+  });
+});
+
+describe("share", () => {
+  it("renders a proportion as a plain percentage", () => {
+    expect(share(0.8)).toBe("80.0%");
+    expect(share(0.25)).toBe("25.0%");
+  });
+  it("never signs the number, unlike pct", () => {
+    expect(share(1)).toBe("100.0%");
+    expect(share(0)).toBe("0.0%");
   });
 });
