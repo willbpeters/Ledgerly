@@ -26,8 +26,9 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 
 /// Version-gated migrations. v1 is the whole base schema; v2 adds SimpleFIN
 /// sync columns and the synced_holdings table; v3 adds budgeting and the
-/// `credit` account type. To add a change later: bump TARGET_VERSION and add
-/// another `if current < N` block.
+/// `credit` account type. To add a change later: bump TARGET_VERSION, add
+/// another `if current < N` block, and give it a completeness check so a
+/// mis-stamped database can still repair itself.
 const TARGET_VERSION: i64 = 3;
 
 const MIGRATION_2: &str = "
@@ -50,10 +51,12 @@ CREATE TABLE IF NOT EXISTS synced_holdings (
 );
 ";
 
-/// v3: budgeting. `accounts.type` must accept 'credit', and SQLite cannot alter
-/// a CHECK constraint, so the table is rebuilt. Foreign keys are suspended
-/// around the rebuild because transactions and synced_holdings reference it.
-const MIGRATION_3: &str = "
+/// v3, part one: `accounts.type` must accept 'credit', and SQLite cannot
+/// alter a CHECK constraint, so the table is rebuilt. Foreign keys are
+/// suspended around the rebuild because transactions and synced_holdings
+/// reference it. The leading DROP lets a rebuild that died half-way be retried.
+const MIGRATION_3_ACCOUNTS: &str = "
+DROP TABLE IF EXISTS accounts_v3;
 CREATE TABLE accounts_v3 (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -72,7 +75,11 @@ DROP TABLE accounts;
 ALTER TABLE accounts_v3 RENAME TO accounts;
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_external_id
   ON accounts(external_id) WHERE external_id IS NOT NULL;
+";
 
+/// v3, part two: the budgeting tables. Every statement is IF NOT EXISTS, so this
+/// is safe to re-run against a database that already has some of them.
+const MIGRATION_3_BUDGET: &str = "
 CREATE TABLE IF NOT EXISTS categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
@@ -117,23 +124,82 @@ CREATE TABLE IF NOT EXISTS budgets (
 );
 ";
 
+/// The tables v3 is responsible for, used by the completeness check below.
+const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
+
+fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+}
+
+fn set_user_version(conn: &Connection, version: i64) -> rusqlite::Result<()> {
+    // PRAGMA will not take a bound parameter, hence the format.
+    conn.execute_batch(&format!("PRAGMA user_version = {};", version))
+}
+
+fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        [name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Whether accounts has already been rebuilt with the widened CHECK. Read from
+/// the stored DDL, which is the only place a CHECK constraint lives.
+fn accounts_accepts_credit(conn: &Connection) -> rusqlite::Result<bool> {
+    let sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(sql.contains("'credit'"))
+}
+
+/// Whether every v3 object is actually present, whatever the version stamp says.
+fn v3_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    for table in V3_TABLES {
+        if !table_exists(conn, table)? {
+            return Ok(false);
+        }
+    }
+    accounts_accepts_credit(conn)
+}
+
+/// Apply v3. Each half is skipped when already in place, so this is safe to run
+/// against a partially-migrated database.
+fn apply_v3(conn: &Connection) -> rusqlite::Result<()> {
+    if !accounts_accepts_credit(conn)? {
+        // The accounts rebuild must not cascade-delete rows in referencing tables.
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        let result = conn.execute_batch(MIGRATION_3_ACCOUNTS);
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        result?;
+    }
+    conn.execute_batch(MIGRATION_3_BUDGET)?;
+    crate::budget::seed::insert_builtin_categories(conn)?;
+    Ok(())
+}
+
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
-    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let current = user_version(conn)?;
     if current < 1 {
         conn.execute_batch(SCHEMA)?;
+        set_user_version(conn, 1)?;
     }
     if current < 2 {
         conn.execute_batch(MIGRATION_2)?;
+        set_user_version(conn, 2)?;
     }
-    if current < 3 {
-        // The accounts rebuild must not cascade-delete rows in referencing tables.
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
-        let result = conn.execute_batch(MIGRATION_3);
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-        result?;
-        crate::budget::seed::insert_builtin_categories(conn)?;
+    // v3 runs whenever its objects are missing, not merely when the version says
+    // so. A database can carry a v3 stamp without the v3 schema -- an interrupted
+    // migration, or a mid-development build that stamped the version before the
+    // migration existed -- and trusting the number alone strands it there for
+    // good, failing every budget query with "no such table: category_rules".
+    if current < 3 || !v3_is_complete(conn)? {
+        apply_v3(conn)?;
     }
-    conn.execute_batch(&format!("PRAGMA user_version = {};", TARGET_VERSION))?;
+    set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
 
@@ -232,6 +298,71 @@ mod tests {
         assert_eq!(again, n);
     }
 
+    /// Exactly the state found on the owner's machine: a v2 schema carrying a
+    /// v3 stamp. The version gate then skips MIGRATION_3 forever, so every
+    /// budget query fails with "no such table: category_rules".
+    fn v2_schema_mis_stamped_as_v3() -> Connection {
+        let conn = v1_database();
+        conn.execute_batch(MIGRATION_2).unwrap();
+        conn.execute_batch("PRAGMA user_version = 3;").unwrap();
+        conn
+    }
+
+    #[test]
+    fn repairs_a_database_stamped_v3_that_never_got_the_v3_tables() {
+        let conn = v2_schema_mis_stamped_as_v3();
+        apply_migrations(&conn).unwrap();
+        for table in ["categories", "bank_transactions", "category_rules", "budgets"] {
+            let has: i64 = conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(has, 1, "{table} should have been repaired into place");
+        }
+    }
+
+    #[test]
+    fn the_repair_widens_the_accounts_check_to_accept_credit() {
+        let conn = v2_schema_mis_stamped_as_v3();
+        apply_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Card','credit','USD','2026-01-01')",
+            [],
+        ).unwrap();
+    }
+
+    #[test]
+    fn the_repair_keeps_existing_rows() {
+        let conn = v2_schema_mis_stamped_as_v3();
+        apply_migrations(&conn).unwrap();
+        let accounts: i64 = conn.query_row("SELECT count(*) FROM accounts", [], |r| r.get(0)).unwrap();
+        let txns: i64 = conn.query_row("SELECT count(*) FROM transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(accounts, 1, "repair must not lose accounts");
+        assert_eq!(txns, 1, "repair must not cascade-delete transactions");
+    }
+
+    #[test]
+    fn the_repair_seeds_the_builtin_categories() {
+        let conn = v2_schema_mis_stamped_as_v3();
+        apply_migrations(&conn).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(n as usize, crate::budget::seed::BUILTIN.len());
+    }
+
+    #[test]
+    fn a_healthy_database_is_left_untouched_by_the_repair_check() {
+        let conn = open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO categories (name,kind,colour,sort,is_builtin) VALUES ('Mine','spending','chart-1',999,0)",
+            [],
+        ).unwrap();
+        let before: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+
+        apply_migrations(&conn).unwrap();
+
+        let after: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(before, after, "re-running migrations must not disturb a good database");
+    }
     #[test]
     fn foreign_keys_are_back_on_after_the_rebuild() {
         let conn = v1_database();

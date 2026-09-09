@@ -20,7 +20,7 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 84 TypeScript (Vitest) + 68 Rust (`cargo test`), plus 4 tests marked
+- **Tests:** 84 TypeScript (Vitest) + 73 Rust (`cargo test`), plus 4 tests marked
   `#[ignore]` that touch the network or the OS credential store — all passing.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
@@ -139,6 +139,17 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   `credit`, because SQLite cannot alter a CHECK. It runs with foreign keys off
   so the rebuild does not cascade-delete transactions, and switches them back on
   afterwards. Tested against a populated v1 database.
+- **Migrations do not trust the version stamp alone.** `apply_migrations`
+  also checks that the v3 objects are really present (`v3_is_complete`) and
+  re-applies them if not. This exists because a real database was found
+  stamped `user_version = 3` while carrying a v2 schema — every budget query
+  failed with `no such table: category_rules`, and the version gate meant it
+  could never repair itself. `execute_batch` is not transactional, so a
+  migration interrupted half-way leaves exactly this state; both halves of v3
+  are now idempotent (the accounts rebuild is skipped when the CHECK already
+  accepts `credit`, the budget tables are all `IF NOT EXISTS`) and the version
+  is stamped step by step rather than once at the end. **Keep any new
+  migration idempotent and add it to the completeness check.**
 - **Categorising happens in Rust at sync time**, not in the UI, so categories
   are right before any screen opens. The ladder is in `budget/categorize.rs`: a
   manual choice is never overruled, then user rules (MCC, payee, description),
