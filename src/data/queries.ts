@@ -9,6 +9,7 @@ export const keys = {
   latest: ["prices", "latest"] as const,
   previous: ["prices", "previous"] as const,
   snapshots: ["snapshots"] as const,
+  historyDepth: ["prices", "historyDepth"] as const,
   synced: ["synced_holdings"] as const,
   simplefin: ["simplefin", "status"] as const,
 };
@@ -53,6 +54,20 @@ export function useSimplefinDisconnect() {
   });
 }
 
+export const usePriceHistoryDepth = () =>
+  useQuery({ queryKey: keys.historyDepth, queryFn: api.prices.historyDepth });
+
+export function useBackfillPrices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.prices.backfill(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.historyDepth });
+      qc.invalidateQueries({ queryKey: keys.latest });
+      qc.invalidateQueries({ queryKey: keys.previous });
+    },
+  });
+}
 export function useCreateAccount() {
   const qc = useQueryClient();
   return useMutation({

@@ -32,6 +32,8 @@ export const api = {
     setManual: (security_id: number, date: string, close: number) =>
       invoke<void>("prices_set_manual", { securityId: security_id, date, close }),
     refresh: () => invoke<number>("prices_refresh"), // added in Task 15
+    backfill: () => invoke<number>("prices_backfill"),
+    historyDepth: () => invoke<number>("prices_history_depth"),
   },
   snapshots: {
     list: () => invoke<Snapshot[]>("snapshots_list"),

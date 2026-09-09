@@ -34,6 +34,8 @@ pub fn run() {
             commands::prices::prices_previous,
             commands::prices::prices_set_manual,
             commands::prices::prices_refresh,
+            commands::prices::prices_backfill,
+            commands::prices::prices_history_depth,
             commands::snapshots::snapshots_list,
             commands::snapshots::snapshots_record,
             commands::simplefin::simplefin_status,

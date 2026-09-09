@@ -57,6 +57,25 @@ pub fn prices_refresh(db: tauri::State<Db>) -> Result<usize, String> {
     crate::prices::refresh_all(&db, &crate::prices::YahooProvider)
 }
 
+/// Download the full daily history for every security. Run rarely — see
+/// `backfill_all`.
+#[tauri::command]
+pub fn prices_backfill(db: tauri::State<Db>) -> Result<usize, String> {
+    crate::prices::backfill_all(&db, &crate::prices::YahooProvider)
+}
+
+/// How many days of history the best-covered security has. The frontend uses
+/// this to decide whether a backfill is needed, so it is not re-downloaded on
+/// every launch.
+#[tauri::command]
+pub fn prices_history_depth(db: tauri::State<Db>) -> Result<i64, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.query_row(
+        "SELECT COALESCE(MAX(n), 0) FROM (SELECT count(*) n FROM prices GROUP BY security_id)",
+        [], |r| r.get(0),
+    ).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

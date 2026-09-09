@@ -1,10 +1,18 @@
 use serde_json::Value;
 
-/// Yahoo Finance public chart endpoint for a ticker's recent daily bars.
-pub fn chart_url(ticker: &str) -> String {
+/// Window for the ordinary price refresh: just enough for latest and previous.
+pub const RECENT_RANGE: &str = "5d";
+/// Window for the history backfill. Two years of daily closes is enough for
+/// beta, volatility and drawdown without making the response unwieldy, and it
+/// costs the same single request as the short window.
+pub const HISTORY_RANGE: &str = "2y";
+
+/// Yahoo Finance public chart endpoint for a ticker's daily bars over `range`.
+pub fn chart_url(ticker: &str, range: &str) -> String {
     format!(
-        "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1d&range=5d",
-        ticker.trim().to_uppercase()
+        "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1d&range={}",
+        ticker.trim().to_uppercase(),
+        range
     )
 }
 
@@ -55,9 +63,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn history_url_asks_for_two_years_of_daily_closes() {
+        let url = chart_url("vti", HISTORY_RANGE);
+        assert!(url.contains("range=2y"), "{url}");
+        assert!(url.contains("interval=1d"), "{url}");
+        assert!(url.contains("/VTI?"), "{url}");
+    }
+
+    #[test]
+    fn the_ordinary_refresh_still_asks_for_a_short_window() {
+        assert!(chart_url("aapl", RECENT_RANGE).contains("range=5d"));
+    }
+
+    #[test]
     fn builds_uppercase_url() {
         assert_eq!(
-            chart_url("aapl"),
+            chart_url("aapl", RECENT_RANGE),
             "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=5d"
         );
     }
