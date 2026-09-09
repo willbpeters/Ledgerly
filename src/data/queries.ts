@@ -80,6 +80,13 @@ export function useCreateTransaction() {
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.transactions }),
   });
 }
+export function useCreateTransactions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (txns: NewTransaction[]) => api.transactions.createMany(txns),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.transactions }),
+  });
+}
 export function useDeleteTransaction() {
   const qc = useQueryClient();
   return useMutation({

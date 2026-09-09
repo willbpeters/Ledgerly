@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { IconRail } from "./IconRail";
 import { CommandBar } from "./CommandBar";
 import { InsightRail } from "./InsightRail";
+import { ErrorBoundary } from "../ui/ErrorBoundary";
 
 const KEY = "ledgerly.insightRail";
 
@@ -26,7 +27,12 @@ export function AppShell() {
       <IconRail />
       <div className="centre">
         <CommandBar onToggleInsight={toggle} />
-        <main className="workspace"><div className="page"><Outlet /></div></main>
+        <main className="workspace">
+          <div className="page">
+            {/* Per-screen, so one broken screen still leaves the rails usable. */}
+            <ErrorBoundary><Outlet /></ErrorBoundary>
+          </div>
+        </main>
       </div>
       {open && <InsightRail />}
     </div>

@@ -3,13 +3,10 @@ import type {
   Account, Security, Transaction, Snapshot,
   SyncedHolding, SyncReport, SimplefinStatus,
   Category, BankTransaction, CategoryRule, Budget,
+  NewAccount, NewTransaction,
 } from "../domain/types";
 
-export interface NewAccount { name: string; type: string; institution: string | null; }
-export interface NewTransaction {
-  account_id: number; security_id: number | null; type: string; date: string;
-  quantity: number; price: number; amount: number; fees: number; note: string | null;
-}
+export type { NewAccount, NewTransaction };
 
 export const api = {
   accounts: {

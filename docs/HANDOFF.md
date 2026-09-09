@@ -1,6 +1,6 @@
 # Ledgerly — Handoff & Next Steps
 
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 **Repo:** `C:\Users\willi\Dev\FinTech` → GitHub `willbpeters/Ledgerly` (private), branch `master`
 
 ## What this project is
@@ -20,7 +20,7 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 68 TypeScript (Vitest) + 68 Rust (`cargo test`), plus 4 tests marked
+- **Tests:** 84 TypeScript (Vitest) + 68 Rust (`cargo test`), plus 4 tests marked
   `#[ignore]` that touch the network or the OS credential store — all passing.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
@@ -49,9 +49,11 @@ budgeting and spending module.
 - **Dashboard**: a serif net-worth figure with today, all-time and cash beside
   it; a value-over-time area chart with a 1M/3M/1Y/All range picker whose Y axis
   zooms to the data rather than anchoring at zero; and a positions table.
-- **Prices**: keyless Yahoo Finance provider; **auto-refresh** ~5s during US
-  market hours and every 15 min outside them; manual refresh in Settings;
-  daily portfolio snapshots feed the chart.
+- **Prices**: keyless Yahoo Finance provider; **auto-refresh** once a minute
+  during US market hours and every 15 min outside them, **paused while the
+  window is hidden** and refreshed immediately on return; manual refresh in
+  Settings; daily portfolio snapshots feed the chart. The cadence decision is
+  a pure function in `src/data/refreshSchedule.ts`, so it is unit-tested.
 - **Domain layer** (pure TypeScript, heavily tested): average-cost basis,
   realized/unrealized gains, positions → holdings aggregation, portfolio
   summary with day change, allocation, value series.
@@ -73,6 +75,18 @@ budgeting and spending module.
   2 years" pages backwards in 45-day windows, which is what SimpleFIN asks for.
   Synced accounts show a badge and last-synced time in Accounts, and their
   manual entry forms are disabled in Activity.
+
+### Reliability pass (2026-09-08)
+- **Error boundary** (`src/ui/ErrorBoundary.tsx`) wraps both the whole app and
+  each screen inside `AppShell`. A render crash now shows an explanation and a
+  Reload button instead of a blank white window — which is what the packaged
+  `.exe` used to show, with no console to explain it. A broken screen leaves the
+  rails usable.
+- **Quick add position is cash-neutral.** It writes a deposit and the buy
+  together via the atomic `transactions_create_many`, built by
+  `quickAddTransactions()` in `src/domain/quickAdd.ts`. This closes what was
+  open decision #1.
+- **Price polling backed off** from 5s to 60s and paused when hidden (above).
 
 ## Architecture — keep these seams intact
 
@@ -105,6 +119,12 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   endpoint, keyless, requires a browser-like User-Agent). We switched off
   **Stooq** after it began serving a JavaScript anti-bot challenge; the Stooq
   implementation is kept behind the trait but is inactive.
+- **Price refreshing is a politeness budget.** Every refresh fetches each
+  security from Yahoo in a separate blocking request, one after another, so the
+  interval multiplies by the number of holdings. At the old 5s cadence a
+  20-holding portfolio made ~240 requests a minute, which invites a 429 and a
+  repeat of the Stooq problem. Do not shorten `MARKET_HOURS_MS` without batching
+  the fetches first.
 - **The `.exe` is a frozen snapshot.** Code changes do not appear until you run
   `npm run tauri build` again. Use `npm run tauri dev` for live iteration.
 - **Windows PowerShell 5.1 does not support `&&`** for chaining commands — run
@@ -140,12 +160,7 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Open decisions (nothing blocking)
 
-1. **Quick-add cash behaviour.** "Quick add position" records a `buy`, whose cash
-   effect is negative, without a matching deposit — so an account's cash (and
-   net worth) reads negative unless the user also records deposits. Options:
-   auto-create a matching deposit, exclude quick-adds from cash, or leave as-is
-   and rely on the user entering deposits.
-2. Optional: rename branch `master` → `main` to match the modern GitHub default.
+1. Optional: rename branch `master` → `main` to match the modern GitHub default.
 
 ## Remaining work
 

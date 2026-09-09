@@ -10,6 +10,7 @@ import { Settings } from "./features/settings/Settings";
 import { Spending } from "./features/spending/Spending";
 import { ThemeProvider } from "./ui/theme";
 import { ToastProvider } from "./ui/toast";
+import { ErrorBoundary } from "./ui/ErrorBoundary";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -34,13 +35,17 @@ function AutoRefresh() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <ToastProvider>
-        <QueryClientProvider client={queryClient}>
-          <AutoRefresh />
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </ToastProvider>
-    </ThemeProvider>
+    // Outermost net: catches anything the per-screen boundary in AppShell can't,
+    // so the packaged app never shows a blank white window.
+    <ErrorBoundary>
+      <ThemeProvider>
+        <ToastProvider>
+          <QueryClientProvider client={queryClient}>
+            <AutoRefresh />
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </ToastProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

@@ -68,3 +68,11 @@ export interface CategoryRule {
 export interface Budget {
   id: number; category_id: number; month: string | null; limit_amount: number;
 }
+
+/** A transaction on its way to the database, before it has an id. */
+export interface NewTransaction {
+  account_id: number; security_id: number | null; type: string; date: string;
+  quantity: number; price: number; amount: number; fees: number; note: string | null;
+}
+/** An account on its way to the database, before it has an id. */
+export interface NewAccount { name: string; type: string; institution: string | null; }

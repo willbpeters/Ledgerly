@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { useCreateTransaction } from "../../data/queries";
+import { useCreateTransactions } from "../../data/queries";
 import { api } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../data/queries";
+import { quickAddTransactions } from "../../domain/quickAdd";
 import { Button, Field } from "../../ui/components";
 
 export function AddPositionForm({ accountId }: { accountId: number }) {
-  const createTxn = useCreateTransaction();
+  const createTxns = useCreateTransactions();
   const qc = useQueryClient();
   const [ticker, setTicker] = useState("");
   const [kind, setKind] = useState("stock");
@@ -28,10 +29,10 @@ export function AddPositionForm({ accountId }: { accountId: number }) {
     try {
       const sec = await api.securities.getOrCreate(ticker.trim(), null, kind);
       await qc.invalidateQueries({ queryKey: keys.securities });
-      await createTxn.mutateAsync(
-        { account_id: accountId, security_id: sec.id, type: "buy", date,
-          quantity: qty, price, amount: qty * price, fees: 0, note: "Quick add" },
-      );
+      // A deposit and the buy, written together, so cash never dips negative.
+      await createTxns.mutateAsync(quickAddTransactions({
+        accountId, securityId: sec.id, date, shares: qty, pricePerShare: price,
+      }));
       setTicker(""); setShares(""); setAvgCost("");
     } catch (err) {
       setError(`Could not add position: ${err}`);
@@ -53,6 +54,10 @@ export function AddPositionForm({ accountId }: { accountId: number }) {
       <Field label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
       <Button type="submit" disabled={busy}>{busy ? "Adding…" : "Add position"}</Button>
       {error && <span className="neg">{error}</span>}
+      <p className="muted" style={{ flexBasis: "100%", margin: "4px 0 0" }}>
+        Quick add assumes you already own these shares, so it records a matching
+        deposit alongside the buy and leaves your cash balance unchanged.
+      </p>
     </form>
   );
 }
