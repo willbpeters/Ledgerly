@@ -20,7 +20,7 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 96 TypeScript (Vitest) + 80 Rust (`cargo test`), plus 4 tests marked
+- **Tests:** 126 TypeScript (Vitest) + 89 Rust (`cargo test`), plus 4 tests marked
   `#[ignore]` that touch the network or the OS credential store — all passing.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
@@ -47,12 +47,23 @@ budgeting and spending module.
 - **Activity**: an **account context selector at the top** — the entry forms and
   the transaction list below all operate on the selected account. Three tabs:
   quick-add position, full transaction form, and CSV import
-  (file → column mapping → preview → commit).
+  (file → column mapping → preview → commit). Picking a **synced** account
+  instead lists that account's **bank transactions** (date, description,
+  category, amount), read-only, because those live in a different table.
 - **Holdings**: overall table, a **per-account breakdown** below it, and a **⚙
   column picker** (persisted to localStorage).
 - **Dashboard**: a serif net-worth figure with today, all-time and cash beside
   it; a value-over-time area chart with a 1M/3M/1Y/All range picker whose Y axis
   zooms to the data rather than anchoring at zero; and a positions table.
+- **Risk (Phase 1)**: a **Concentration** card on the dashboard — largest
+  holding, top-5 combined, cash share, and **effective positions**
+  (`1 / Σwᵢ²`), which is how many equally-sized holdings the portfolio
+  actually behaves like. Maths is pure in `src/domain/risk.ts`. The card
+  describes and never advises; see the spec for the phases still to come.
+- **Price history**: `prices_backfill` stores **two years of daily closes**
+  per security (`HISTORY_RANGE`), run once when `prices_history_depth` shows
+  the database has fewer than `MIN_HISTORY_DAYS` (200). This is the
+  foundation for beta, volatility, drawdown and correlation.
 - **Prices**: keyless Yahoo Finance provider; **auto-refresh** once a minute
   during US market hours and every 15 min outside them, **paused while the
   window is hidden** and refreshed immediately on return; manual refresh in
@@ -153,6 +164,15 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   `v4_is_complete`, and it deliberately runs **after** the v3 block: the v3
   accounts rebuild recreates the table without this column, so a v3 repair on a
   v4 database would drop it — checking v4 afterwards puts it straight back.
+- **The version stamp is a record, not a gate.** v2, v3 and v4 each run when
+  their *objects* are missing; the stamp decides nothing except whether the
+  base schema is needed. A stamp can be wrong in both directions — ahead of the
+  schema (interrupted migration) or **behind** it (an older build re-stamping a
+  database it had already migrated, which is exactly what a downgrade during
+  development does). Trusting it while behind re-runs `ALTER TABLE ADD COLUMN`
+  on an existing column: a hard SQLite error that panics the app at startup,
+  since `db::open` is `.expect()`ed in `lib.rs`. Columns are therefore added
+  through `add_column_if_missing`, never raw.
 - **Migrations do not trust the version stamp alone.** `apply_migrations`
   also checks that the v3 objects are really present (`v3_is_complete`) and
   re-applies them if not. This exists because a real database was found
@@ -164,6 +184,17 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   accepts `credit`, the budget tables are all `IF NOT EXISTS`) and the version
   is stamped step by step rather than once at the end. **Keep any new
   migration idempotent and add it to the completeness check.**
+- **There are two transaction tables, and they are not interchangeable.**
+  `transactions` holds investment activity (buy/sell/deposit/dividend), written
+  by manual entry and CSV import. `bank_transactions` holds bank and card
+  activity, written **only** by SimpleFIN sync via `budget/store.rs`. SimpleFIN
+  never writes a row to `transactions`. Any screen showing "transactions" has
+  to decide which it means — Activity now branches on `account.source`, and
+  Spending reads `bank_transactions` only.
+- **`refresh_all` and `backfill_all` are deliberately different.** The refresh
+  keeps only the two most recent closes because it runs every 60s; the backfill
+  keeps every close because the risk maths needs history. Do not merge them, and
+  do not put the backfill on the polling timer.
 - **Categorising happens in Rust at sync time**, not in the UI, so categories
   are right before any screen opens. The ladder is in `budget/categorize.rs`: a
   manual choice is never overruled, then user rules (MCC, payee, description),
@@ -199,7 +230,12 @@ being bolted on ad hoc. Suggested order:
 3. **Holding detail drill-down** — a per-holding view showing individual lots.
    This is in the design spec but was scoped out of v1.
 4. **Crypto and manual/other asset types** (real estate, private assets).
-5. **Advanced returns** (XIRR / time-weighted return, benchmarks) and
+5. **Risk analytics phases 2-4** — market exposure (beta vs SPY, volatility,
+   R²), downside (max drawdown, historical VaR/CVaR), and diversification
+   (correlation, ETF-overlap detection). Phase 0 (price history) and Phase 1
+   (concentration) are done. Spec:
+   `docs/superpowers/specs/2026-09-08-risk-analytics-design.md`
+6. **Advanced returns** (XIRR / time-weighted return, benchmarks) and
    **historical backfill** for the value-over-time chart (today it only builds
    forward from daily snapshots).
 6. **Multi-currency** (v1 is USD-only).
