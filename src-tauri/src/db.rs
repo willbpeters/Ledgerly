@@ -32,12 +32,17 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// itself.
 const TARGET_VERSION: i64 = 4;
 
+/// v2's added columns, as (name, definition). Added one at a time and only
+/// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
+/// re-adding an existing column is a hard error.
+const V2_COLUMNS: &[(&str, &str)] = &[
+    ("source", "source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','simplefin'))"),
+    ("external_id", "external_id TEXT"),
+    ("synced_balance", "synced_balance REAL"),
+    ("last_synced_at", "last_synced_at TEXT"),
+];
+
 const MIGRATION_2: &str = "
-ALTER TABLE accounts ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'
-  CHECK (source IN ('manual','simplefin'));
-ALTER TABLE accounts ADD COLUMN external_id TEXT;
-ALTER TABLE accounts ADD COLUMN synced_balance REAL;
-ALTER TABLE accounts ADD COLUMN last_synced_at TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_external_id
   ON accounts(external_id) WHERE external_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS synced_holdings (
@@ -127,7 +132,7 @@ CREATE TABLE IF NOT EXISTS budgets (
 
 /// v4: accounts can be hidden. A hidden account is left out of every total,
 /// chart and list; only the Accounts screen still shows it.
-const MIGRATION_4: &str = "ALTER TABLE accounts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;";
+const V4_COLUMN: (&str, &str) = ("hidden", "hidden INTEGER NOT NULL DEFAULT 0");
 
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
@@ -159,6 +164,36 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
     Ok(n > 0)
 }
 
+/// Add a column only if it is not already there. SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, and re-adding one is a hard error that would
+/// panic the app on startup.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, definition: &str)
+    -> rusqlite::Result<()> {
+    if column_exists(conn, table, column)? {
+        return Ok(());
+    }
+    conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))
+}
+
+/// Whether v2 is really in place, whatever the version stamp says.
+fn v2_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    for (name, _) in V2_COLUMNS {
+        if !column_exists(conn, "accounts", name)? {
+            return Ok(false);
+        }
+    }
+    table_exists(conn, "synced_holdings")
+}
+
+/// Apply v2. Each column is added only if missing, so a run that died
+/// part-way can be retried.
+fn apply_v2(conn: &Connection) -> rusqlite::Result<()> {
+    for (name, definition) in V2_COLUMNS {
+        add_column_if_missing(conn, "accounts", name, definition)?;
+    }
+    conn.execute_batch(MIGRATION_2)
+}
+
 /// Whether accounts has already been rebuilt with the widened CHECK. Read from
 /// the stored DDL, which is the only place a CHECK constraint lives.
 fn accounts_accepts_credit(conn: &Connection) -> rusqlite::Result<bool> {
@@ -182,7 +217,11 @@ fn v3_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
 
 /// Whether v4 is really in place, whatever the version stamp says.
 fn v4_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
-    column_exists(conn, "accounts", "hidden")
+    column_exists(conn, "accounts", V4_COLUMN.0)
+}
+
+fn apply_v4(conn: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(conn, "accounts", V4_COLUMN.0, V4_COLUMN.1)
 }
 
 /// Apply v3. Each half is skipped when already in place, so this is safe to run
@@ -201,29 +240,34 @@ fn apply_v3(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
-    let current = user_version(conn)?;
-    if current < 1 {
+    // The base schema is CREATE TABLE IF NOT EXISTS throughout, so it is safe
+    // against anything.
+    if user_version(conn)? < 1 {
         conn.execute_batch(SCHEMA)?;
         set_user_version(conn, 1)?;
     }
-    if current < 2 {
-        conn.execute_batch(MIGRATION_2)?;
+
+    // From here the *schema itself* decides what runs, never the version stamp.
+    // A stamp can be wrong in both directions: ahead of the schema (a migration
+    // interrupted part-way, or a build that stamped before the migration
+    // existed) or behind it (an older build re-stamping a database it had
+    // already migrated). Trusting it while ahead strands the database with
+    // missing tables; trusting it while behind re-runs ALTER TABLE ADD COLUMN
+    // against a column that is already there, which SQLite treats as a hard
+    // error and which panics the app on startup. Asking the schema is the only
+    // answer that is right in both directions.
+    if !v2_is_complete(conn)? {
+        apply_v2(conn)?;
         set_user_version(conn, 2)?;
     }
-    // v3 runs whenever its objects are missing, not merely when the version says
-    // so. A database can carry a v3 stamp without the v3 schema -- an interrupted
-    // migration, or a mid-development build that stamped the version before the
-    // migration existed -- and trusting the number alone strands it there for
-    // good, failing every budget query with "no such table: category_rules".
-    if current < 3 || !v3_is_complete(conn)? {
+    if !v3_is_complete(conn)? {
         apply_v3(conn)?;
         set_user_version(conn, 3)?;
     }
-    // v4 must be checked after v3, not before: the v3 accounts rebuild recreates
-    // the table without this column, so a v3 repair on a v4 database would drop
-    // it again. Running the check here puts it straight back.
-    if current < 4 || !v4_is_complete(conn)? {
-        conn.execute_batch(MIGRATION_4)?;
+    // v4 is checked after v3: the v3 accounts rebuild recreates the table
+    // without this column, so a v3 repair would otherwise drop it again.
+    if !v4_is_complete(conn)? {
+        apply_v4(conn)?;
     }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
@@ -329,7 +373,7 @@ mod tests {
     /// budget query fails with "no such table: category_rules".
     fn v2_schema_mis_stamped_as_v3() -> Connection {
         let conn = v1_database();
-        conn.execute_batch(MIGRATION_2).unwrap();
+        apply_v2(&conn).unwrap();
         conn.execute_batch("PRAGMA user_version = 3;").unwrap();
         conn
     }
@@ -434,6 +478,48 @@ mod tests {
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(version, 4);
         assert_eq!(version, TARGET_VERSION);
+    }
+    #[test]
+    fn survives_a_version_stamp_that_went_backwards() {
+        // Exactly what a downgrade-then-upgrade does: the schema is fully
+        // migrated, but the stamp says otherwise. Re-running ALTER TABLE ADD
+        // COLUMN against an existing column is a hard error in SQLite, so the
+        // version must never be what decides whether a migration runs.
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("PRAGMA user_version = 3;").unwrap();
+
+        apply_migrations(&conn).expect("a backwards stamp must not crash the app");
+
+        assert_eq!(hidden_of(&conn, "Old"), 0, "the column must survive untouched");
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, TARGET_VERSION, "and the stamp must be put right");
+    }
+
+    #[test]
+    fn survives_a_stamp_that_went_all_the_way_back_to_v1() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("PRAGMA user_version = 1;").unwrap();
+
+        // v2 adds columns the same way v4 does, so it carries the same hazard.
+        apply_migrations(&conn).expect("re-running v2 on migrated columns must not crash");
+
+        let source: String = conn.query_row("SELECT source FROM accounts WHERE name='Old'", [], |r| r.get(0)).unwrap();
+        assert_eq!(source, "manual");
+        assert_eq!(hidden_of(&conn, "Old"), 0);
+    }
+
+    #[test]
+    fn a_hidden_flag_is_not_reset_by_a_backwards_stamp() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute("UPDATE accounts SET hidden=1 WHERE name='Old'", []).unwrap();
+        conn.execute_batch("PRAGMA user_version = 2;").unwrap();
+
+        apply_migrations(&conn).unwrap();
+
+        assert_eq!(hidden_of(&conn, "Old"), 1, "a repair must not silently unhide accounts");
     }
     #[test]
     fn foreign_keys_are_back_on_after_the_rebuild() {
