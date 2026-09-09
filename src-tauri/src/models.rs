@@ -17,6 +17,8 @@ pub struct Account {
     pub synced_balance: Option<f64>,
     /// RFC3339 timestamp of the last successful sync
     pub last_synced_at: Option<String>,
+    /// Hidden accounts are left out of every total, chart and list
+    pub hidden: bool,
 }
 
 #[derive(Deserialize)]

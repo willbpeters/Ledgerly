@@ -9,6 +9,8 @@ export interface Account {
   institution: string | null; currency: string; created_at: string;
   source: AccountSource; external_id: string | null;
   synced_balance: number | null; last_synced_at: string | null;
+  /** Hidden accounts are left out of every total, chart and list. */
+  hidden: boolean;
 }
 export interface Security {
   id: number; ticker: string; name: string | null;

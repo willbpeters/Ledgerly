@@ -9,7 +9,7 @@ const holding = (security_id: number, ticker: string, shares: number, lastPrice:
 
 const account = (id: number, source: Account["source"], last_synced_at: string | null): Account => ({
   id, name: `A${id}`, type: "brokerage", institution: null, currency: "USD", created_at: "",
-  source, external_id: null, synced_balance: null, last_synced_at,
+  source, external_id: null, synced_balance: null, last_synced_at, hidden: false,
 });
 
 describe("buildMovers", () => {

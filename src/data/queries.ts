@@ -60,6 +60,19 @@ export function useCreateAccount() {
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.accounts }),
   });
 }
+export function useSetAccountHidden() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, hidden }: { id: number; hidden: boolean }) => api.accounts.setHidden(id, hidden),
+    // Hiding changes every derived figure, so everything derivePortfolio reads
+    // has to refetch, not just the account list.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.accounts });
+      qc.invalidateQueries({ queryKey: keys.transactions });
+      qc.invalidateQueries({ queryKey: keys.synced });
+    },
+  });
+}
 export function useDeleteAccount() {
   const qc = useQueryClient();
   return useMutation({

@@ -13,6 +13,7 @@ export const api = {
     list: () => invoke<Account[]>("accounts_list"),
     create: (account: NewAccount) => invoke<Account>("accounts_create", { account }),
     delete: (id: number) => invoke<void>("accounts_delete", { id }),
+    setHidden: (id: number, hidden: boolean) => invoke<void>("accounts_set_hidden", { id, hidden }),
   },
   securities: {
     list: () => invoke<Security[]>("securities_list"),

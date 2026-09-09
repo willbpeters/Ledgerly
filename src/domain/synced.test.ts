@@ -4,7 +4,7 @@ import type { Account, SyncedHolding, Transaction } from "./types";
 
 const acct = (id: number, source: Account["source"], bal: number | null = null): Account => ({
   id, name: `A${id}`, type: "brokerage", institution: null, currency: "USD", created_at: "",
-  source, external_id: source === "simplefin" ? `x${id}` : null, synced_balance: bal, last_synced_at: null,
+  source, external_id: source === "simplefin" ? `x${id}` : null, synced_balance: bal, last_synced_at: null, hidden: false,
 });
 const sh = (account_id: number, security_id: number, shares: number, cost: number, mv: number): SyncedHolding =>
   ({ id: security_id, account_id, security_id, shares, cost_basis: cost, market_value: mv, as_of: "2026-09-07" });

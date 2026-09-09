@@ -20,7 +20,7 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 84 TypeScript (Vitest) + 73 Rust (`cargo test`), plus 4 tests marked
+- **Tests:** 96 TypeScript (Vitest) + 80 Rust (`cargo test`), plus 4 tests marked
   `#[ignore]` that touch the network or the OS credential store — all passing.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
@@ -40,6 +40,10 @@ budgeting and spending module.
   obey. Categories and the learned rules are managed in Settings.
 - **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
   the type editable because SimpleFIN never says which accounts are cards.
+  Each account can be **hidden**: a hidden account keeps syncing and keeps its
+  rows, but drops out of net worth, cash, allocation, the charts, the insight
+  rail and the daily snapshots. Accounts is the only screen that still shows
+  them, behind a "Show hidden (n)" toggle.
 - **Activity**: an **account context selector at the top** — the entry forms and
   the transaction list below all operate on the selected account. Three tabs:
   quick-add position, full transaction form, and CSV import
@@ -107,6 +111,12 @@ budgeting and spending module.
 `synced_holdings` and `synced_balance`). Both `usePortfolio` and the snapshot
 recorder in `useRefresh.ts` call it, so no two screens can disagree.
 
+**Hidden accounts are filtered inside `derivePortfolio()`**, not in each
+screen: it drops hidden accounts along with their transactions and synced
+holdings before deriving anything. Filtering only the account list would leave
+a hidden manual account's transactions still counting toward cash, because
+`manualOnly()` removes synced accounts, not hidden ones.
+
 **Extension points already in place:** `PriceProvider` trait, the account-source
 pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
@@ -132,13 +142,17 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **3**; migrations are
+  **unencrypted**. The schema is at `user_version` **4**; migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept
   `credit`, because SQLite cannot alter a CHECK. It runs with foreign keys off
   so the rebuild does not cascade-delete transactions, and switches them back on
   afterwards. Tested against a populated v1 database.
+- **v4 adds `accounts.hidden`** (INTEGER, default 0). Its completeness check is
+  `v4_is_complete`, and it deliberately runs **after** the v3 block: the v3
+  accounts rebuild recreates the table without this column, so a v3 repair on a
+  v4 database would drop it — checking v4 afterwards puts it straight back.
 - **Migrations do not trust the version stamp alone.** `apply_migrations`
   also checks that the v3 objects are really present (`v3_is_complete`) and
   re-applies them if not. This exists because a real database was found

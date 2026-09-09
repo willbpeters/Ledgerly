@@ -323,3 +323,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
   box-shadow: var(--shadow); font-size: 12px;
 }
+
+/* Hidden accounts: still readable, visibly set aside. */
+.dim { opacity: 0.55; }

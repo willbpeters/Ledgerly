@@ -3,8 +3,8 @@ import { derivePortfolio } from "./portfolio";
 import type { Account, Security, SyncedHolding, Transaction } from "./types";
 
 const accounts: Account[] = [
-  { id: 1, name: "Manual", type: "brokerage", institution: null, currency: "USD", created_at: "", source: "manual", external_id: null, synced_balance: null, last_synced_at: null },
-  { id: 2, name: "Synced", type: "brokerage", institution: "Demo", currency: "USD", created_at: "", source: "simplefin", external_id: "x", synced_balance: 100, last_synced_at: "2026-09-07T00:00:00Z" },
+  { id: 1, name: "Manual", type: "brokerage", institution: null, currency: "USD", created_at: "", source: "manual", external_id: null, synced_balance: null, last_synced_at: null, hidden: false },
+  { id: 2, name: "Synced", type: "brokerage", institution: "Demo", currency: "USD", created_at: "", source: "simplefin", external_id: "x", synced_balance: 100, last_synced_at: "2026-09-07T00:00:00Z", hidden: false },
 ];
 const securities: Security[] = [{ id: 10, ticker: "VTI", name: null, type: "etf", currency: "USD" }];
 const txns: Transaction[] = [
@@ -32,7 +32,7 @@ describe("derivePortfolio", () => {
 
 describe("derivePortfolio with a credit card", () => {
   const card: Account = { id: 3, name: "Card", type: "credit", institution: "Chase", currency: "USD",
-    created_at: "", source: "simplefin", external_id: "c", synced_balance: -1200, last_synced_at: null };
+    created_at: "", source: "simplefin", external_id: "c", synced_balance: -1200, last_synced_at: null, hidden: false };
 
   it("subtracts what is owed from net worth without touching cash", () => {
     const withCard = derivePortfolio({ txns, securities, accounts: [...accounts, card],
@@ -54,5 +54,50 @@ describe("derivePortfolio with a credit card", () => {
   it("reports no liabilities when there is no credit account", () => {
     const p = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
     expect(p.summary.liabilities).toBe(0);
+  });
+});
+
+describe("derivePortfolio with hidden accounts", () => {
+  const hiddenManual: Account[] = [{ ...accounts[0], hidden: true }, accounts[1]];
+  const hiddenSynced: Account[] = [accounts[0], { ...accounts[1], hidden: true }];
+  const prices = { latest: [[10, 250]] as [number, number][], previous: [[10, 240]] as [number, number][] };
+
+  it("leaves a hidden manual account out of cash and net worth", () => {
+    const p = derivePortfolio({ txns, securities, accounts: hiddenManual, ...prices, synced });
+    // Only the synced account's 100 cash remains; the manual 600 is gone.
+    expect(p.cash).toBe(100);
+    // And its 2 shares go with it, leaving only the 3 synced shares.
+    expect(p.holdings[0].shares).toBe(3);
+    expect(p.summary.totalValue).toBe(750 + 100);
+  });
+
+  it("leaves a hidden synced account out of cash and net worth", () => {
+    const p = derivePortfolio({ txns, securities, accounts: hiddenSynced, ...prices, synced });
+    expect(p.cash).toBe(600);
+    expect(p.holdings[0].shares).toBe(2);
+    expect(p.summary.totalValue).toBe(500 + 600);
+  });
+
+  it("gives a hidden account no value of its own", () => {
+    const p = derivePortfolio({ txns, securities, accounts: hiddenManual, ...prices, synced });
+    expect(p.accountValues.has(1)).toBe(false);
+  });
+
+  it("keeps hidden accounts out of the per-account breakdown and allocation", () => {
+    const p = derivePortfolio({ txns, securities, accounts: hiddenManual, ...prices, synced });
+    expect(p.byAccount.some((b) => b.account.id === 1)).toBe(false);
+    expect(p.allocationAccount.some((s) => s.label === "Manual")).toBe(false);
+  });
+
+  it("does not list hidden accounts, so the rails and pickers skip them too", () => {
+    const p = derivePortfolio({ txns, securities, accounts: hiddenManual, ...prices, synced });
+    expect(p.accounts.map((a) => a.id)).toEqual([2]);
+  });
+
+  it("changes nothing when no account is hidden", () => {
+    const visible = accounts.map((a) => ({ ...a, hidden: false }));
+    const p = derivePortfolio({ txns, securities, accounts: visible, ...prices, synced });
+    expect(p.summary.totalValue).toBe(1250 + 700);
+    expect(p.accounts).toHaveLength(2);
   });
 });

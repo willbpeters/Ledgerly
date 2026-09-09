@@ -23,6 +23,7 @@ pub fn run() {
             commands::accounts::accounts_list,
             commands::accounts::accounts_create,
             commands::accounts::accounts_delete,
+            commands::accounts::accounts_set_hidden,
             commands::securities::securities_list,
             commands::securities::securities_get_or_create,
             commands::transactions::transactions_list,

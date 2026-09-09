@@ -26,10 +26,11 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 
 /// Version-gated migrations. v1 is the whole base schema; v2 adds SimpleFIN
 /// sync columns and the synced_holdings table; v3 adds budgeting and the
-/// `credit` account type. To add a change later: bump TARGET_VERSION, add
-/// another `if current < N` block, and give it a completeness check so a
-/// mis-stamped database can still repair itself.
-const TARGET_VERSION: i64 = 3;
+/// `credit` account type; v4 adds the `hidden` flag on accounts. To add a
+/// change later: bump TARGET_VERSION, add another `if current < N` block, and
+/// give it a completeness check so a mis-stamped database can still repair
+/// itself.
+const TARGET_VERSION: i64 = 4;
 
 const MIGRATION_2: &str = "
 ALTER TABLE accounts ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'
@@ -124,6 +125,10 @@ CREATE TABLE IF NOT EXISTS budgets (
 );
 ";
 
+/// v4: accounts can be hidden. A hidden account is left out of every total,
+/// chart and list; only the Accounts screen still shows it.
+const MIGRATION_4: &str = "ALTER TABLE accounts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;";
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -140,6 +145,15 @@ fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     let n: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
         [name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2",
+        [table, column],
         |r| r.get(0),
     )?;
     Ok(n > 0)
@@ -164,6 +178,11 @@ fn v3_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
         }
     }
     accounts_accepts_credit(conn)
+}
+
+/// Whether v4 is really in place, whatever the version stamp says.
+fn v4_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    column_exists(conn, "accounts", "hidden")
 }
 
 /// Apply v3. Each half is skipped when already in place, so this is safe to run
@@ -198,6 +217,13 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     // good, failing every budget query with "no such table: category_rules".
     if current < 3 || !v3_is_complete(conn)? {
         apply_v3(conn)?;
+        set_user_version(conn, 3)?;
+    }
+    // v4 must be checked after v3, not before: the v3 accounts rebuild recreates
+    // the table without this column, so a v3 repair on a v4 database would drop
+    // it again. Running the check here puts it straight back.
+    if current < 4 || !v4_is_complete(conn)? {
+        conn.execute_batch(MIGRATION_4)?;
     }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
@@ -362,6 +388,52 @@ mod tests {
 
         let after: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
         assert_eq!(before, after, "re-running migrations must not disturb a good database");
+    }
+    fn hidden_of(conn: &Connection, name: &str) -> i64 {
+        conn.query_row("SELECT hidden FROM accounts WHERE name=?1", [name], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn v4_adds_the_hidden_column_and_existing_accounts_start_visible() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        assert_eq!(hidden_of(&conn, "Old"), 0, "an existing account must start visible");
+    }
+
+    #[test]
+    fn v4_lets_an_account_be_hidden_and_shown_again() {
+        let conn = open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('A','cash','USD','2026-01-01')",
+            [],
+        ).unwrap();
+        conn.execute("UPDATE accounts SET hidden=1 WHERE name='A'", []).unwrap();
+        assert_eq!(hidden_of(&conn, "A"), 1);
+        conn.execute("UPDATE accounts SET hidden=0 WHERE name='A'", []).unwrap();
+        assert_eq!(hidden_of(&conn, "A"), 0);
+    }
+
+    #[test]
+    fn repairs_a_database_stamped_v4_that_is_missing_the_hidden_column() {
+        // The same failure mode as the v3 mis-stamp: a version that ran ahead of
+        // the schema. The completeness check must catch this one too.
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("ALTER TABLE accounts DROP COLUMN hidden;").unwrap();
+        conn.execute_batch("PRAGMA user_version = 4;").unwrap();
+
+        apply_migrations(&conn).unwrap();
+
+        assert_eq!(hidden_of(&conn, "Old"), 0, "the hidden column must be restored");
+    }
+
+    #[test]
+    fn a_v1_database_migrated_forward_ends_at_the_target_version() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 4);
+        assert_eq!(version, TARGET_VERSION);
     }
     #[test]
     fn foreign_keys_are_back_on_after_the_rebuild() {
