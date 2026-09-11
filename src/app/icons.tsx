@@ -9,6 +9,7 @@ const S = ({ size = 18 }: P) => ({ ...base, width: size, height: size });
 export const Icons = {
   dashboard: (p: P = {}) => <svg {...S(p)}><rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" /></svg>,
   holdings: (p: P = {}) => <svg {...S(p)}><path d="M3 17l6-6 4 4 8-8" /><path d="M14 7h7v7" /></svg>,
+  markets: (p: P = {}) => <svg {...S(p)}><path d="M3 21h18" /><path d="M6 21V11M11 21V6M16 21v-7" /></svg>,
   accounts: (p: P = {}) => <svg {...S(p)}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></svg>,
   activity: (p: P = {}) => <svg {...S(p)}><circle cx="12" cy="12" r="9" /><path d="M12 8v4l3 3" /></svg>,
   budget: (p: P = {}) => <svg {...S(p)}><path d="M21 12a9 9 0 1 1-9-9" /><path d="M12 3v9h9" /></svg>,

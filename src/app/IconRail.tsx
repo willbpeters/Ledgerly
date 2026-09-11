@@ -4,6 +4,7 @@ import { Icons } from "./icons";
 const links = [
   { to: "/", label: "Dashboard", end: true, icon: Icons.dashboard },
   { to: "/holdings", label: "Holdings", icon: Icons.holdings },
+  { to: "/markets", label: "Markets", icon: Icons.markets },
   { to: "/accounts", label: "Accounts", icon: Icons.accounts },
   { to: "/activity", label: "Activity", icon: Icons.activity },
   { to: "/spending", label: "Spending", icon: Icons.budget },

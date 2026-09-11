@@ -5,6 +5,7 @@ mod prices;
 mod secrets;
 mod simplefin;
 mod budget;
+mod market;
 
 use tauri::Manager;
 
@@ -57,6 +58,11 @@ pub fn run() {
             commands::budget::budgets_list,
             commands::budget::budget_set,
             commands::budget::accounts_set_type,
+            commands::market::market_news_list,
+            commands::market::market_earnings_list,
+            commands::market::market_profiles_list,
+            commands::market::market_indices,
+            commands::market::market_refresh,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

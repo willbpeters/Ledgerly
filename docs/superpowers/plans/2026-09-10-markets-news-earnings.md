@@ -12,6 +12,32 @@
 
 ---
 
+## Progress — complete (2026-09-11)
+
+All 15 tasks done on `feature/markets-news-earnings`.
+
+Verified end to end against a copy of the live database with the real feeds:
+97 headlines, 9 profiles, 20 earnings events, 3 indices, zero errors. The
+companies/funds split came out right from `quote_type` alone — Alphabet,
+Intel, Eli Lilly, Micron and Snowflake as companies; the four Schwab index
+funds as funds with their benchmark labels. MSFT and VOO were excluded, both
+holding zero shares.
+
+The reviews during tasks 1-3 caught three real defects: a missing
+migration-repair test, an unchecked `guid` that is the dedup key, and a
+`list_news` blind spot where a regression dropping `PARTITION BY` would have
+passed every test. Each fix was confirmed by breaking the implementation and
+watching the new test fail.
+
+Every `#[allow(dead_code)]` added while the module was unwired is gone, as
+planned, now that the Tauri commands reach it. Two items that were genuinely
+dead rather than merely unwired — `indices::label_for` and
+`NewsProvider::name` — were deleted rather than suppressed.
+
+---
+
+---
+
 ## Conventions used throughout
 
 - Rust tests run with `cd src-tauri && cargo test --lib <name>`.

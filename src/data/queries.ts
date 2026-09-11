@@ -13,6 +13,10 @@ export const keys = {
   priceHistory: (from: string) => ["prices", "history", from] as const,
   synced: ["synced_holdings"] as const,
   simplefin: ["simplefin", "status"] as const,
+  marketNews: ["market", "news"] as const,
+  marketEarnings: ["market", "earnings"] as const,
+  marketProfiles: ["market", "profiles"] as const,
+  marketIndices: ["market", "indices"] as const,
 };
 
 export const useAccounts = () => useQuery({ queryKey: keys.accounts, queryFn: api.accounts.list });
@@ -214,5 +218,23 @@ export function useSimplefinBackfill() {
     mutationFn: (days: number) => api.simplefin.backfill(days),
     onSuccess: writeLastSync,
     onSettled: () => { invalidateAfterSync(qc); qc.invalidateQueries({ queryKey: ["bankTxns"] }); },
+  });
+}
+
+export const useMarketNews = () => useQuery({ queryKey: keys.marketNews, queryFn: api.market.news });
+export const useMarketEarnings = () => useQuery({ queryKey: keys.marketEarnings, queryFn: api.market.earnings });
+export const useMarketProfiles = () => useQuery({ queryKey: keys.marketProfiles, queryFn: api.market.profiles });
+export const useMarketIndices = () => useQuery({ queryKey: keys.marketIndices, queryFn: api.market.indices });
+
+/** A market refresh can change all four, so they are invalidated together. */
+export function useMarketRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.market.refresh(),
+    onSettled: () => {
+      for (const k of [keys.marketNews, keys.marketEarnings, keys.marketProfiles, keys.marketIndices]) {
+        qc.invalidateQueries({ queryKey: k });
+      }
+    },
   });
 }
