@@ -12,50 +12,27 @@
 
 ---
 
-## Progress — paused after Task 3 (2026-09-11)
+## Progress — complete (2026-09-11)
 
-Branch `feature/markets-news-earnings`, worktree `.worktrees/markets`.
-**111 Rust tests passing, clippy clean** (only the two pre-existing
-`parse_daily_csv` / `daily_url` warnings).
+All 15 tasks done on `feature/markets-news-earnings`.
 
-| Task | State | Commit |
-| --- | --- | --- |
-| 1 · Migration v5 | done | `aee2566`, `7116122` |
-| 2 · Pure RSS parsing | done | `e257a6f`, `903a94c` |
-| 3 · Headline storage | done | `9c89526`, `42a2d14` |
-| 4-15 | not started | — |
+Verified end to end against a copy of the live database with the real feeds:
+97 headlines, 9 profiles, 20 earnings events, 3 indices, zero errors. The
+companies/funds split came out right from `quote_type` alone — Alphabet,
+Intel, Eli Lilly, Micron and Snowflake as companies; the four Schwab index
+funds as funds with their benchmark labels. MSFT and VOO were excluded, both
+holding zero shares.
 
-Each task was implemented by a subagent and then reviewed for spec compliance
-and code quality. Three real defects were caught that way and fixed:
+The reviews during tasks 1-3 caught three real defects: a missing
+migration-repair test, an unchecked `guid` that is the dedup key, and a
+`list_news` blind spot where a regression dropping `PARTITION BY` would have
+passed every test. Each fix was confirmed by breaking the implementation and
+watching the new test fail.
 
-- **Task 1** had no "stamped ahead but incomplete" repair test, the house
-  convention every other migration in `db.rs` follows.
-- **Task 2** never checked `guid` for emptiness, although it is the dedup key
-  in `UNIQUE(security_id, guid)`; and its skip test was confounded — the
-  fixture items also omitted `pubDate`, so the test passed even with the
-  title/link guard deleted.
-- **Task 3** had no `list_news` test with more than one security, although
-  `PARTITION BY security_id` is the whole point of that query.
-
-Every fix was checked by mutation: break the implementation, watch the new
-test fail, restore it. Worth continuing that habit.
-
-### Resuming
-
-Start at **Task 4**. Nothing is half-finished — the working tree is clean and
-the last commit is green.
-
-One thing Task 9 should pick up: every item in `market/rss.rs` and
-`market/store.rs` carries `#[allow(dead_code)] // wired up in a later task`.
-Those are load-bearing until something in production calls into the module,
-which first happens when Task 9 registers the Tauri commands. Clippy's
-reachability ignores test-only callers, so they cannot come off before then —
-verified, not assumed. **Remove them in Task 9** and let clippy confirm which
-are genuinely live.
-
-When checking dead-code claims, use a clean target dir
-(`CARGO_TARGET_DIR=target/clippy-check cargo clippy ...`): the incremental
-cache has already produced one misleading "no warning" result here.
+Every `#[allow(dead_code)]` added while the module was unwired is gone, as
+planned, now that the Tauri commands reach it. Two items that were genuinely
+dead rather than merely unwired — `indices::label_for` and
+`NewsProvider::name` — were deleted rather than suppressed.
 
 ---
 
