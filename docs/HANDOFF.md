@@ -1,6 +1,6 @@
 # Ledgerly — Handoff & Next Steps
 
-**Last updated:** 2026-09-08
+**Last updated:** 2026-09-11
 **Repo:** `C:\Users\willi\Dev\FinTech` → GitHub `willbpeters/Ledgerly` (private), branch `master`
 
 ## What this project is
@@ -26,6 +26,14 @@ budgeting and spending module.
   under `src-tauri/target/release/bundle/`.
 
 ### What's built
+- **Markets**: a screen answering "what happened to what I own?" and "is this
+  me or the whole market?". A strip of S&P/Nasdaq/Dow beside your own day
+  change; held companies with their day move and latest headlines, biggest
+  mover first; held index funds with what they track; and an earnings strip for
+  the next 14 days with beat/miss on quarters just reported. Everything renders
+  from a SQLite cache, so the screen never blocks on the network and works
+  offline. Headlines are shown **beside** moves and never presented as their
+  cause. Spec: `docs/superpowers/specs/2026-09-10-markets-news-earnings-design.md`
 - **App shell** (the "command rail" design, chosen from four mockups): a 64px
   **icon rail** on the left, a **command bar** across the top carrying the
   screen name, a Ctrl-K search that jumps to filtered Holdings, sync status and
@@ -133,6 +141,34 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Gotchas worth knowing
 
+- **Yahoo's `quoteSummary` endpoint is dead to us.** It answers
+  `401 Invalid Crumb` to any plain HTTP client — the same anti-bot pattern that
+  took Stooq away. Earnings therefore come from Nasdaq's keyless endpoints
+  (`api.nasdaq.com/api/calendar/earnings`, `/company/{SYM}/earnings-surprise`,
+  `/analyst/{SYM}/earnings-forecast`). Do not "fix" the earnings code by
+  reaching for quoteSummary.
+- **Nasdaq's JSON mixes types for the same idea.** `eps` is a number while
+  `consensusForecast` is a string, `epsForecast` arrives as `"$1.05"`, and a
+  loss is `"($0.31)"`. Everything numeric goes through `nasdaq_parse::money`.
+  The forecast response also carries **two** `rows` arrays — quarterly and
+  yearly — and only the quarterly one is parsed.
+- **`security_profile.quote_type` is what splits the Markets screen** into
+  companies and funds. It is not a hardcoded ticker list, so it stays right as
+  holdings change. A security with no profile yet is shown as a company rather
+  than hidden — hiding a holding until its first profile fetch lands reads as
+  data loss.
+- **Index levels live in `index_quotes`, not `securities`.** Putting ^GSPC in
+  `securities` would make the S&P appear in Holdings and the allocation chart
+  as though it were owned.
+- **The Markets refresh is cadence-gated, and that is a politeness budget.**
+  `refresh_all` refetches profiles weekly and earnings daily, gated on stored
+  `updated_at` stamps; only news runs every poll. Removing those gates turns
+  roughly 6 requests per poll into roughly 27. This is the same budget that
+  cost the project Stooq — see the note above about `MARKET_HOURS_MS`.
+- **v5 adds the Markets tables** (`news_items`, `earnings_events`,
+  `security_profile`, `index_quotes`). Every statement is `IF NOT EXISTS` and
+  the completeness check is `v5_is_complete`.
+
 - **Smart App Control must stay OFF** on this machine. It was blocking execution
   of self-compiled unsigned binaries (every Rust build). This is required for
   any local desktop-app development here.
@@ -153,7 +189,7 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **4**; migrations are
+  **unencrypted**. The schema is at `user_version` **5**; migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept
@@ -223,6 +259,15 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 Each item below should get its own **spec → plan → implement** cycle rather than
 being bolted on ad hoc. Suggested order:
 
+0. **Local model summaries for the Markets screen** — an optional Ollama
+   integration that reads `news_items` plus current positions and writes a
+   short cross-holding summary ("INTC and MU both moved on the same
+   memory-pricing story"). The model must **never restate a number** — every
+   figure renders from SQLite, and a fluent wrong figure in a finance app is
+   the worst available failure — and must describe rather than recommend, as
+   the risk module already does. Ollama stays an *optional* dependency,
+   detected on localhost: no Ollama, no summary panel, everything else
+   unaffected. See the follow-on section of the Markets spec.
 1. **SimpleFIN scheduled auto-sync** — sync is manual today. A timer alongside
    the price auto-refresh would do it.
 2. **Encrypted database (SQLCipher) + app lock** — Windows Hello / passkey /
