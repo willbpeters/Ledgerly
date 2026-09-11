@@ -30,7 +30,7 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// change later: bump TARGET_VERSION, add another `if current < N` block, and
 /// give it a completeness check so a mis-stamped database can still repair
 /// itself.
-const TARGET_VERSION: i64 = 4;
+const TARGET_VERSION: i64 = 5;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -133,6 +133,71 @@ CREATE TABLE IF NOT EXISTS budgets (
 /// v4: accounts can be hidden. A hidden account is left out of every total,
 /// chart and list; only the Accounts screen still shows it.
 const V4_COLUMN: (&str, &str) = ("hidden", "hidden INTEGER NOT NULL DEFAULT 0");
+
+/// v5: the Markets module — cached headlines, earnings events, per-security
+/// profile (which routes a holding into "companies" or "funds"), and index
+/// levels. Index levels live in their own table rather than in `securities`,
+/// so the S&P never appears in Holdings or the allocation chart as though it
+/// were owned.
+const V5_TABLES: &[&str] = &["news_items", "earnings_events", "security_profile", "index_quotes"];
+
+const MIGRATION_5: &str = "
+CREATE TABLE IF NOT EXISTS news_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  security_id INTEGER NOT NULL REFERENCES securities(id) ON DELETE CASCADE,
+  guid TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT,
+  url TEXT NOT NULL,
+  publisher TEXT,
+  published TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  UNIQUE (security_id, guid)
+);
+CREATE INDEX IF NOT EXISTS news_items_published ON news_items(published);
+
+CREATE TABLE IF NOT EXISTS earnings_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  security_id INTEGER NOT NULL REFERENCES securities(id) ON DELETE CASCADE,
+  fiscal_period TEXT,
+  report_date TEXT NOT NULL,
+  eps_actual REAL,
+  eps_estimate REAL,
+  estimate_count INTEGER,
+  updated_at TEXT NOT NULL,
+  UNIQUE (security_id, report_date)
+);
+
+CREATE TABLE IF NOT EXISTS security_profile (
+  security_id INTEGER PRIMARY KEY REFERENCES securities(id) ON DELETE CASCADE,
+  long_name TEXT,
+  sector TEXT,
+  quote_type TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS index_quotes (
+  symbol TEXT NOT NULL,
+  date TEXT NOT NULL,
+  close REAL NOT NULL,
+  PRIMARY KEY (symbol, date)
+);
+";
+
+/// Whether every v5 object is really present, whatever the version stamp says.
+fn v5_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    for table in V5_TABLES {
+        if !table_exists(conn, table)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Every statement is IF NOT EXISTS, so this is safe to re-run.
+fn apply_v5(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_5)
+}
 
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
@@ -268,6 +333,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     // without this column, so a v3 repair would otherwise drop it again.
     if !v4_is_complete(conn)? {
         apply_v4(conn)?;
+    }
+    if !v5_is_complete(conn)? {
+        apply_v5(conn)?;
     }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
@@ -476,7 +544,6 @@ mod tests {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 4);
         assert_eq!(version, TARGET_VERSION);
     }
     #[test]
@@ -527,5 +594,37 @@ mod tests {
         apply_migrations(&conn).unwrap();
         let on: i64 = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
         assert_eq!(on, 1);
+    }
+
+    #[test]
+    fn v5_creates_market_tables_and_is_idempotent() {
+        let conn = open_in_memory().unwrap();
+        for t in V5_TABLES {
+            assert!(table_exists(&conn, t).unwrap(), "{t} should exist");
+        }
+        // Running the migration a second time must not error. This is the rule
+        // db.rs already enforces: a stamp can be wrong in both directions, so
+        // every migration has to survive being re-applied.
+        apply_v5(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, TARGET_VERSION);
+    }
+
+    #[test]
+    fn news_items_dedupe_on_guid_and_cascade_with_the_security() {
+        let conn = open_in_memory().unwrap();
+        conn.execute("INSERT INTO securities (ticker,type,currency) VALUES ('MU','stock','USD')", []).unwrap();
+        let insert = "INSERT INTO news_items (security_id,guid,title,url,published,fetched_at)
+                      VALUES (1,'g1','A','http://x','2026-09-10T00:00:00Z','2026-09-10T00:00:00Z')
+                      ON CONFLICT(security_id,guid) DO UPDATE SET title=excluded.title";
+        conn.execute(insert, []).unwrap();
+        conn.execute(insert, []).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM news_items", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "the same guid must not duplicate");
+
+        conn.execute("DELETE FROM securities WHERE id=1", []).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM news_items", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "news must go with its security");
     }
 }
