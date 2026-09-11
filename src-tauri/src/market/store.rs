@@ -99,6 +99,58 @@ pub fn tracked_securities(conn: &Connection) -> rusqlite::Result<Vec<(i64, Strin
     rows.collect()
 }
 
+
+use crate::market::profile::{ParsedProfile, SecurityProfile};
+
+#[allow(dead_code)] // wired up in a later task; only tests call this today
+pub fn upsert_profile(
+    conn: &Connection,
+    security_id: i64,
+    p: &ParsedProfile,
+    updated_at: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO security_profile (security_id,long_name,sector,quote_type,updated_at)
+         VALUES (?1,?2,?3,?4,?5)
+         ON CONFLICT(security_id) DO UPDATE SET
+           long_name=excluded.long_name, sector=excluded.sector,
+           quote_type=excluded.quote_type, updated_at=excluded.updated_at",
+        params![security_id, p.long_name, p.sector, p.quote_type, updated_at],
+    )?;
+    Ok(())
+}
+
+/// Profiles for every security that has one, with the benchmark label filled
+/// in from the static map at read time rather than stored.
+#[allow(dead_code)] // wired up in a later task; only tests call this today
+pub fn list_profiles(conn: &Connection) -> rusqlite::Result<Vec<SecurityProfile>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.security_id, p.long_name, p.sector, p.quote_type, s.ticker
+         FROM security_profile p JOIN securities s ON s.id = p.security_id
+         ORDER BY s.ticker",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        let ticker: String = r.get(4)?;
+        Ok(SecurityProfile {
+            security_id: r.get(0)?, long_name: r.get(1)?, sector: r.get(2)?,
+            quote_type: r.get(3)?,
+            tracks: crate::market::benchmarks::tracks_for(&ticker).map(str::to_string),
+        })
+    })?;
+    rows.collect()
+}
+
+/// When this security's profile was last fetched, if ever.
+#[allow(dead_code)] // wired up in a later task; only tests call this today
+pub fn profile_updated_at(conn: &Connection, security_id: i64) -> rusqlite::Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT updated_at FROM security_profile WHERE security_id=?1")?;
+    let mut rows = stmt.query([security_id])?;
+    match rows.next()? {
+        Some(r) => Ok(Some(r.get(0)?)),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +170,38 @@ mod tests {
     // The whole point of the window function is PARTITION BY security_id.
     // With only one security seeded, a regression that dropped the partition
     // and capped globally would still have passed every other test here.
+
+    #[test]
+    fn a_stored_fund_profile_reads_back_with_its_benchmark_label() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute("INSERT INTO securities (ticker,type,currency) VALUES ('SWPPX','etf','USD')", []).unwrap();
+        let p = crate::market::profile::ParsedProfile {
+            long_name: Some("Schwab S&P 500 Index Fund".into()),
+            sector: None, quote_type: Some("MUTUALFUND".into()),
+        };
+        upsert_profile(&conn, 1, &p, "2026-09-10T12:00:00Z").unwrap();
+        let rows = list_profiles(&conn).unwrap();
+        assert_eq!(rows[0].quote_type.as_deref(), Some("MUTUALFUND"));
+        assert_eq!(rows[0].tracks.as_deref(), Some("S&P 500"));
+        assert_eq!(profile_updated_at(&conn, 1).unwrap().as_deref(), Some("2026-09-10T12:00:00Z"));
+    }
+
+    #[test]
+    fn a_profile_refetch_replaces_rather_than_duplicates() {
+        let conn = db::open_in_memory().unwrap();
+        seed(&conn);
+        let mut p = crate::market::profile::ParsedProfile {
+            long_name: Some("Micron".into()), sector: Some("Technology".into()),
+            quote_type: Some("EQUITY".into()),
+        };
+        upsert_profile(&conn, 1, &p, "2026-09-10T12:00:00Z").unwrap();
+        p.long_name = Some("Micron Technology, Inc.".into());
+        upsert_profile(&conn, 1, &p, "2026-09-11T12:00:00Z").unwrap();
+        let rows = list_profiles(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].long_name.as_deref(), Some("Micron Technology, Inc."));
+        assert_eq!(profile_updated_at(&conn, 2).unwrap(), None, "an unfetched security has no stamp");
+    }
     #[test]
     fn the_cap_is_per_security_not_global() {
         let conn = db::open_in_memory().unwrap();
