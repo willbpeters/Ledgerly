@@ -18,11 +18,25 @@ export function syncedPositions(rows: SyncedHolding[], latestPrices: Map<number,
     });
 }
 
-/** Synced accounts take their cash from SimpleFIN; manual accounts from transactions. */
-export function mergeCash(txnCash: Map<number, number>, accounts: Account[]): Map<number, number> {
+/** Synced accounts take their cash from SimpleFIN; manual accounts from transactions.
+ *
+ *  SimpleFIN's `balance` is the whole account, so for a brokerage it already
+ *  contains everything the holdings are worth. Subtracting them leaves the
+ *  uninvested remainder, which is the only part that is really cash — without
+ *  this, cash + holdings counted the holdings twice and a fully-invested
+ *  account showed at double its worth. */
+export function mergeCash(
+  txnCash: Map<number, number>,
+  accounts: Account[],
+  syncedHoldings: SyncedHolding[],
+): Map<number, number> {
+  const invested = new Map<number, number>();
+  for (const h of syncedHoldings) {
+    invested.set(h.account_id, (invested.get(h.account_id) ?? 0) + h.market_value);
+  }
   const out = new Map(txnCash);
   for (const a of accounts) {
-    if (a.source === "simplefin") out.set(a.id, a.synced_balance ?? 0);
+    if (a.source === "simplefin") out.set(a.id, (a.synced_balance ?? 0) - (invested.get(a.id) ?? 0));
   }
   return out;
 }

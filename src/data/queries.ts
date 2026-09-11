@@ -10,6 +10,7 @@ export const keys = {
   previous: ["prices", "previous"] as const,
   snapshots: ["snapshots"] as const,
   historyDepth: ["prices", "historyDepth"] as const,
+  priceHistory: (from: string) => ["prices", "history", from] as const,
   synced: ["synced_holdings"] as const,
   simplefin: ["simplefin", "status"] as const,
 };
@@ -23,11 +24,14 @@ export const useSnapshots = () => useQuery({ queryKey: keys.snapshots, queryFn: 
 export const useSyncedHoldings = () => useQuery({ queryKey: keys.synced, queryFn: api.syncedHoldings.list });
 export const useSimplefinStatus = () => useQuery({ queryKey: keys.simplefin, queryFn: api.simplefin.status });
 
-/** Everything a sync can change. */
+/** Everything a sync can change. A sync can now also remove an account the
+ *  user stopped sharing, which cascades away its transactions, so the
+ *  transaction lists are refreshed too. */
 function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
-  for (const k of [keys.accounts, keys.securities, keys.synced, keys.latest, keys.previous, keys.simplefin]) {
+  for (const k of [keys.accounts, keys.securities, keys.synced, keys.latest, keys.previous, keys.simplefin, keys.transactions]) {
     qc.invalidateQueries({ queryKey: k });
   }
+  qc.invalidateQueries({ queryKey: ["bankTxns"] });
 }
 export function useSimplefinConnect() {
   const qc = useQueryClient();
@@ -56,6 +60,9 @@ export function useSimplefinDisconnect() {
 
 export const usePriceHistoryDepth = () =>
   useQuery({ queryKey: keys.historyDepth, queryFn: api.prices.historyDepth });
+
+export const usePriceHistoryRows = (from: string) =>
+  useQuery({ queryKey: keys.priceHistory(from), queryFn: () => api.prices.history(from) });
 
 export function useBackfillPrices() {
   const qc = useQueryClient();

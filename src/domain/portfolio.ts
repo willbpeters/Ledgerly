@@ -41,7 +41,7 @@ export function derivePortfolio(i: PortfolioInputs): Portfolio {
   ];
   const holdings = aggregateHoldings(positions, i.securities);
 
-  const cashMap = mergeCash(cashByAccount(manualTxns), accounts);
+  const cashMap = mergeCash(cashByAccount(manualTxns), accounts, syncedHoldings);
   // A credit card's balance is money owed, not cash you could spend, so the two
   // are totalled separately even though both land in the net-worth figure.
   const isCredit = new Set(accounts.filter((a) => a.type === "credit").map((a) => a.id));

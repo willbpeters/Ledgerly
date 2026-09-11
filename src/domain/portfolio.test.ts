@@ -4,7 +4,7 @@ import type { Account, Security, SyncedHolding, Transaction } from "./types";
 
 const accounts: Account[] = [
   { id: 1, name: "Manual", type: "brokerage", institution: null, currency: "USD", created_at: "", source: "manual", external_id: null, synced_balance: null, last_synced_at: null, hidden: false },
-  { id: 2, name: "Synced", type: "brokerage", institution: "Demo", currency: "USD", created_at: "", source: "simplefin", external_id: "x", synced_balance: 100, last_synced_at: "2026-09-07T00:00:00Z", hidden: false },
+  { id: 2, name: "Synced", type: "brokerage", institution: "Demo", currency: "USD", created_at: "", source: "simplefin", external_id: "x", synced_balance: 850, last_synced_at: "2026-09-07T00:00:00Z", hidden: false },
 ];
 const securities: Security[] = [{ id: 10, ticker: "VTI", name: null, type: "etf", currency: "USD" }];
 const txns: Transaction[] = [
@@ -27,6 +27,26 @@ describe("derivePortfolio", () => {
     expect(p.accountValues.get(2)).toBe(100 + 750);
     expect(p.byAccount.find((b) => b.account.id === 2)?.holdings[0].shares).toBe(3);
     expect(p.summary.dayChange).toBe(5 * 10);
+  });
+
+  // SimpleFIN's `balance` for an investment account is the whole account,
+  // holdings included. Adding the holdings on top of it counted them twice and
+  // showed a fully-invested brokerage at double its real worth.
+  it("does not count a synced brokerage's holdings twice", () => {
+    const fullyInvested: Account[] = [{ ...accounts[1], synced_balance: 750 }];
+    const p = derivePortfolio({
+      txns: [], securities, accounts: fullyInvested,
+      latest: [[10, 250]], previous: [[10, 250]], synced,
+    });
+    expect(p.accountValues.get(2)).toBe(750);
+    expect(p.cash).toBe(0);
+    expect(p.summary.totalValue).toBe(750);
+  });
+
+  // The uninvested remainder is real cash and must survive.
+  it("keeps the part of a synced balance that is not in holdings as cash", () => {
+    const p = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
+    expect(p.byAccount.find((b) => b.account.id === 2)?.cash).toBe(100);
   });
 });
 

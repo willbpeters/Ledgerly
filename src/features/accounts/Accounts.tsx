@@ -52,7 +52,7 @@ export function Accounts() {
             {a.hidden ? "Unhide" : "Hide"}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => {
-            const extra = a.source === "simplefin" ? " It will come back on the next SimpleFIN sync unless you disconnect in Settings." : "";
+            const extra = a.source === "simplefin" ? " If you still share it with SimpleFIN it will come back on the next sync; if you have stopped sharing it, it is gone for good." : "";
             if (confirm(`Delete "${a.name}"? This removes its transactions.${extra}`)) del.mutate(a.id);
           }}>Delete</Button>
         </div>) },

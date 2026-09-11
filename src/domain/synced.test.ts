@@ -30,13 +30,30 @@ describe("syncedPositions", () => {
 describe("mergeCash", () => {
   it("overrides cash for synced accounts and keeps manual ones", () => {
     const txnCash = new Map([[1, 50], [2, 75]]);
-    const out = mergeCash(txnCash, [acct(1, "manual"), acct(2, "simplefin", 999), acct(3, "simplefin", null)]);
+    const out = mergeCash(txnCash, [acct(1, "manual"), acct(2, "simplefin", 999), acct(3, "simplefin", null)], []);
     expect(out.get(1)).toBe(50);
     expect(out.get(2)).toBe(999);
     expect(out.get(3)).toBe(0);
   });
-});
 
+  // A SimpleFIN balance is the whole account, holdings included, so only the
+  // uninvested remainder is cash. Counting the full balance as cash and then
+  // adding the holdings on top doubled a fully-invested brokerage.
+  it("nets a synced account's holdings out of its balance", () => {
+    const out = mergeCash(new Map(), [acct(2, "simplefin", 1000)], [sh(2, 10, 3, 600, 750)]);
+    expect(out.get(2)).toBe(250);
+  });
+
+  it("leaves nothing as cash when the balance is entirely invested", () => {
+    const out = mergeCash(new Map(), [acct(2, "simplefin", 750)], [sh(2, 10, 3, 600, 750)]);
+    expect(out.get(2)).toBe(0);
+  });
+
+  it("ignores holdings that belong to another account", () => {
+    const out = mergeCash(new Map(), [acct(2, "simplefin", 1000)], [sh(9, 10, 3, 600, 750)]);
+    expect(out.get(2)).toBe(1000);
+  });
+});
 describe("manualOnly", () => {
   it("filters out transactions belonging to synced accounts", () => {
     const t = (id: number, account_id: number): Transaction =>

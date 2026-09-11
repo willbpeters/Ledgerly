@@ -54,8 +54,9 @@ pub fn claim(setup_token: &str) -> Result<String, String> {
     }
 }
 
-/// SimpleFIN warns above 45 days and may cap it, so backfills page in windows.
-pub const MAX_WINDOW_DAYS: i64 = 45;
+/// SimpleFIN warns at 45 days and may cap the range, so backfills page in
+/// windows just under it — asking for exactly 45 already trips the warning.
+pub const MAX_WINDOW_DAYS: i64 = 44;
 
 /// A span of transactions to ask for, as unix timestamps.
 #[derive(Clone, Copy, Debug, PartialEq)]

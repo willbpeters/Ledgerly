@@ -12,6 +12,8 @@ pub struct SyncReport {
     pub holdings_skipped: usize,
     pub transactions_added: usize,
     pub transactions_updated: usize,
+    /// SimpleFIN accounts we dropped because the feed no longer carries them.
+    pub accounts_removed: usize,
     pub errors: Vec<String>,
 }
 
@@ -45,11 +47,58 @@ pub fn apply(conn: &mut Connection, set: &SfAccountSet) -> Result<SyncReport, St
             }
         }
     }
+    report.accounts_removed = remove_unshared(conn, set).map_err(|e| e.to_string())?;
     Ok(report)
 }
 
-/// SimpleFIN does not say what kind of account something is, so infer it:
-/// anything reporting holdings is a brokerage, a negative balance is money
+/// Drop SimpleFIN accounts the feed no longer carries. Unsharing an
+/// institution at the bridge — or unsharing and re-sharing it, which hands us
+/// a fresh id for the same account — otherwise leaves the old row on the
+/// Accounts page for ever, still counted in net worth at a balance that has
+/// stopped moving.
+///
+/// This cascades away the account's transactions and holdings and there is no
+/// undo, so it only ever touches an institution this response really covers:
+///
+///   * an institution missing from the feed is a bank that is down, not a bank
+///     the user unshared, and keeps everything it has;
+///   * an institution the feed flagged may be reporting only part of itself,
+///     so it is left alone until it comes back clean. Warnings that name no
+///     institution — "Requested date range exceeds recommended range of 45
+///     days" arrives on every wide backfill — say nothing about missing
+///     accounts and must not stop the cleanup;
+///   * a feed with no accounts at all is a broken response, not an empty one.
+///
+/// Manual accounts, and synced accounts whose institution we never recorded,
+/// are never touched.
+fn remove_unshared(conn: &Connection, set: &SfAccountSet) -> rusqlite::Result<usize> {
+    if set.accounts.is_empty() {
+        return Ok(0);
+    }
+    let mut covered: Vec<&str> = set.accounts.iter().map(|a| a.institution.as_str()).collect();
+    covered.sort_unstable();
+    covered.dedup();
+    covered.retain(|inst| !inst.is_empty() && !set.errors.iter().any(|e| e.contains(*inst)));
+    if covered.is_empty() {
+        return Ok(0);
+    }
+
+    let ids: Vec<&str> = set.accounts.iter().map(|a| a.id.as_str()).collect();
+    let sql = format!(
+        "DELETE FROM accounts
+         WHERE source='simplefin'
+           AND institution IN ({})
+           AND (external_id IS NULL OR external_id NOT IN ({}))",
+        placeholders(covered.len()),
+        placeholders(ids.len()),
+    );
+    let args = covered.iter().chain(ids.iter()).copied();
+    conn.execute(&sql, rusqlite::params_from_iter(args))
+}
+
+fn placeholders(n: usize) -> String {
+    std::iter::repeat_n("?", n).collect::<Vec<_>>().join(",")
+}
 /// owed, and everything else is cash. The user can correct it in Accounts.
 fn infer_type(sf: &SfAccount) -> &'static str {
     if !sf.holdings.is_empty() {
@@ -298,6 +347,110 @@ mod tests {
         assert_eq!(r.transactions_added, 0);
         let n: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1, "the stored transaction must survive");
+    }
+
+    #[test]
+    fn an_account_no_longer_in_the_feed_is_removed() {
+        let mut conn = db::open_in_memory().unwrap();
+        let mut card = account("old-schwab", -10.0, vec![]);
+        card.transactions = vec![crate::simplefin::parse::SfTransaction {
+            id: "t1".into(), posted: "2026-09-01".into(), amount: -5.0,
+            description: "Coffee".into(), payee: None, memo: None, mcc: None, pending: false,
+        }];
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![
+            card, account("keep-me", 100.0, vec![]),
+        ] }).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts"), 2);
+
+        // Re-sharing Schwab at the bridge hands us a new id for what is really
+        // the same account; the old row must not linger on the Accounts page.
+        let r = apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![
+            account("new-schwab", -10.0, vec![]), account("keep-me", 100.0, vec![]),
+        ] }).unwrap();
+        assert_eq!(r.accounts_removed, 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='old-schwab'"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='new-schwab'"), 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='keep-me'"), 1);
+        // Its transactions go with it.
+        assert_eq!(count(&conn, "SELECT count(*) FROM bank_transactions"), 0);
+    }
+
+    #[test]
+    fn manual_accounts_are_never_removed_by_a_sync() {
+        let mut conn = db::open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name,type,currency,created_at,source)
+             VALUES ('Mattress','cash','USD','2026-01-01','manual')", []).unwrap();
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("a1", 1.0, vec![])] }).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE source='manual'"), 1);
+    }
+
+    fn account_at(id: &str, institution: &str, balance: f64) -> SfAccount {
+        SfAccount { institution: institution.into(), ..account(id, balance, vec![]) }
+    }
+
+    // The bug that made the cleanup look broken: the bridge attaches this
+    // warning to every window of 45 days or more, and treating it as "a bank
+    // may be missing" meant no backfill ever removed anything.
+    #[test]
+    fn a_date_range_warning_does_not_stop_removal() {
+        let mut conn = db::open_in_memory().unwrap();
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("old", 1.0, vec![])] }).unwrap();
+        let r = apply(&mut conn, &SfAccountSet {
+            errors: vec!["Requested date range exceeds recommended range of 45 days. \
+                          In the future, this may be capped.".into()],
+            accounts: vec![account("new", 1.0, vec![])],
+        }).unwrap();
+        assert_eq!(r.accounts_removed, 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='old'"), 0);
+    }
+
+    #[test]
+    fn an_institution_the_feed_flagged_keeps_its_accounts() {
+        let mut conn = db::open_in_memory().unwrap();
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![
+            account_at("schwab-old", "Charles Schwab US", 1.0),
+            account_at("demo-old", "Demo Bank", 2.0),
+        ] }).unwrap();
+
+        // Schwab is flagged, so it may be reporting only part of itself and
+        // its old account stays. Demo Bank came back clean, so its does not.
+        let r = apply(&mut conn, &SfAccountSet {
+            errors: vec!["Connection to Charles Schwab US may need attention".into()],
+            accounts: vec![
+                account_at("schwab-new", "Charles Schwab US", 1.0),
+                account_at("demo-new", "Demo Bank", 2.0),
+            ],
+        }).unwrap();
+        assert_eq!(r.accounts_removed, 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='schwab-old'"), 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='demo-old'"), 0);
+    }
+
+    #[test]
+    fn a_bank_missing_from_the_feed_keeps_its_accounts() {
+        let mut conn = db::open_in_memory().unwrap();
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![
+            account_at("schwab1", "Charles Schwab US", 1.0),
+            account_at("demo1", "Demo Bank", 2.0),
+        ] }).unwrap();
+
+        // Schwab is absent entirely — down, not unshared.
+        let r = apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![
+            account_at("demo2", "Demo Bank", 2.0),
+        ] }).unwrap();
+        assert_eq!(r.accounts_removed, 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='schwab1'"), 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts WHERE external_id='demo1'"), 0);
+    }
+
+    #[test]
+    fn an_empty_feed_removes_nothing() {
+        let mut conn = db::open_in_memory().unwrap();
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("a1", 1.0, vec![])] }).unwrap();
+        let r = apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![] }).unwrap();
+        assert_eq!(r.accounts_removed, 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM accounts"), 1);
     }
 
     #[test]

@@ -17,6 +17,12 @@ function Report({ r }: { r: SyncReport }) {
         {r.transactions_added > 0 && ` Imported ${r.transactions_added} new transaction${r.transactions_added === 1 ? "" : "s"}.`}
         {r.holdings_skipped > 0 && ` ${r.holdings_skipped} holding${r.holdings_skipped === 1 ? "" : "s"} had no ticker symbol and were skipped.`}
       </div>
+      {r.accounts_removed > 0 && (
+        <div className="notice warn">
+          Removed {r.accounts_removed} account{r.accounts_removed === 1 ? "" : "s"} you no
+          longer share with SimpleFIN, along with their transactions.
+        </div>
+      )}
       {r.errors.map((e, i) => <div key={i} className="notice warn">{e}</div>)}
     </div>
   );

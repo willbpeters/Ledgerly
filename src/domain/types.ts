@@ -47,7 +47,10 @@ export interface SyncedHolding {
 }
 export interface SyncReport {
   accounts_synced: number; holdings_synced: number; holdings_skipped: number;
-  transactions_added: number; transactions_updated: number; errors: string[];
+  transactions_added: number; transactions_updated: number;
+  /** SimpleFIN accounts dropped because the feed no longer carries them. */
+  accounts_removed: number;
+  errors: string[];
 }
 export interface SimplefinStatus { connected: boolean; last_synced_at: string | null; }
 

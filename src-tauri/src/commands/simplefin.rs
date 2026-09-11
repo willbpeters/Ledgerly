@@ -46,6 +46,9 @@ fn merge(total: &mut SyncReport, part: SyncReport) {
     total.accounts_synced = total.accounts_synced.max(part.accounts_synced);
     total.holdings_synced = total.holdings_synced.max(part.holdings_synced);
     total.holdings_skipped = total.holdings_skipped.max(part.holdings_skipped);
+    // Every window returns the same account list, so a removal shows up on
+    // the first pass and later passes report none.
+    total.accounts_removed = total.accounts_removed.max(part.accounts_removed);
     total.transactions_added += part.transactions_added;
     total.transactions_updated += part.transactions_updated;
     for e in part.errors {
