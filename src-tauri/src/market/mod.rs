@@ -3,3 +3,4 @@
 //! separate files, so the parsing is fixture-testable with no network.
 pub mod rss;
 pub mod store;
+pub mod yahoo_news;
