@@ -81,3 +81,21 @@ export interface NewTransaction {
 }
 /** An account on its way to the database, before it has an id. */
 export interface NewAccount { name: string; type: string; institution: string | null; }
+
+export interface NewsItem {
+  security_id: number; title: string; summary: string | null; url: string;
+  publisher: string | null; published: string; fetched_at: string;
+}
+export interface EarningsEvent {
+  security_id: number; fiscal_period: string | null; report_date: string;
+  eps_actual: number | null; eps_estimate: number | null; estimate_count: number | null;
+}
+export interface SecurityProfile {
+  security_id: number; long_name: string | null; sector: string | null;
+  quote_type: string | null; tracks: string | null;
+}
+export interface IndexQuote { symbol: string; label: string; latest: number; previous: number; }
+export interface MarketRefreshReport {
+  news_added: number; profiles_updated: number; earnings_updated: number;
+  indices_updated: number; errors: string[];
+}

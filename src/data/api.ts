@@ -4,6 +4,7 @@ import type {
   SyncedHolding, SyncReport, SimplefinStatus,
   Category, BankTransaction, CategoryRule, Budget,
   NewAccount, NewTransaction,
+  NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
@@ -43,6 +44,13 @@ export const api = {
   },
   syncedHoldings: {
     list: () => invoke<SyncedHolding[]>("synced_holdings_list"),
+  },
+  market: {
+    news: () => invoke<NewsItem[]>("market_news_list"),
+    earnings: () => invoke<EarningsEvent[]>("market_earnings_list"),
+    profiles: () => invoke<SecurityProfile[]>("market_profiles_list"),
+    indices: () => invoke<IndexQuote[]>("market_indices"),
+    refresh: () => invoke<MarketRefreshReport>("market_refresh"),
   },
   simplefin: {
     status: () => invoke<SimplefinStatus>("simplefin_status"),
