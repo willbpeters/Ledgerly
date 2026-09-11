@@ -5,7 +5,6 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 /// A headline as the UI receives it.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct StoredNews {
     pub security_id: i64,
@@ -23,7 +22,6 @@ pub struct StoredNews {
 ///
 /// Counted per row, the way `budget::store::upsert_transactions` does, so the
 /// figure is exact rather than inferred from the table's size before and after.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn upsert_news(
     conn: &Connection,
     security_id: i64,
@@ -66,7 +64,6 @@ pub fn upsert_news(
 }
 
 /// The newest `per_security` headlines for every security that has any.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn list_news(conn: &Connection, per_security: i64) -> rusqlite::Result<Vec<StoredNews>> {
     let mut stmt = conn.prepare(
         "SELECT security_id,title,summary,url,publisher,published,fetched_at FROM (
@@ -87,7 +84,6 @@ pub fn list_news(conn: &Connection, per_security: i64) -> rusqlite::Result<Vec<S
 /// Securities worth spending a request on: those actually held, either through
 /// a synced holding or a manual transaction. Fetching news for a security with
 /// no position would burn the politeness budget on nothing.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn tracked_securities(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT s.id, s.ticker FROM securities s
@@ -102,7 +98,6 @@ pub fn tracked_securities(conn: &Connection) -> rusqlite::Result<Vec<(i64, Strin
 
 use crate::market::profile::{ParsedProfile, SecurityProfile};
 
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn upsert_profile(
     conn: &Connection,
     security_id: i64,
@@ -122,7 +117,6 @@ pub fn upsert_profile(
 
 /// Profiles for every security that has one, with the benchmark label filled
 /// in from the static map at read time rather than stored.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn list_profiles(conn: &Connection) -> rusqlite::Result<Vec<SecurityProfile>> {
     let mut stmt = conn.prepare(
         "SELECT p.security_id, p.long_name, p.sector, p.quote_type, s.ticker
@@ -141,7 +135,6 @@ pub fn list_profiles(conn: &Connection) -> rusqlite::Result<Vec<SecurityProfile>
 }
 
 /// When this security's profile was last fetched, if ever.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn profile_updated_at(conn: &Connection, security_id: i64) -> rusqlite::Result<Option<String>> {
     let mut stmt = conn.prepare("SELECT updated_at FROM security_profile WHERE security_id=?1")?;
     let mut rows = stmt.query([security_id])?;
@@ -168,7 +161,6 @@ pub struct EarningsEvent {
 /// One row per (security, report date). `COALESCE` on the actual is what lets
 /// the calendar and the surprise table write to the same row without the
 /// calendar's empty actual wiping a figure the surprise table already landed.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn upsert_earnings(
     conn: &Connection,
     security_id: i64,
@@ -202,7 +194,6 @@ pub fn upsert_earnings(
 
 /// Every earnings row, oldest first. The UI decides what is "next" and what is
 /// "just reported" — the store does not need a clock.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn list_earnings(conn: &Connection) -> rusqlite::Result<Vec<EarningsEvent>> {
     let mut stmt = conn.prepare(
         "SELECT security_id,fiscal_period,report_date,eps_actual,eps_estimate,estimate_count
@@ -219,9 +210,56 @@ pub fn list_earnings(conn: &Connection) -> rusqlite::Result<Vec<EarningsEvent>> 
 
 /// When any earnings row was last written, if ever. Earnings move once a
 /// quarter, so this gates a daily refresh rather than a 30-minute one.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn earnings_last_updated(conn: &Connection) -> rusqlite::Result<Option<String>> {
     conn.query_row("SELECT MAX(updated_at) FROM earnings_events", [], |r| r.get(0))
+}
+
+
+/// An index as the market strip receives it.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct IndexQuote {
+    pub symbol: String,
+    pub label: String,
+    pub latest: f64,
+    pub previous: f64,
+}
+
+pub fn upsert_index_closes(
+    conn: &Connection,
+    symbol: &str,
+    closes: &[(String, f64)],
+) -> rusqlite::Result<usize> {
+    for (date, close) in closes {
+        conn.execute(
+            "INSERT INTO index_quotes (symbol,date,close) VALUES (?1,?2,?3)
+             ON CONFLICT(symbol,date) DO UPDATE SET close=excluded.close",
+            params![symbol, date, close],
+        )?;
+    }
+    Ok(closes.len())
+}
+
+/// Latest and previous close per index. An index with fewer than two closes is
+/// omitted: showing it as a flat 0.00% would be a lie about a missing fetch.
+pub fn list_index_quotes(conn: &Connection) -> rusqlite::Result<Vec<IndexQuote>> {
+    let mut out = Vec::new();
+    for (symbol, label) in crate::market::indices::INDICES {
+        let mut stmt = conn.prepare(
+            "SELECT close FROM index_quotes WHERE symbol=?1 ORDER BY date DESC LIMIT 2")?;
+        let closes: Vec<f64> = stmt
+            .query_map([symbol], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<f64>>>()?;
+        if closes.len() < 2 {
+            continue;
+        }
+        out.push(IndexQuote {
+            symbol: (*symbol).to_string(),
+            label: (*label).to_string(),
+            latest: closes[0],
+            previous: closes[1],
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -254,6 +292,29 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn index_quotes_keep_the_latest_two_closes_per_symbol() {
+        let conn = db::open_in_memory().unwrap();
+        upsert_index_closes(&conn, "^GSPC", &[
+            ("2026-09-08".into(), 7500.0),
+            ("2026-09-09".into(), 7550.0),
+            ("2026-09-10".into(), 7591.7),
+        ]).unwrap();
+        let rows = list_index_quotes(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].symbol, "^GSPC");
+        assert_eq!(rows[0].label, "S&P 500");
+        assert_eq!(rows[0].latest, 7591.7);
+        assert_eq!(rows[0].previous, 7550.0);
+    }
+
+    #[test]
+    fn an_index_with_only_one_close_is_left_out_rather_than_shown_as_flat() {
+        let conn = db::open_in_memory().unwrap();
+        upsert_index_closes(&conn, "^GSPC", &[("2026-09-10".into(), 7591.7)]).unwrap();
+        assert!(list_index_quotes(&conn).unwrap().is_empty());
+    }
     #[test]
     fn an_estimate_is_replaced_by_the_actual_when_the_quarter_reports() {
         let conn = db::open_in_memory().unwrap();

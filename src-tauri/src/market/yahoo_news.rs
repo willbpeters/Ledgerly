@@ -17,7 +17,6 @@ pub fn feed_url(ticker: &str) -> String {
 /// RSS) can be dropped in without touching callers — the lesson from Stooq.
 pub trait NewsProvider {
     fn headlines(&self, ticker: &str) -> anyhow::Result<Vec<NewsItem>>;
-    fn name(&self) -> &'static str;
 }
 
 pub struct YahooNews;
@@ -28,7 +27,6 @@ impl NewsProvider for YahooNews {
         let body = client.get(feed_url(ticker)).send()?.text()?;
         Ok(parse_feed(&body))
     }
-    fn name(&self) -> &'static str { "yahoo-rss" }
 }
 
 #[cfg(test)]

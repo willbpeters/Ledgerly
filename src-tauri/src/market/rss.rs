@@ -9,7 +9,6 @@
 //! call this land in a later task, same as `StooqProvider` in `prices/mod.rs`.
 
 /// One headline, parsed. Not yet tied to a security — `store` does that.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewsItem {
     pub guid: String,
@@ -22,7 +21,6 @@ pub struct NewsItem {
 
 /// Inner text of the first `<name>` element in `block`. Tolerates attributes
 /// on the opening tag, which `<guid isPermaLink="false">` has.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 fn tag(block: &str, name: &str) -> Option<String> {
     let open = format!("<{name}");
     let start = block.find(&open)?;
@@ -31,7 +29,6 @@ fn tag(block: &str, name: &str) -> Option<String> {
     Some(unescape(block[after_attrs..end].trim()))
 }
 
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 fn unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -44,7 +41,6 @@ fn unescape(s: &str) -> String {
 
 /// The host of a link, minus a leading `www.`. The feed carries no publisher
 /// element, so this is the only honest source for one.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn publisher_from_url(url: &str) -> Option<String> {
     let rest = url.split("://").nth(1)?;
     let host = rest.split('/').next()?;
@@ -57,7 +53,6 @@ pub fn publisher_from_url(url: &str) -> Option<String> {
 /// Parse a feed into items, oldest-to-newest order preserved from the source.
 /// An item missing a title, link, guid or a parseable date is dropped: a blank
 /// row on screen is worse than one fewer headline.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn parse_feed(xml: &str) -> Vec<NewsItem> {
     let mut out = Vec::new();
     for chunk in xml.split("<item>").skip(1) {
@@ -89,7 +84,6 @@ pub fn parse_feed(xml: &str) -> Vec<NewsItem> {
 
 /// RSS dates are RFC 2822 (`Thu, 10 Sep 2026 19:29:06 +0000`). Normalised to
 /// UTC so string comparison also sorts chronologically.
-#[allow(dead_code)] // wired up in a later task; only tests call this today
 fn to_rfc3339(raw: &str) -> Option<String> {
     let dt = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
     Some(dt.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
