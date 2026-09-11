@@ -5,6 +5,7 @@ import { usePriceHistory } from "./data/priceHistory";
 import { AppShell } from "./app/AppShell";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Holdings } from "./features/holdings/Holdings";
+import { Markets } from "./features/markets/Markets";
 import { Accounts } from "./features/accounts/Accounts";
 import { Activity } from "./features/activity/Activity";
 import { Settings } from "./features/settings/Settings";
@@ -21,6 +22,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: "holdings", element: <Holdings /> },
+      { path: "markets", element: <Markets /> },
       { path: "accounts", element: <Accounts /> },
       { path: "activity", element: <Activity /> },
       { path: "spending", element: <Spending /> },

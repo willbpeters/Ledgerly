@@ -329,3 +329,10 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 
 /* A row of small figures inside a card. */
 .stat-row { display: flex; flex-wrap: wrap; gap: 32px; margin-bottom: 14px; }
+
+/* Markets screen */
+.market-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.market-row:last-child { border-bottom: 0; }
+.market-row-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.market-row-head .cell-secondary:last-child { margin-left: auto; }
+.market-day { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
