@@ -540,6 +540,21 @@ mod tests {
     }
 
     #[test]
+    fn repairs_a_database_stamped_v5_that_is_missing_a_market_table() {
+        // The same failure mode as the v3 and v4 mis-stamps: a version that ran
+        // ahead of the schema. A migration interrupted part-way leaves exactly
+        // this state, and the stamp alone would never let it repair itself.
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("DROP TABLE index_quotes;").unwrap();
+        conn.execute_batch("PRAGMA user_version = 5;").unwrap();
+
+        apply_migrations(&conn).unwrap();
+
+        assert!(table_exists(&conn, "index_quotes").unwrap(), "the dropped table must be restored");
+    }
+
+    #[test]
     fn a_v1_database_migrated_forward_ends_at_the_target_version() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
