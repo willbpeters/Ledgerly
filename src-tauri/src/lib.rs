@@ -5,6 +5,7 @@ mod prices;
 mod secrets;
 mod simplefin;
 mod budget;
+mod market;
 
 use tauri::Manager;
 
