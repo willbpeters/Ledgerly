@@ -1,7 +1,7 @@
 //! All SQLite access for the Markets module. Callers pass parsed values in and
 //! get plain rows out; nothing here touches the network.
 use crate::market::rss::{publisher_from_url, NewsItem};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 /// A headline as the UI receives it.
@@ -18,8 +18,11 @@ pub struct StoredNews {
 }
 
 /// Write headlines for one security. Returns how many rows were newly created.
-/// Re-fetching the same guid refreshes the row rather than duplicating it,
-/// which is what makes a 30-minute poll cheap.
+/// Re-fetching the same guid updates that row rather than duplicating it, which
+/// is what makes a 30-minute poll cheap.
+///
+/// Counted per row, the way `budget::store::upsert_transactions` does, so the
+/// figure is exact rather than inferred from the table's size before and after.
 #[allow(dead_code)] // wired up in a later task; only tests call this today
 pub fn upsert_news(
     conn: &Connection,
@@ -27,26 +30,39 @@ pub fn upsert_news(
     items: &[NewsItem],
     fetched_at: &str,
 ) -> rusqlite::Result<usize> {
-    let before: i64 = conn.query_row(
-        "SELECT count(*) FROM news_items WHERE security_id=?1", [security_id], |r| r.get(0))?;
+    let mut added = 0usize;
     for it in items {
-        conn.execute(
-            "INSERT INTO news_items (security_id,guid,title,summary,url,publisher,published,fetched_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-             ON CONFLICT(security_id,guid) DO UPDATE SET
-               title=excluded.title, summary=excluded.summary, url=excluded.url,
-               publisher=excluded.publisher, published=excluded.published,
-               fetched_at=excluded.fetched_at",
-            params![
-                security_id, it.guid, it.title,
-                if it.summary.is_empty() { None } else { Some(it.summary.as_str()) },
-                it.url, publisher_from_url(&it.url), it.published, fetched_at
-            ],
-        )?;
+        let summary = if it.summary.is_empty() { None } else { Some(it.summary.as_str()) };
+        let publisher = publisher_from_url(&it.url);
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM news_items WHERE security_id=?1 AND guid=?2",
+                params![security_id, it.guid],
+                |r| r.get(0),
+            )
+            .optional()?;
+
+        match existing {
+            Some(id) => {
+                conn.execute(
+                    "UPDATE news_items SET title=?1, summary=?2, url=?3, publisher=?4,
+                       published=?5, fetched_at=?6 WHERE id=?7",
+                    params![it.title, summary, it.url, publisher, it.published, fetched_at, id],
+                )?;
+            }
+            None => {
+                conn.execute(
+                    "INSERT INTO news_items
+                       (security_id,guid,title,summary,url,publisher,published,fetched_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                    params![security_id, it.guid, it.title, summary, it.url,
+                            publisher, it.published, fetched_at],
+                )?;
+                added += 1;
+            }
+        }
     }
-    let after: i64 = conn.query_row(
-        "SELECT count(*) FROM news_items WHERE security_id=?1", [security_id], |r| r.get(0))?;
-    Ok((after - before).max(0) as usize)
+    Ok(added)
 }
 
 /// The newest `per_security` headlines for every security that has any.
@@ -98,6 +114,42 @@ mod tests {
         }
     }
 
+
+    // The whole point of the window function is PARTITION BY security_id.
+    // With only one security seeded, a regression that dropped the partition
+    // and capped globally would still have passed every other test here.
+    #[test]
+    fn the_cap_is_per_security_not_global() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute("INSERT INTO securities (ticker,type,currency) VALUES ('MU','stock','USD')", []).unwrap();
+        conn.execute("INSERT INTO securities (ticker,type,currency) VALUES ('GOOG','stock','USD')", []).unwrap();
+        for id in [1i64, 2] {
+            let items = vec![
+                item(&format!("{id}-old"), "2026-09-08T10:00:00Z"),
+                item(&format!("{id}-new"), "2026-09-10T10:00:00Z"),
+                item(&format!("{id}-mid"), "2026-09-09T10:00:00Z"),
+            ];
+            upsert_news(&conn, id, &items, "2026-09-10T12:00:00Z").unwrap();
+        }
+        let rows = list_news(&conn, 2).unwrap();
+        assert_eq!(rows.len(), 4, "two securities, two headlines each");
+        let for_security = |id: i64| -> Vec<String> {
+            rows.iter().filter(|r| r.security_id == id).map(|r| r.title.clone()).collect()
+        };
+        assert_eq!(for_security(1), vec!["Headline 1-new", "Headline 1-mid"]);
+        assert_eq!(for_security(2), vec!["Headline 2-new", "Headline 2-mid"]);
+    }
+
+    // An item repeated inside one call must count once, not twice.
+    #[test]
+    fn the_same_guid_twice_in_one_batch_counts_as_one_new_row() {
+        let conn = db::open_in_memory().unwrap();
+        seed(&conn);
+        let dupe = vec![item("g1", "2026-09-10T10:00:00Z"), item("g1", "2026-09-10T10:00:00Z")];
+        let added = upsert_news(&conn, 1, &dupe, "2026-09-10T12:00:00Z").unwrap();
+        assert_eq!(added, 1);
+        assert_eq!(list_news(&conn, 10).unwrap().len(), 1);
+    }
     #[test]
     fn stores_items_and_re_storing_the_same_guid_updates_rather_than_duplicates() {
         let conn = db::open_in_memory().unwrap();
