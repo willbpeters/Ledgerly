@@ -151,6 +151,79 @@ pub fn profile_updated_at(conn: &Connection, security_id: i64) -> rusqlite::Resu
     }
 }
 
+
+use crate::market::nasdaq_parse::ParsedEarnings;
+
+/// An earnings row as the UI receives it.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct EarningsEvent {
+    pub security_id: i64,
+    pub fiscal_period: Option<String>,
+    pub report_date: String,
+    pub eps_actual: Option<f64>,
+    pub eps_estimate: Option<f64>,
+    pub estimate_count: Option<i64>,
+}
+
+/// One row per (security, report date). `COALESCE` on the actual is what lets
+/// the calendar and the surprise table write to the same row without the
+/// calendar's empty actual wiping a figure the surprise table already landed.
+#[allow(dead_code)] // wired up in a later task; only tests call this today
+pub fn upsert_earnings(
+    conn: &Connection,
+    security_id: i64,
+    rows: &[ParsedEarnings],
+    updated_at: &str,
+) -> rusqlite::Result<usize> {
+    let mut written = 0usize;
+    for e in rows {
+        if e.report_date.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO earnings_events
+               (security_id,fiscal_period,report_date,eps_actual,eps_estimate,estimate_count,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(security_id,report_date) DO UPDATE SET
+               fiscal_period=COALESCE(excluded.fiscal_period, fiscal_period),
+               eps_actual=COALESCE(excluded.eps_actual, eps_actual),
+               eps_estimate=COALESCE(excluded.eps_estimate, eps_estimate),
+               estimate_count=COALESCE(excluded.estimate_count, estimate_count),
+               updated_at=excluded.updated_at",
+            params![
+                security_id, e.fiscal_period, e.report_date,
+                e.eps_actual, e.eps_estimate, e.estimate_count, updated_at
+            ],
+        )?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+/// Every earnings row, oldest first. The UI decides what is "next" and what is
+/// "just reported" — the store does not need a clock.
+#[allow(dead_code)] // wired up in a later task; only tests call this today
+pub fn list_earnings(conn: &Connection) -> rusqlite::Result<Vec<EarningsEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT security_id,fiscal_period,report_date,eps_actual,eps_estimate,estimate_count
+         FROM earnings_events ORDER BY report_date",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(EarningsEvent {
+            security_id: r.get(0)?, fiscal_period: r.get(1)?, report_date: r.get(2)?,
+            eps_actual: r.get(3)?, eps_estimate: r.get(4)?, estimate_count: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// When any earnings row was last written, if ever. Earnings move once a
+/// quarter, so this gates a daily refresh rather than a 30-minute one.
+#[allow(dead_code)] // wired up in a later task; only tests call this today
+pub fn earnings_last_updated(conn: &Connection) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT MAX(updated_at) FROM earnings_events", [], |r| r.get(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +244,47 @@ mod tests {
     // With only one security seeded, a regression that dropped the partition
     // and capped globally would still have passed every other test here.
 
+
+    fn earnings(report_date: &str, actual: Option<f64>, est: Option<f64>)
+        -> crate::market::nasdaq_parse::ParsedEarnings {
+        crate::market::nasdaq_parse::ParsedEarnings {
+            symbol: "MU".into(), fiscal_period: Some("May 2026".into()),
+            report_date: report_date.into(), eps_actual: actual, eps_estimate: est,
+            estimate_count: Some(18),
+        }
+    }
+
+    #[test]
+    fn an_estimate_is_replaced_by_the_actual_when_the_quarter_reports() {
+        let conn = db::open_in_memory().unwrap();
+        seed(&conn);
+        upsert_earnings(&conn, 1, &[earnings("2026-09-23", None, Some(1.92))], "2026-09-10T12:00:00Z").unwrap();
+        upsert_earnings(&conn, 1, &[earnings("2026-09-23", Some(1.79), Some(1.60))], "2026-09-24T12:00:00Z").unwrap();
+        let rows = list_earnings(&conn).unwrap();
+        assert_eq!(rows.len(), 1, "one row per report date, not one per fetch");
+        assert_eq!(rows[0].eps_actual, Some(1.79));
+        assert_eq!(rows[0].eps_estimate, Some(1.60));
+    }
+
+    #[test]
+    fn a_later_fetch_without_an_actual_does_not_erase_one_already_known() {
+        let conn = db::open_in_memory().unwrap();
+        seed(&conn);
+        upsert_earnings(&conn, 1, &[earnings("2026-09-23", Some(1.79), Some(1.60))], "2026-09-24T12:00:00Z").unwrap();
+        upsert_earnings(&conn, 1, &[earnings("2026-09-23", None, Some(1.60))], "2026-09-25T12:00:00Z").unwrap();
+        let rows = list_earnings(&conn).unwrap();
+        assert_eq!(rows[0].eps_actual, Some(1.79), "a reported figure must survive a stale estimate");
+    }
+
+    #[test]
+    fn a_row_with_no_report_date_is_skipped_because_it_cannot_be_keyed() {
+        let conn = db::open_in_memory().unwrap();
+        seed(&conn);
+        let written = upsert_earnings(&conn, 1, &[earnings("", None, Some(1.92))], "2026-09-10T12:00:00Z").unwrap();
+        assert_eq!(written, 0);
+        assert!(list_earnings(&conn).unwrap().is_empty());
+        assert_eq!(earnings_last_updated(&conn).unwrap(), None);
+    }
     #[test]
     fn a_stored_fund_profile_reads_back_with_its_benchmark_label() {
         let conn = db::open_in_memory().unwrap();
