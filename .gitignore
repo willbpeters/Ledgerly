@@ -26,3 +26,6 @@ Thumbs.db
 
 # Seeded design-canvas output (2.5MB, regenerated from the .dc.html sources)
 design/**/ledgerly-dashboard-directions.html
+
+# Isolated worktrees for feature work
+.worktrees/
