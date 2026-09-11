@@ -3,11 +3,11 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Account, BankTransaction, Category, Security, Transaction } from "../../domain/types";
 
-function account(id: number, name: string, source: Account["source"]): Account {
+function account(id: number, name: string, source: Account["source"], hidden = false): Account {
   return {
     id, name, type: source === "simplefin" ? "credit" : "brokerage", institution: null,
     currency: "USD", created_at: "", source, external_id: source === "simplefin" ? "x" : null,
-    synced_balance: source === "simplefin" ? -250 : null, last_synced_at: null, hidden: false,
+    synced_balance: source === "simplefin" ? -250 : null, last_synced_at: null, hidden,
   };
 }
 function bankTxn(id: number, accountId: number, description: string, amount: number): BankTransaction {
@@ -88,5 +88,30 @@ describe("Activity — synced accounts show their bank transactions", () => {
     show();
     expect(screen.getByText("VTI")).toBeInTheDocument();
     expect(screen.getByText("buy")).toBeInTheDocument();
+  });
+});
+
+describe("Activity — hidden accounts", () => {
+  it("leaves a hidden account out of the account picker", () => {
+    accounts = [account(1, "Everyday", "manual"), account(2, "Old Savings", "manual", true)];
+    bankTxns = []; txns = [];
+    show();
+    expect(screen.getByRole("option", { name: /Everyday/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Old Savings/ })).not.toBeInTheDocument();
+  });
+
+  it("never selects a hidden account by default, even when it sorts first", () => {
+    accounts = [account(1, "AAA Hidden", "manual", true), account(2, "Everyday", "manual")];
+    bankTxns = []; txns = [];
+    show();
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(select.value).toBe("2");
+  });
+
+  it("treats an all-hidden set as having no accounts to work with", () => {
+    accounts = [account(1, "Only", "manual", true)];
+    bankTxns = []; txns = [];
+    show();
+    expect(screen.getByText(/You need an account first/i)).toBeInTheDocument();
   });
 });

@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { usePortfolio } from "../../data/usePortfolio";
-import { useSnapshots, useSecurities } from "../../data/queries";
-import { toValueSeries } from "../../domain/series";
+import { useSecurities } from "../../data/queries";
+import { useValueSeries, HISTORY_DAYS } from "../../data/useValueSeries";
 import { money, pct, fmtDate } from "../../ui/format";
 import { Card, EmptyState, Segmented } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
@@ -11,12 +11,14 @@ import { useChartColors } from "../../ui/chartColors";
 import { RiskCard } from "./RiskCard";
 import type { Holding, SeriesPoint } from "../../domain/types";
 
-type Range = "1m" | "3m" | "1y" | "all";
-const WINDOW_DAYS: Record<Range, number | null> = { "1m": 30, "3m": 91, "1y": 365, all: null };
+// Only windows the data can actually support: the series is rebuilt from
+// SimpleFIN holdings and transactions, which reach back about 90 days.
+type Range = "1m" | "3m";
+const WINDOW_DAYS: Record<Range, number> = { "1m": 30, "3m": HISTORY_DAYS };
 
 function clipSeries(series: SeriesPoint[], range: Range): SeriesPoint[] {
   const days = WINDOW_DAYS[range];
-  if (days == null || series.length === 0) return series;
+  if (series.length === 0) return series;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const iso = cutoff.toISOString().slice(0, 10);
@@ -39,12 +41,12 @@ interface Row extends Holding { weight: number | null; name: string | null; colo
 
 export function Dashboard() {
   const { holdings, summary, isLoading } = usePortfolio();
-  const { data: snapshots = [] } = useSnapshots();
+  const { series: fullSeries } = useValueSeries();
   const { data: securities = [] } = useSecurities();
   const colors = useChartColors();
-  const [range, setRange] = useState<Range>("1y");
+  const [range, setRange] = useState<Range>("3m");
 
-  const series = useMemo(() => clipSeries(toValueSeries(snapshots), range), [snapshots, range]);
+  const series = useMemo(() => clipSeries(fullSeries, range), [fullSeries, range]);
 
   if (isLoading) return <p className="muted">Loading…</p>;
 
@@ -121,15 +123,17 @@ export function Dashboard() {
         )}
       </div>
 
-      <Card title="Portfolio value" actions={
-        <Segmented<Range> value={range} onChange={setRange} items={[
-          { value: "1m", label: "1M" }, { value: "3m", label: "3M" },
-          { value: "1y", label: "1Y" }, { value: "all", label: "All" },
-        ]} />
-      }>
+      <Card
+        title="Portfolio value"
+        subtitle="Rebuilt from your holdings, prices and cash movements. Share counts are today’s — SimpleFIN does not report holdings history."
+        actions={
+          <Segmented<Range> value={range} onChange={setRange} items={[
+            { value: "1m", label: "1M" }, { value: "3m", label: "3M" },
+          ]} />
+        }>
         {series.length < 2 ? (
-          <EmptyState title="The chart is warming up"
-            body="It builds from a daily snapshot of your portfolio. Come back tomorrow." />
+          <EmptyState title="Not enough price history yet"
+            body="The chart is rebuilt from daily closes. Ledgerly downloads them on first launch — if you have just connected an account, give it a moment and refresh." />
         ) : (
           <ResponsiveContainer width="100%" height={236}>
             <AreaChart data={series} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>

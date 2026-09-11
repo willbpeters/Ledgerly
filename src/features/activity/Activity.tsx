@@ -20,7 +20,10 @@ const TXN_TONE: Record<string, "pos" | "neg" | "neutral" | "accent" | "warn"> = 
 export function Activity() {
   const { data: txns = [] } = useTransactions();
   const { data: securities = [] } = useSecurities();
-  const { data: accounts = [] } = useAccounts();
+  const { data: allAccounts = [] } = useAccounts();
+  // Hidden accounts are out of every list, so they are not offered here and
+  // are never picked as the default. Accounts is the only screen that shows them.
+  const accounts = allAccounts.filter((a) => !a.hidden);
   const { data: categories = [] } = useCategories();
   const del = useDeleteTransaction();
   const [tab, setTab] = useState<Tab>("position");

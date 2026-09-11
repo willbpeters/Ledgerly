@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useBankTransactions, useCategories, useBudgets, useAccounts, useBankTransactionRange } from "../../data/queries";
-import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth } from "../../domain/spending";
+import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
 import { money } from "../../ui/format";
 import { Card, Button, EmptyState } from "../../ui/components";
 import { useChartColors } from "../../ui/chartColors";
@@ -14,10 +14,13 @@ export function Spending() {
   const [focus, setFocus] = useState<number | "uncategorised" | null>(null);
   const { from, to } = monthWindow(month);
 
-  const { data: txns = [], isLoading } = useBankTransactions(from, to);
+  const { data: allTxns = [], isLoading } = useBankTransactions(from, to);
   const { data: categories = [] } = useCategories();
   const { data: budgets = [] } = useBudgets();
-  const { data: accounts = [] } = useAccounts();
+  const { data: allAccounts = [] } = useAccounts();
+  // A hidden account is out of every total, and spending is a total.
+  const accounts = allAccounts.filter((a) => !a.hidden);
+  const txns = fromVisibleAccounts(allTxns, allAccounts);
   const { data: range } = useBankTransactionRange();
   const colours = useChartColors();
 

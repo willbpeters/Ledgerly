@@ -33,6 +33,21 @@ pub fn previous_all(conn: &Connection) -> rusqlite::Result<Vec<(i64, f64)>> {
     rows.collect()
 }
 
+/// Every stored close from `from` onward, oldest first, as
+/// (security_id, date, close). The chart rebuilds its history from these.
+pub fn history_since(conn: &Connection, from: &str) -> rusqlite::Result<Vec<(i64, String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT security_id, date, close FROM prices WHERE date >= ?1 ORDER BY date, security_id")?;
+    let rows = stmt.query_map([from], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    rows.collect()
+}
+
+#[tauri::command]
+pub fn prices_history(db: tauri::State<Db>, from: String) -> Result<Vec<(i64, String, f64)>, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    history_since(&conn, &from).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn prices_latest(db: tauri::State<Db>) -> Result<Vec<(i64, f64)>, String> {
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -80,6 +95,22 @@ pub fn prices_history_depth(db: tauri::State<Db>) -> Result<i64, String> {
 mod tests {
     use super::*;
     use crate::db;
+
+    #[test]
+    fn history_since_returns_only_dates_in_range_oldest_first() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute("INSERT INTO securities (ticker,name,type,currency) VALUES ('VTI',NULL,'etf','USD')", []).unwrap();
+        let sid: i64 = conn.query_row("SELECT id FROM securities WHERE ticker='VTI'", [], |r| r.get(0)).unwrap();
+        upsert(&conn, sid, "2026-01-01", 90.0, "test").unwrap();
+        upsert(&conn, sid, "2026-06-01", 100.0, "test").unwrap();
+        upsert(&conn, sid, "2026-09-01", 110.0, "test").unwrap();
+
+        let rows = history_since(&conn, "2026-05-01").unwrap();
+
+        assert_eq!(rows.len(), 2, "anything older than the window is left behind");
+        assert_eq!(rows[0], (sid, "2026-06-01".to_string(), 100.0));
+        assert_eq!(rows[1], (sid, "2026-09-01".to_string(), 110.0));
+    }
 
     #[test]
     fn latest_and_previous_pick_right_rows() {

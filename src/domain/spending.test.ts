@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { monthWindow, monthLabel, shiftMonth, summariseMonth, limitFor } from "./spending";
-import type { BankTransaction, Budget, Category } from "./types";
+import { monthWindow, monthLabel, shiftMonth, summariseMonth, limitFor, fromVisibleAccounts } from "./spending";
+import type { Account, BankTransaction, Budget, Category } from "./types";
 
 const cats: Category[] = [
   { id: 1, name: "Groceries", kind: "spending", colour: "chart-1", sort: 10, is_builtin: true },
@@ -114,5 +114,34 @@ describe("limitFor", () => {
     expect(limitFor(budgets, 1, "2026-09")).toBe(550);
     expect(limitFor(budgets, 1, "2026-10")).toBe(400);
     expect(limitFor(budgets, 2, "2026-09")).toBe(null);
+  });
+});
+
+describe("fromVisibleAccounts", () => {
+  const accounts: Account[] = [
+    { id: 1, name: "Everyday", type: "cash", institution: null, currency: "USD", created_at: "",
+      source: "simplefin", external_id: "a", synced_balance: 100, last_synced_at: null, hidden: false },
+    { id: 2, name: "Old Card", type: "credit", institution: null, currency: "USD", created_at: "",
+      source: "simplefin", external_id: "b", synced_balance: -50, last_synced_at: null, hidden: true },
+  ];
+  const rows = [
+    { id: 1, account_id: 1, external_id: "x", posted: "2026-09-01", amount: -20, description: "Shop",
+      payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto" },
+    { id: 2, account_id: 2, external_id: "y", posted: "2026-09-02", amount: -999, description: "Hidden spend",
+      payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto" },
+  ] as BankTransaction[];
+
+  it("drops transactions belonging to a hidden account", () => {
+    // Hidden means out of every total, so hidden spending must not inflate the month.
+    expect(fromVisibleAccounts(rows, accounts).map((t) => t.id)).toEqual([1]);
+  });
+
+  it("keeps everything when no account is hidden", () => {
+    const visible = accounts.map((a) => ({ ...a, hidden: false }));
+    expect(fromVisibleAccounts(rows, visible)).toHaveLength(2);
+  });
+
+  it("keeps a transaction whose account is not in the list rather than losing it silently", () => {
+    expect(fromVisibleAccounts(rows, [accounts[0]]).map((t) => t.id)).toEqual([1, 2]);
   });
 });

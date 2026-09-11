@@ -1,4 +1,17 @@
-import type { BankTransaction, Budget, Category } from "./types";
+import type { Account, BankTransaction, Budget, Category } from "./types";
+
+/**
+ * Transactions belonging to accounts that are not hidden.
+ *
+ * Hiding an account takes it out of every total, and spending is a total. A
+ * transaction whose account is not in the list at all is kept rather than
+ * dropped: the account list may still be loading, and quietly losing money off
+ * the screen is the worse failure.
+ */
+export function fromVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
+  const hidden = new Set(accounts.filter((a) => a.hidden).map((a) => a.id));
+  return txns.filter((t) => !hidden.has(t.account_id));
+}
 
 /** First and last day of a `YYYY-MM` month, inclusive. */
 export function monthWindow(month: string): { from: string; to: string } {

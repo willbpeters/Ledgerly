@@ -34,6 +34,7 @@ export const api = {
     refresh: () => invoke<number>("prices_refresh"), // added in Task 15
     backfill: () => invoke<number>("prices_backfill"),
     historyDepth: () => invoke<number>("prices_history_depth"),
+    history: (from: string) => invoke<[number, string, number][]>("prices_history", { from }),
   },
   snapshots: {
     list: () => invoke<Snapshot[]>("snapshots_list"),
