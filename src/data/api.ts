@@ -51,6 +51,9 @@ export const api = {
     profiles: () => invoke<SecurityProfile[]>("market_profiles_list"),
     indices: () => invoke<IndexQuote[]>("market_indices"),
     refresh: () => invoke<MarketRefreshReport>("market_refresh"),
+    indexHistory: () => invoke<[string, number][]>("market_index_history"),
+    indexDepth: () => invoke<number>("market_index_depth"),
+    indexBackfill: () => invoke<number>("market_index_backfill"),
   },
   simplefin: {
     status: () => invoke<SimplefinStatus>("simplefin_status"),

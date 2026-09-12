@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import { useBackfillPrices, usePriceHistoryDepth } from "./queries";
+import {
+  useBackfillPrices, usePriceHistoryDepth, useIndexDepth, useBackfillIndices,
+} from "./queries";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
 
 /**
@@ -19,13 +21,17 @@ export function shouldBackfill(depth: number | undefined): boolean {
 
 /**
  * Fill in price history once, when the database does not already have it.
- * Two years of daily closes is one request per security — the same cost as an
- * ordinary refresh — so this must not run on the polling timer.
+ * Two years of daily closes is one request per security plus one for the
+ * benchmark — the same cost as an ordinary refresh — so this must not run on
+ * the polling timer.
  */
 export function usePriceHistory() {
   const { data: depth } = usePriceHistoryDepth();
+  const { data: indexDepth } = useIndexDepth();
   const backfill = useBackfillPrices();
+  const backfillIndices = useBackfillIndices();
   const started = useRef(false);
+  const startedIndices = useRef(false);
 
   useEffect(() => {
     if (started.current || !shouldBackfill(depth)) return;
@@ -35,4 +41,11 @@ export function usePriceHistory() {
     // backfill.mutateAsync is stable for the component's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depth]);
+
+  useEffect(() => {
+    if (startedIndices.current || !shouldBackfill(indexDepth)) return;
+    startedIndices.current = true;
+    backfillIndices.mutateAsync().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indexDepth]);
 }

@@ -17,6 +17,8 @@ export const keys = {
   marketEarnings: ["market", "earnings"] as const,
   marketProfiles: ["market", "profiles"] as const,
   marketIndices: ["market", "indices"] as const,
+  indexHistory: ["market", "indexHistory"] as const,
+  indexDepth: ["market", "indexDepth"] as const,
 };
 
 export const useAccounts = () => useQuery({ queryKey: keys.accounts, queryFn: api.accounts.list });
@@ -225,6 +227,25 @@ export const useMarketNews = () => useQuery({ queryKey: keys.marketNews, queryFn
 export const useMarketEarnings = () => useQuery({ queryKey: keys.marketEarnings, queryFn: api.market.earnings });
 export const useMarketProfiles = () => useQuery({ queryKey: keys.marketProfiles, queryFn: api.market.profiles });
 export const useMarketIndices = () => useQuery({ queryKey: keys.marketIndices, queryFn: api.market.indices });
+
+export const useIndexHistory = () =>
+  useQuery({ queryKey: keys.indexHistory, queryFn: api.market.indexHistory });
+
+export const useIndexDepth = () =>
+  useQuery({ queryKey: keys.indexDepth, queryFn: api.market.indexDepth });
+
+/** The benchmark's two-year backfill. Run once, not on the refresh timer. */
+export function useBackfillIndices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.market.indexBackfill(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.indexDepth });
+      qc.invalidateQueries({ queryKey: keys.indexHistory });
+      qc.invalidateQueries({ queryKey: keys.marketIndices });
+    },
+  });
+}
 
 /** A market refresh can change all four, so they are invalidated together. */
 export function useMarketRefresh() {
