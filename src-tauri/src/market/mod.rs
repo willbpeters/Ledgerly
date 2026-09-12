@@ -132,22 +132,42 @@ pub fn refresh_all(conn: &Connection) -> MarketRefreshReport {
     report
 }
 
-/// Store a run of benchmark closes and report how many rows the table now
-/// holds. Split from `backfill_benchmark` so the storage half is testable
-/// without a network call.
+/// Store a run of benchmark closes and report how many this run wrote.
+/// Matches `prices::backfill_all`, which also reports what the run itself
+/// accomplished rather than the table's total depth. Split from
+/// `backfill_benchmark` so the storage half is testable without a network
+/// call.
 pub fn store_benchmark_history(
     conn: &Connection,
     closes: &[(String, f64)],
 ) -> rusqlite::Result<usize> {
     store::upsert_index_closes(conn, indices::BENCHMARK, closes)?;
-    Ok(store::index_history_depth(conn, indices::BENCHMARK)? as usize)
+    Ok(closes.len())
+}
+
+/// An empty response is a failed fetch, not an empty market. Reporting it as
+/// success would let a rate-limited download look like a completed backfill.
+pub fn check_fetched(symbol: &str, closes: &[(String, f64)]) -> Result<(), String> {
+    if closes.is_empty() {
+        return Err(format!(
+            "no closes returned for {symbol} — the response was empty or unparseable"
+        ));
+    }
+    Ok(())
 }
 
 /// Download two years of benchmark closes. Run once after upgrade, never on a
 /// timer — the ordinary market refresh keeps the last few days current.
-pub fn backfill_benchmark(conn: &Connection) -> Result<usize, String> {
+///
+/// The fetch happens before the lock is taken. `Db` is one mutex shared by
+/// every command in the app and none of our HTTP calls set a timeout, so
+/// holding it across a download would freeze every other screen for as long
+/// as Yahoo takes to answer.
+pub fn backfill_benchmark(db: &crate::db::Db) -> Result<usize, String> {
     let closes = indices::fetch_history(indices::BENCHMARK).map_err(|e| e.to_string())?;
-    store_benchmark_history(conn, &closes).map_err(|e| e.to_string())
+    check_fetched(indices::BENCHMARK, &closes)?;
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store_benchmark_history(&conn, &closes).map_err(|e| e.to_string())
 }
 
 /// The calendar is fetched by date for the whole market and intersected with
@@ -317,6 +337,10 @@ mod backfill_tests {
         let stored = store_benchmark_history(&conn, &closes).unwrap();
 
         assert_eq!(stored, 2, "(symbol, date) is the primary key; re-running is safe");
+        assert_eq!(
+            store::index_history_depth(&conn, indices::BENCHMARK).unwrap(), 2,
+            "the second run replaced the two rows rather than appending two more",
+        );
     }
 
     #[test]
@@ -328,5 +352,19 @@ mod backfill_tests {
             .query_row("SELECT count(*) FROM securities", [], |r| r.get(0))
             .unwrap();
         assert_eq!(securities, 0);
+    }
+
+    #[test]
+    fn an_empty_fetch_is_reported_as_an_error_naming_the_symbol() {
+        let err = check_fetched(indices::BENCHMARK, &[]).unwrap_err();
+        assert!(
+            err.contains(indices::BENCHMARK),
+            "the error should name the symbol that failed: {err}",
+        );
+    }
+
+    #[test]
+    fn a_non_empty_fetch_passes_the_check() {
+        assert!(check_fetched(indices::BENCHMARK, &[("2025-01-02".into(), 7000.0)]).is_ok());
     }
 }

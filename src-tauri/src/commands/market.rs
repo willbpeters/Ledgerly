@@ -57,6 +57,5 @@ pub fn market_index_depth(db: tauri::State<Db>) -> Result<i64, String> {
 /// `backfill_benchmark`.
 #[tauri::command]
 pub fn market_index_backfill(db: tauri::State<Db>) -> Result<usize, String> {
-    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    market::backfill_benchmark(&conn)
+    market::backfill_benchmark(&db)
 }
