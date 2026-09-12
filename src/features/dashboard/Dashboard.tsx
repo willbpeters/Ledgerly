@@ -29,11 +29,17 @@ type Mode = "networth" | "invested";
 // repeating the clause there would be untrue. The share-count caveat applies to
 // both — today's synced share counts are assumed to have been held throughout,
 // which is what bounds the window to 90 days either way.
-const SUBTITLE: Record<Mode, string> = {
-  networth:
-    "Rebuilt from your holdings, prices and cash movements. Share counts are today’s — SimpleFIN does not report holdings history.",
-  invested:
-    "Your holdings’ market value, rebuilt from daily closes. A deposit does not move this line. Share counts are today’s — SimpleFIN does not report holdings history.",
+export const CHART_MODES: Record<Mode, { dataKey: keyof ValuePoint; subtitle: string }> = {
+  networth: {
+    dataKey: "value",
+    subtitle:
+      "Rebuilt from your holdings, prices and cash movements. Share counts are today’s — SimpleFIN does not report holdings history.",
+  },
+  invested: {
+    dataKey: "invested",
+    subtitle:
+      "Your holdings’ market value, rebuilt from daily closes. A deposit does not move this line. Share counts are today’s — SimpleFIN does not report holdings history.",
+  },
 };
 
 function clipSeries(series: ValuePoint[], range: Range): ValuePoint[] {
@@ -131,7 +137,7 @@ export function Dashboard() {
 
       <Card
         title="Portfolio value"
-        subtitle={SUBTITLE[mode]}
+        subtitle={CHART_MODES[mode].subtitle}
         actions={
           <div className="row">
             <Segmented<Mode> value={mode} onChange={setMode} items={[
@@ -160,9 +166,11 @@ export function Dashboard() {
                   that has never been near zero wastes most of the chart. */}
               <YAxis fontSize={10} stroke={colors.text} tickLine={false} axisLine={false} width={58}
                 domain={[(min: number) => Math.max(0, min * 0.97), (max: number) => max * 1.02]}
-                tickFormatter={(v) => `$${Math.round(Number(v) / 1000)}k`} />
+                // Below a thousand dollars, dividing by 1000 rounds every tick to $0k —
+                // and the investments line is the one most likely to be that small.
+                tickFormatter={(v) => Number(v) < 1000 ? `$${Math.round(Number(v))}` : `$${Math.round(Number(v) / 1000)}k`} />
               <Tooltip content={<ChartTip />} cursor={{ stroke: colors.grid, strokeDasharray: "3 4" }} />
-              <Area type="monotone" dataKey={mode === "invested" ? "invested" : "value"} stroke={colors.accent} strokeWidth={1.9} fill="url(#valueFill)" />
+              <Area type="monotone" dataKey={CHART_MODES[mode].dataKey} stroke={colors.accent} strokeWidth={1.9} fill="url(#valueFill)" />
             </AreaChart>
           </ResponsiveContainer>
         )}
