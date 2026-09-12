@@ -142,4 +142,83 @@ describe("alignedReturns", () => {
     expect(a.assets).toHaveLength(2);
     expect(a.assets.reduce((sum, x) => sum + x.value, 0)).toBe(4000);
   });
+
+  it("still names every holding when the shared calendar is too short to use", () => {
+    // Two holdings that each have plenty of history, but on calendars that
+    // barely overlap. Nothing can be measured, but the portfolio is not empty,
+    // and marketExposure must be told the difference.
+    const a = alignedReturns({
+      holdings: [holding("A", 1, 1000), holding("B", 2, 3000)],
+      prices: [
+        ...closes(LONG, 1).filter((_, i) => i % 2 === 0),
+        ...closes(LONG, 2).filter((_, i) => i % 2 === 1),
+      ],
+      benchmark: bench(),
+      minObservations: 100,
+    });
+
+    expect(a.dates).toEqual([]);
+    expect(a.assets).toHaveLength(2);
+    expect(a.assets.every((x) => x.returns === null)).toBe(true);
+    expect(a.assets.reduce((sum, x) => sum + x.value, 0)).toBe(4000);
+  });
+
+  it("names every holding even when there is no benchmark at all", () => {
+    const a = alignedReturns({
+      holdings: [holding("A", 1, 1000)],
+      prices: closes(LONG, 1),
+      benchmark: [],
+      minObservations: 10,
+    });
+    expect(a.assets).toHaveLength(1);
+    expect(a.assets[0].returns).toBeNull();
+    expect(a.assets[0].value).toBe(1000);
+  });
+
+  it("drops a date whose stored close is zero rather than dividing by it", () => {
+    const withZero = closes(LONG, 1).map((p, i) => (i === 9 ? { ...p, close: 0 } : p));
+
+    const a = alignedReturns({
+      holdings: [holding("A", 1, 1000)],
+      prices: withZero,
+      benchmark: bench(),
+      minObservations: 10,
+    });
+
+    expect(a.dates).not.toContain(day(9));
+    expect(a.assets[0].returns!.every(Number.isFinite)).toBe(true);
+  });
+
+  it("drops a date whose stored close is negative or not a number", () => {
+    const bad = closes(LONG, 1).map((p, i) => {
+      if (i === 11) return { ...p, close: -5 };
+      if (i === 13) return { ...p, close: NaN };
+      return p;
+    });
+
+    const a = alignedReturns({
+      holdings: [holding("A", 1, 1000)],
+      prices: bad,
+      benchmark: bench(),
+      minObservations: 10,
+    });
+
+    expect(a.dates).not.toContain(day(11));
+    expect(a.dates).not.toContain(day(13));
+    expect(a.assets[0].returns!.every(Number.isFinite)).toBe(true);
+  });
+
+  it("drops a date the benchmark itself priced at zero", () => {
+    const badBench = bench().map((b, i) => (i === 15 ? { ...b, close: 0 } : b));
+
+    const a = alignedReturns({
+      holdings: [holding("A", 1, 1000)],
+      prices: closes(LONG, 1),
+      benchmark: badBench,
+      minObservations: 10,
+    });
+
+    expect(a.dates).not.toContain(day(15));
+    expect(a.benchmark.every(Number.isFinite)).toBe(true);
+  });
 });
