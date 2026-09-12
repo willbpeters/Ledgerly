@@ -72,3 +72,28 @@ describe("fit", () => {
     expect(fit([1], [2])).toBeNull();
   });
 });
+
+describe("non-finite input", () => {
+  it("returns null rather than propagating a NaN through the mean", () => {
+    expect(mean([1, NaN, 3])).toBeNull();
+    expect(mean([1, Infinity, 3])).toBeNull();
+  });
+
+  it("returns null rather than propagating a NaN through the spread", () => {
+    expect(variance([1, NaN, 3])).toBeNull();
+    expect(stdev([1, -Infinity, 3])).toBeNull();
+    expect(covariance([1, 2, 3], [1, NaN, 3])).toBeNull();
+  });
+
+  it("refuses to fit a line through a series containing a non-finite value", () => {
+    const xs = [1, 2, 3, 4];
+    expect(fit(xs, [2, NaN, 6, 8])).toBeNull();
+    expect(fit([1, Infinity, 3, 4], [2, 4, 6, 8])).toBeNull();
+  });
+
+  it("still answers normally for ordinary finite input", () => {
+    // The guard must not change any correct answer.
+    expect(mean([1, 2, 3, 4])).toBe(2.5);
+    expect(fit([1, 2, 3, 4, 5], [5, 7, 9, 11, 13])!.slope).toBeCloseTo(2, 12);
+  });
+});

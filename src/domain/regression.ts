@@ -5,12 +5,30 @@
  *
  * Everything returns `null` when there is not enough data to answer, never 0
  * and never NaN — see the note at the top of `risk.ts` for why that matters
- * here more than in most codebases.
+ * here more than in most codebases. That includes non-finite results: a NaN
+ * or Infinity anywhere in the input is caught and turned into `null` rather
+ * than being allowed to propagate out as a number-shaped nothing.
  *
  * Variance and standard deviation use the sample convention (divide by n-1).
  * Beta is a ratio of two of these, so the convention cancels; volatility is
  * not, and the sample form is the standard one to report.
  */
+
+/**
+ * Whether every value is a real, finite number.
+ *
+ * A single NaN or Infinity in the input propagates silently through every
+ * formula below and comes out the far end as a number-shaped nothing. That
+ * matters here because these results are rendered as percentages on a finance
+ * dashboard, where "NaN%" is the worst available outcome.
+ *
+ * The series builder that feeds this module drops unusable closes at the
+ * source. This is a second line of defence, not a duplicate of that one:
+ * neither should be removed on the grounds that the other exists.
+ */
+function allFinite(xs: number[]): boolean {
+  return xs.every(Number.isFinite);
+}
 
 export interface Fit {
   /** Beta, when xs is the market and ys the portfolio. */
@@ -29,11 +47,13 @@ function sameLength(xs: number[], ys: number[]): void {
 
 export function mean(xs: number[]): number | null {
   if (xs.length === 0) return null;
+  if (!allFinite(xs)) return null;
   return xs.reduce((sum, x) => sum + x, 0) / xs.length;
 }
 
 export function variance(xs: number[]): number | null {
   if (xs.length < 2) return null;
+  if (!allFinite(xs)) return null;
   const m = mean(xs)!;
   const ss = xs.reduce((sum, x) => sum + (x - m) * (x - m), 0);
   return ss / (xs.length - 1);
@@ -47,6 +67,7 @@ export function stdev(xs: number[]): number | null {
 export function covariance(xs: number[], ys: number[]): number | null {
   sameLength(xs, ys);
   if (xs.length < 2) return null;
+  if (!allFinite(xs) || !allFinite(ys)) return null;
   const mx = mean(xs)!;
   const my = mean(ys)!;
   let sum = 0;
@@ -68,6 +89,7 @@ export function covariance(xs: number[], ys: number[]): number | null {
 export function fit(xs: number[], ys: number[]): Fit | null {
   sameLength(xs, ys);
   if (xs.length < 2) return null;
+  if (!allFinite(xs) || !allFinite(ys)) return null;
 
   const vx = variance(xs)!;
   if (vx === 0) return null;
@@ -78,6 +100,8 @@ export function fit(xs: number[], ys: number[]): Fit | null {
 
   const vy = variance(ys)!;
   const r2 = vy === 0 ? 0 : (cov * cov) / (vx * vy);
+
+  if (!Number.isFinite(slope) || !Number.isFinite(intercept) || !Number.isFinite(r2)) return null;
 
   return { slope, intercept, r2 };
 }
