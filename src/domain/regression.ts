@@ -1,7 +1,12 @@
 /**
- * Ordinary least squares and the summary statistics it needs. Deliberately
- * free of any finance vocabulary: this file knows about `xs` and `ys`, not
- * about markets, so its answers can be checked against a textbook.
+ * Ordinary least squares and the summary statistics it needs.
+ *
+ * The logic here is pure statistics with no finance in it and no imports at
+ * all: it knows about `xs` and `ys`, so every answer can be checked against a
+ * textbook. The comments do name what each quantity becomes in the caller —
+ * slope is beta, intercept is alpha — because that mapping is the whole reason
+ * this module exists and hiding it would help nobody. What must not appear
+ * here is finance *logic* or a dependency on the finance layer.
  *
  * Everything returns `null` when there is not enough data to answer, never 0
  * and never NaN — see the note at the top of `risk.ts` for why that matters
@@ -92,14 +97,24 @@ export function fit(xs: number[], ys: number[]): Fit | null {
   if (!allFinite(xs) || !allFinite(ys)) return null;
 
   const vx = variance(xs)!;
-  if (vx === 0) return null;
+
+  // Exact equality is not enough. `xs` arrives as computed values, so a series
+  // that is flat in reality can still carry floating-point residue and produce
+  // a variance around 1e-34. Dividing by that yields a slope in the hundreds of
+  // thousands — finite, so the guard below would pass it, and meaningless. Judge
+  // flatness relative to the scale of the data instead.
+  const scale = xs.reduce((max, x) => Math.max(max, Math.abs(x)), 0);
+  if (!(vx > 0) || Math.sqrt(vx) <= Number.EPSILON * scale) return null;
 
   const cov = covariance(xs, ys)!;
   const slope = cov / vx;
   const intercept = mean(ys)! - slope * mean(xs)!;
 
   const vy = variance(ys)!;
-  const r2 = vy === 0 ? 0 : (cov * cov) / (vx * vy);
+  // Cauchy-Schwarz bounds this at 1 in exact arithmetic, but cov, vx and vy are
+  // three separate summations, so rounding can nudge it just past. The UI prints
+  // this as a percentage and 100.0000001% would be an obvious wrong.
+  const r2 = vy === 0 ? 0 : Math.min(1, (cov * cov) / (vx * vy));
 
   if (!Number.isFinite(slope) || !Number.isFinite(intercept) || !Number.isFinite(r2)) return null;
 

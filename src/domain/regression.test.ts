@@ -97,3 +97,31 @@ describe("non-finite input", () => {
     expect(fit([1, 2, 3, 4, 5], [5, 7, 9, 11, 13])!.slope).toBeCloseTo(2, 12);
   });
 });
+
+describe("near-degenerate input", () => {
+  it("refuses to fit a line through a series that is flat to within rounding", () => {
+    // Not bit-identical, but not a real signal either: dividing by this
+    // variance would produce an enormous, confident, meaningless slope.
+    const almostFlat = [1, 1 + Number.EPSILON, 1, 1 - Number.EPSILON];
+    expect(fit(almostFlat, [2, 4, 6, 8])).toBeNull();
+  });
+
+  it("still fits a series whose values are small but genuinely varying", () => {
+    // Daily returns are small numbers; smallness must not be mistaken for flatness.
+    const returns = [0.001, -0.002, 0.0015, -0.0005, 0.0008, -0.0011];
+    const f = fit(returns, returns.map((r) => r * 3))!;
+    expect(f).not.toBeNull();
+    expect(f.slope).toBeCloseTo(3, 9);
+  });
+
+  it("never reports an R-squared above 1, whatever rounding does", () => {
+    const xs = Array.from({ length: 300 }, (_, i) => Math.sin(i) * 0.013 + 0.0001);
+    const f = fit(xs, xs.map((x) => x * 1.0000001))!;
+    expect(f.r2).toBeLessThanOrEqual(1);
+    expect(f.r2).toBeGreaterThanOrEqual(0);
+  });
+
+  it("throws on mismatched lengths, exactly as covariance does", () => {
+    expect(() => fit([1, 2, 3], [1, 2])).toThrow(/same length/);
+  });
+});
