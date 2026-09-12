@@ -87,4 +87,30 @@ describe("MarketExposureCard", () => {
     expect(screen.getByText("-4.2%")).toBeInTheDocument();
     expect(screen.getByText(/less than its market exposure explains/i)).toBeInTheDocument();
   });
+
+  it("still shows volatility when only the benchmark is unusable", () => {
+    // The S&P history failed to download; the owner's own holdings have two
+    // clean years. Their volatility is fully knowable and must not be thrown
+    // away with the figures that genuinely need the benchmark.
+    render(
+      <MarketExposureCard
+        exposure={exposure({ alpha: null, beta: null, r2: null, volatility: 0.22 })}
+        isLoading={false}
+      />,
+    );
+    expect(screen.getByText("22.0%")).toBeInTheDocument();
+    expect(screen.getByText(/S&P 500's own history/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Not enough price history/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the empty state when even volatility is missing", () => {
+    render(
+      <MarketExposureCard
+        exposure={exposure({ alpha: null, beta: null, r2: null, volatility: null, observations: 40 })}
+        isLoading={false}
+      />,
+    );
+    expect(screen.getByText(/Not enough price history/i)).toBeInTheDocument();
+    expect(screen.getByText(/40 days/)).toBeInTheDocument();
+  });
 });

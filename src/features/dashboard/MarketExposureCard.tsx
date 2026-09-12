@@ -24,6 +24,28 @@ export function MarketExposureCard(
   }
 
   if (alpha == null || beta == null || r2 == null) {
+    // Volatility does not need the benchmark, so it survives a missing or
+    // unusable S&P history. Throwing it away here would discard a figure we
+    // genuinely have and tell the owner we know less than we do.
+    if (volatility != null) {
+      return (
+        <Card title="Versus the S&P 500">
+          <div className="stat-row">
+            <div className="stat">
+              <div className="stat-label">Volatility (per year)</div>
+              <div className="stat-value">{share(volatility)}</div>
+              <div className="cell-secondary">your holdings alone</div>
+            </div>
+          </div>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            How much your portfolio has swung about, measured over {observations}{" "}
+            trading days. Alpha, beta and the market comparison need the S&P 500's
+            own history, which is not available yet.
+          </p>
+        </Card>
+      );
+    }
+
     return (
       <Card title="Versus the S&P 500">
         <EmptyState
