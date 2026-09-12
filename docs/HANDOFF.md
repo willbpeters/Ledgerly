@@ -275,11 +275,12 @@ being bolted on ad hoc. Suggested order:
 3. **Holding detail drill-down** — a per-holding view showing individual lots.
    This is in the design spec but was scoped out of v1.
 4. **Crypto and manual/other asset types** (real estate, private assets).
-5. **Risk analytics phases 2-4** — market exposure (beta vs SPY, volatility,
-   R²), downside (max drawdown, historical VaR/CVaR), and diversification
-   (correlation, ETF-overlap detection). Phase 0 (price history) and Phase 1
-   (concentration) are done. Spec:
-   `docs/superpowers/specs/2026-09-08-risk-analytics-design.md`
+5. **Risk analytics phases 3-4** — downside (max drawdown, historical VaR/CVaR)
+   and diversification (correlation matrix, ETF-overlap detection). Phase 0
+   (price history), Phase 1 (concentration) and Phase 2 (alpha, beta, R² and
+   volatility versus `^GSPC`) are done. Specs:
+   `docs/superpowers/specs/2026-09-08-risk-analytics-design.md` and
+   `docs/superpowers/specs/2026-09-11-alpha-vs-benchmark-design.md`
 6. **Advanced returns** (XIRR / time-weighted return, benchmarks) and
    **historical backfill** for the value-over-time chart (today it only builds
    forward from daily snapshots).
@@ -295,6 +296,16 @@ being bolted on ad hoc. Suggested order:
   and `docs/superpowers/specs/2026-09-07-ui-redesign-and-simplefin-design.md`
 - **Original implementation plan (fully executed):**
   `docs/superpowers/plans/2026-09-04-investments-tracker.md`
+- **Benchmark data:** the S&P 500 lives in `index_quotes` as `^GSPC`, never in
+  `securities` — see the header comment in `src-tauri/src/market/indices.rs`.
+  Two years of closes are backfilled once by `market_index_backfill`; the
+  60-second market refresh keeps only the last few days current.
+- **Two rules the risk maths depends on**, both easy to break by accident:
+  every figure returns `null` rather than 0 or NaN when it cannot be computed
+  honestly (see the header of `src/domain/risk.ts`), and a missing daily close
+  is dropped rather than carried forward — a repeated close reads as a 0% day,
+  which flattens volatility and drags beta toward zero. `src/domain/returns.ts`
+  explains the second at the point it is enforced.
 
 ## Commands
 
