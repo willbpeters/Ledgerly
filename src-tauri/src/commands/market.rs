@@ -37,3 +37,26 @@ pub fn market_refresh(db: tauri::State<Db>) -> Result<market::MarketRefreshRepor
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     Ok(market::refresh_all(&conn))
 }
+
+/// Two years of benchmark closes, oldest first, as (date, close).
+#[tauri::command]
+pub fn market_index_history(db: tauri::State<Db>) -> Result<Vec<(String, f64)>, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store::index_history(&conn, market::indices::BENCHMARK).map_err(|e| e.to_string())
+}
+
+/// How many benchmark closes are stored. The frontend backfills when this is
+/// short, so it is not re-downloaded on every launch.
+#[tauri::command]
+pub fn market_index_depth(db: tauri::State<Db>) -> Result<i64, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store::index_history_depth(&conn, market::indices::BENCHMARK).map_err(|e| e.to_string())
+}
+
+/// Download the benchmark's two-year history. Run rarely — see
+/// `backfill_benchmark`.
+#[tauri::command]
+pub fn market_index_backfill(db: tauri::State<Db>) -> Result<usize, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    market::backfill_benchmark(&conn)
+}

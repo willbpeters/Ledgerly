@@ -132,6 +132,24 @@ pub fn refresh_all(conn: &Connection) -> MarketRefreshReport {
     report
 }
 
+/// Store a run of benchmark closes and report how many rows the table now
+/// holds. Split from `backfill_benchmark` so the storage half is testable
+/// without a network call.
+pub fn store_benchmark_history(
+    conn: &Connection,
+    closes: &[(String, f64)],
+) -> rusqlite::Result<usize> {
+    store::upsert_index_closes(conn, indices::BENCHMARK, closes)?;
+    Ok(store::index_history_depth(conn, indices::BENCHMARK)? as usize)
+}
+
+/// Download two years of benchmark closes. Run once after upgrade, never on a
+/// timer — the ordinary market refresh keeps the last few days current.
+pub fn backfill_benchmark(conn: &Connection) -> Result<usize, String> {
+    let closes = indices::fetch_history(indices::BENCHMARK).map_err(|e| e.to_string())?;
+    store_benchmark_history(conn, &closes).map_err(|e| e.to_string())
+}
+
 /// The calendar is fetched by date for the whole market and intersected with
 /// held tickers locally — one request per day rather than one per holding.
 /// Per-company surprise is then fetched only for companies actually held.
@@ -265,5 +283,50 @@ mod tests {
         };
         store::upsert_profile(&conn, 1, &etf, "2026-09-10T00:00:00Z").unwrap();
         assert!(news_targets(&conn).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn a_backfill_stores_every_close_it_is_given_and_counts_them() {
+        let conn = db::open_in_memory().unwrap();
+        // Distinct dates across four months, so the count is a real count.
+        let closes: Vec<(String, f64)> = (0..120)
+            .map(|i| (format!("2025-{:02}-{:02}", (i / 30) + 1, (i % 30) + 1), 7000.0 + i as f64))
+            .collect();
+
+        let stored = store_benchmark_history(&conn, &closes).unwrap();
+
+        assert_eq!(stored, 120, "every distinct date is a row");
+        assert_eq!(
+            stored,
+            store::index_history_depth(&conn, indices::BENCHMARK).unwrap() as usize,
+        );
+    }
+
+    #[test]
+    fn a_second_backfill_replaces_rows_rather_than_doubling_them() {
+        let conn = db::open_in_memory().unwrap();
+        let closes = [("2025-01-02".to_string(), 7000.0), ("2025-01-03".to_string(), 7050.0)];
+
+        store_benchmark_history(&conn, &closes).unwrap();
+        let stored = store_benchmark_history(&conn, &closes).unwrap();
+
+        assert_eq!(stored, 2, "(symbol, date) is the primary key; re-running is safe");
+    }
+
+    #[test]
+    fn a_backfill_does_not_create_a_security_for_the_benchmark() {
+        let conn = db::open_in_memory().unwrap();
+        store_benchmark_history(&conn, &[("2025-01-02".into(), 7000.0)]).unwrap();
+
+        let securities: i64 = conn
+            .query_row("SELECT count(*) FROM securities", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(securities, 0);
     }
 }

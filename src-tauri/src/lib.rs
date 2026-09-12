@@ -62,6 +62,9 @@ pub fn run() {
             commands::market::market_earnings_list,
             commands::market::market_profiles_list,
             commands::market::market_indices,
+            commands::market::market_index_history,
+            commands::market::market_index_depth,
+            commands::market::market_index_backfill,
             commands::market::market_refresh,
         ])
         .run(tauri::generate_context!())
