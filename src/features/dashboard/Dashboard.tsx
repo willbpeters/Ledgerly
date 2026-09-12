@@ -9,6 +9,9 @@ import { Card, EmptyState, Segmented } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { useChartColors } from "../../ui/chartColors";
 import { RiskCard } from "./RiskCard";
+import { MarketExposureCard } from "./MarketExposureCard";
+import { useRiskSeries } from "../../data/useRiskSeries";
+import { marketExposure } from "../../domain/risk";
 import type { Holding, SeriesPoint } from "../../domain/types";
 
 // Only windows the data can actually support: the series is rebuilt from
@@ -42,6 +45,12 @@ interface Row extends Holding { weight: number | null; name: string | null; colo
 export function Dashboard() {
   const { holdings, summary, isLoading } = usePortfolio();
   const { series: fullSeries } = useValueSeries();
+  const { aligned, isLoading: riskLoading } = useRiskSeries(holdings);
+  const exposure = marketExposure({
+    assets: aligned.assets,
+    cash: summary.cash,
+    benchmark: aligned.benchmark,
+  });
   const { data: securities = [] } = useSecurities();
   const colors = useChartColors();
   const [range, setRange] = useState<Range>("3m");
@@ -158,6 +167,7 @@ export function Dashboard() {
       </Card>
 
       <RiskCard holdings={holdings} cash={summary.cash} />
+      <MarketExposureCard exposure={exposure} isLoading={riskLoading} />
 
       <Card title="Positions" actions={<Link to="/holdings" style={{ fontSize: 11, fontWeight: 600 }}>View all</Link>}>
         {rows.length === 0 ? (
