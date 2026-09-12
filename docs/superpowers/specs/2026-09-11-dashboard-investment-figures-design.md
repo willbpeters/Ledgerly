@@ -69,12 +69,18 @@ as it does today.
 
 ### 3. Today and All time are labelled as investments
 
-The captions become `Today · investments` and `All time · investments`.
+The captions become `Today (investments)` and `All time (investments)`.
 
 This is not decoration. The project rule is that a figure never appears without
 the caveat that explains it, and here two percentages sit beside a net-worth
 hero while measuring something narrower than it. A reader who assumes Today is
 a net-worth move will be wrong by exactly the proportion of their cash.
+
+**Parentheses rather than a `·` separator**, which was the first choice and was
+wrong: the values themselves already read `+$1,204.00 · +1.24%`, so a caption of
+`Today · investments` put the same glyph directly above a different use of it,
+one grammatical and one numeric, in the same narrow column. The label exists to
+clarify the figure, so it must not compete with it.
 
 ### 4. The chart gets a Net worth / Investments toggle
 
