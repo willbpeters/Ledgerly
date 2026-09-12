@@ -23,13 +23,13 @@ export function Headline({ summary }: { summary: PortfolioSummary }) {
         <div className="hero-value">{dollars}<span className="hero-cents">.{cents}</span></div>
       </div>
       <div className="headline-side">
-        <div className="cap">Today · investments</div>
+        <div className="cap">Today (investments)</div>
         <div className={`n ${summary.dayChange >= 0 ? "pos" : "neg"}`}>
           {summary.dayChange >= 0 ? "+" : ""}{money(summary.dayChange)} · {pct(summary.dayChangePct)}
         </div>
       </div>
       <div className="headline-side">
-        <div className="cap">All time · investments</div>
+        <div className="cap">All time (investments)</div>
         <div className={`n ${summary.unrealized >= 0 ? "pos" : "neg"}`}>
           {summary.unrealized >= 0 ? "+" : ""}{money(summary.unrealized)} · {pct(summary.unrealizedPct)}
         </div>

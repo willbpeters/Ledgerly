@@ -15,6 +15,8 @@ describe("Headline", () => {
   it("shows net worth as the hero figure", () => {
     render(<Headline summary={summary()} />);
     expect(screen.getByText("Net worth")).toBeInTheDocument();
+    expect(screen.getByText("$142,318")).toBeInTheDocument();
+    expect(screen.getByText(".44")).toBeInTheDocument();
   });
 
   it("shows invested value beside cash and owed", () => {
