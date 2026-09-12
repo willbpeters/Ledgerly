@@ -563,7 +563,7 @@ export function fit(xs: number[], ys: number[]): Fit | null {
 npm test -- src/domain/regression.test.ts
 ```
 
-Expected: 13 passed.
+Expected: 12 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -963,7 +963,7 @@ describe("alignedReturns", () => {
     expect(a.assets[0].returns[i]).toBeCloseTo(Math.pow(1.01, 2) - 1, 12);
   });
 
-  it("excludes a holding with no price rows and says why", () => {
+  it("passes a holding with no price rows through with null returns, and says why", () => {
     const a = alignedReturns({
       holdings: [holding("A", 1, 1000), holding("SWVXX", 2, 500)],
       prices: closes(LONG, 1),
@@ -971,7 +971,11 @@ describe("alignedReturns", () => {
       minObservations: 10,
     });
 
-    expect(a.assets.map((x) => x.ticker)).toEqual(["A"]);
+    // Every holding comes through. `marketExposure` owns the decision to drop
+    // one, so it can also report how much of the portfolio went with it.
+    expect(a.assets.map((x) => x.ticker)).toEqual(["A", "SWVXX"]);
+    expect(a.assets.find((x) => x.ticker === "SWVXX")!.returns).toBeNull();
+    expect(a.assets.find((x) => x.ticker === "SWVXX")!.value).toBe(500);
     expect(a.excluded).toEqual([{ ticker: "SWVXX", reason: "no history" }]);
   });
 
@@ -986,7 +990,8 @@ describe("alignedReturns", () => {
     });
 
     expect(a.excluded).toEqual([{ ticker: "NEW", reason: "short history" }]);
-    expect(a.dates.length).toBeGreaterThan(200, "the long-held position keeps its full window");
+    expect(a.assets.find((x) => x.ticker === "NEW")!.returns).toBeNull();
+    expect(a.dates.length).toBeGreaterThan(200);
   });
 
   it("carries each holding's market value through for weighting", () => {
@@ -1060,9 +1065,18 @@ export interface Aligned {
   dates: string[];
   /** The benchmark's daily returns over `dates`. */
   benchmark: number[];
-  /** Each included holding, ready to hand to `marketExposure`. */
-  assets: (ExposureAsset & { returns: number[] })[];
-  /** Holdings left out, with the reason the card shows. */
+  /**
+   * Every holding, ready to hand to `marketExposure` — measurable ones with
+   * their aligned returns, the rest with `returns: null`.
+   *
+   * The unmeasurable ones are deliberately passed through rather than dropped
+   * here. `marketExposure` has to make the exclusion decision anyway, and
+   * keeping it in one place is what lets it also report how much of the
+   * portfolio's value was excluded. Dropping them here would leave that
+   * function reporting full coverage of a portfolio it had only seen part of.
+   */
+  assets: ExposureAsset[];
+  /** Why each unmeasurable holding was unmeasurable. */
   excluded: Exclusion[];
 }
 
@@ -1108,14 +1122,22 @@ export function alignedReturns(i: AlignInputs): Aligned {
   const dates = benchDates.filter((d) => included.every(({ closes }) => closes.has(d)));
   if (dates.length < 2) return { ...empty, excluded };
 
+  const measured = new Map(
+    included.map(({ holding, closes }) => [
+      holding.security_id,
+      toReturns(dates.map((d) => closes.get(d)!)),
+    ]),
+  );
+
   return {
     dates: dates.slice(1),
     benchmark: toReturns(dates.map((d) => benchByDate.get(d)!)),
-    assets: included.map(({ holding, closes }) => ({
-      securityId: holding.security_id,
-      ticker: holding.ticker,
-      value: holding.marketValue,
-      returns: toReturns(dates.map((d) => closes.get(d)!)),
+    // Every holding, measurable or not — see the note on `Aligned.assets`.
+    assets: i.holdings.map((h) => ({
+      securityId: h.security_id,
+      ticker: h.ticker,
+      value: h.marketValue,
+      returns: measured.get(h.security_id) ?? null,
     })),
     excluded,
   };
@@ -1344,6 +1366,7 @@ function exposure(over: Partial<MarketExposure> = {}): MarketExposure {
   return {
     alpha: 0.031, beta: 1.15, r2: 0.88, volatility: 0.19,
     observations: 480, includedCount: 8, excludedTickers: [],
+    includedValueShare: 1,
     ...over,
   };
 }
@@ -1375,11 +1398,28 @@ describe("MarketExposureCard", () => {
   it("names the holdings it could not measure", () => {
     render(
       <MarketExposureCard
-        exposure={exposure({ excludedTickers: ["SWVXX", "FDRXX"] })}
+        exposure={exposure({ excludedTickers: ["SWVXX", "FDRXX"], includedValueShare: 0.82 })}
         isLoading={false}
       />,
     );
     expect(screen.getByText(/SWVXX, FDRXX/)).toBeInTheDocument();
+  });
+
+  it("says how much of the portfolio the figures cover when some was unmeasurable", () => {
+    // A confident beta computed over 40% of someone's money reads exactly like
+    // one computed over all of it. This line is what tells them apart.
+    render(
+      <MarketExposureCard
+        exposure={exposure({ excludedTickers: ["SWVXX"], includedValueShare: 0.4 })}
+        isLoading={false}
+      />,
+    );
+    expect(screen.getByText(/40.0% of your portfolio/i)).toBeInTheDocument();
+  });
+
+  it("does not clutter the card with a coverage note when it measured everything", () => {
+    render(<MarketExposureCard exposure={exposure()} isLoading={false} />);
+    expect(screen.queryByText(/of your portfolio/i)).not.toBeInTheDocument();
   });
 
   it("says what is missing instead of showing zeros when there is not enough history", () => {
@@ -1432,7 +1472,7 @@ import type { MarketExposure } from "../../domain/risk";
 export function MarketExposureCard(
   { exposure, isLoading }: { exposure: MarketExposure; isLoading: boolean },
 ) {
-  const { alpha, beta, r2, volatility, observations, excludedTickers } = exposure;
+  const { alpha, beta, r2, volatility, observations, excludedTickers, includedValueShare } = exposure;
 
   if (isLoading) {
     return <Card title="Versus the S&P 500"><p className="muted">Loading…</p></Card>;
@@ -1487,8 +1527,8 @@ export function MarketExposureCard(
       {excludedTickers.length > 0 && (
         <p className="muted">
           {excludedTickers.length} holding{excludedTickers.length === 1 ? "" : "s"} left out
-          for want of price history: {excludedTickers.join(", ")}. The figures above cover
-          the rest.
+          for want of price history: {excludedTickers.join(", ")}. The figures above cover{" "}
+          {share(includedValueShare)} of your portfolio.
         </p>
       )}
 
@@ -1548,24 +1588,16 @@ In the `Dashboard` component, immediately after the line `const { series: fullSe
   });
 ```
 
-The excluded tickers come from two places — `alignedReturns` drops holdings with no usable history, and `marketExposure` drops anything whose series does not line up — so merge them for the card:
+No merging of excluded tickers is needed. `alignedReturns` passes every holding through — unmeasurable ones carry `returns: null` — so `marketExposure` sees the whole portfolio and is the single place that decides what to exclude, names it, and reports the share of value covered.
 
-```tsx
-  const exposureForCard = {
-    ...exposure,
-    excludedTickers: [
-      ...aligned.excluded.map((e) => e.ticker),
-      ...exposure.excludedTickers,
-    ],
-  };
-```
+`summary.cash` is the right thing to pass, and `summary.liabilities` deliberately is not: credit-card debt carries no market exposure, and netting it off would make borrowing look like it reduced risk.
 
 - [ ] **Step 3: Render the card**
 
 Immediately after the existing `<RiskCard holdings={holdings} cash={summary.cash} />` line, add:
 
 ```tsx
-      <MarketExposureCard exposure={exposureForCard} isLoading={riskLoading} />
+      <MarketExposureCard exposure={exposure} isLoading={riskLoading} />
 ```
 
 - [ ] **Step 4: Verify the project type-checks and the full suite passes**
