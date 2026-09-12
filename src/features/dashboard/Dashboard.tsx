@@ -133,14 +133,14 @@ export function Dashboard() {
         title="Portfolio value"
         subtitle={SUBTITLE[mode]}
         actions={
-          <>
+          <div className="row">
             <Segmented<Mode> value={mode} onChange={setMode} items={[
               { value: "networth", label: "Net worth" }, { value: "invested", label: "Investments" },
             ]} />
             <Segmented<Range> value={range} onChange={setRange} items={[
               { value: "1m", label: "1M" }, { value: "3m", label: "3M" },
             ]} />
-          </>
+          </div>
         }>
         {series.length < 2 ? (
           <EmptyState title="Not enough price history yet"
