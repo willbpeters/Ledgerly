@@ -107,6 +107,9 @@ export function alignedReturns(i: AlignInputs): Aligned {
   for (const h of i.holdings) {
     const closes = bySecurity.get(h.security_id);
     const covered = closes ? benchDates.filter((d) => closes.has(d)).length : 0;
+    // "no history" covers both a holding we have no rows for at all and one
+    // whose rows never land on a day the benchmark traded. From here the two
+    // are the same thing: nothing usable to measure against.
     if (!closes || covered === 0) {
       excluded.push({ ticker: h.ticker, reason: "no history" });
     } else if (covered < min + 1) {
@@ -115,6 +118,13 @@ export function alignedReturns(i: AlignInputs): Aligned {
       included.push({ holding: h, closes });
     }
   }
+
+  // `[].every(...)` is true, so an empty `included` would let the intersection
+  // below return the benchmark's whole calendar and present a real return
+  // series for a portfolio in which nothing could be measured. Downstream that
+  // becomes a confident beta of 0.00 for someone holding only funds we have no
+  // history for.
+  if (included.length === 0) return { ...unmeasured, excluded };
 
   const dates = benchDates.filter((d) => included.every(({ closes }) => closes.has(d)));
   if (dates.length < 2) return { ...unmeasured, excluded };

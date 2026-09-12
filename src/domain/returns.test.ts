@@ -221,4 +221,24 @@ describe("alignedReturns", () => {
     expect(a.dates).not.toContain(day(15));
     expect(a.benchmark.every(Number.isFinite)).toBe(true);
   });
+
+  it("measures nothing when nothing is measurable, rather than the benchmark alone", () => {
+    // Someone holding only a money-market fund Yahoo knows nothing about.
+    // The intersection of an empty set of holdings is vacuously everything, so
+    // without a guard this reports a real benchmark series — and marketExposure
+    // turns that into a confident beta of 0.00 for an unmeasured portfolio.
+    const a = alignedReturns({
+      holdings: [holding("SWVXX", 2, 5000)],
+      prices: [],
+      benchmark: bench(),
+      minObservations: 10,
+    });
+
+    expect(a.dates).toEqual([]);
+    expect(a.benchmark).toEqual([]);
+    expect(a.assets).toHaveLength(1);
+    expect(a.assets[0].returns).toBeNull();
+    expect(a.assets[0].value).toBe(5000);
+    expect(a.excluded).toEqual([{ ticker: "SWVXX", reason: "no history" }]);
+  });
 });
