@@ -10,6 +10,7 @@ import { DataTable, type Column } from "../../ui/DataTable";
 import { useChartColors } from "../../ui/chartColors";
 import { RiskCard } from "./RiskCard";
 import { MarketExposureCard } from "./MarketExposureCard";
+import { Headline } from "./Headline";
 import { useRiskSeries } from "../../data/useRiskSeries";
 import { marketExposure, type ExposureInputs } from "../../domain/risk";
 import type { Aligned } from "../../domain/returns";
@@ -107,38 +108,9 @@ export function Dashboard() {
     },
   ];
 
-  const [dollars, cents] = money(summary.totalValue).split(".");
-
   return (
     <>
-      <div className="headline">
-        <div className="headline-figure">
-          <div className="cap">Net worth</div>
-          <div className="hero-value">{dollars}<span className="hero-cents">.{cents}</span></div>
-        </div>
-        <div className="headline-side">
-          <div className="cap">Today</div>
-          <div className={`n ${summary.dayChange >= 0 ? "pos" : "neg"}`}>
-            {summary.dayChange >= 0 ? "+" : ""}{money(summary.dayChange)} · {pct(summary.dayChangePct)}
-          </div>
-        </div>
-        <div className="headline-side">
-          <div className="cap">All time</div>
-          <div className={`n ${summary.unrealized >= 0 ? "pos" : "neg"}`}>
-            {summary.unrealized >= 0 ? "+" : ""}{money(summary.unrealized)} · {pct(summary.unrealizedPct)}
-          </div>
-        </div>
-        <div className="headline-side">
-          <div className="cap">Cash</div>
-          <div className="n">{money(summary.cash)}</div>
-        </div>
-        {summary.liabilities !== 0 && (
-          <div className="headline-side">
-            <div className="cap">Owed</div>
-            <div className="n neg">{money(summary.liabilities)}</div>
-          </div>
-        )}
-      </div>
+      <Headline summary={summary} />
 
       <Card
         title="Portfolio value"
