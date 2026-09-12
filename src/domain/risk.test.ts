@@ -205,4 +205,45 @@ describe("marketExposure", () => {
     });
     expect(e.excludedTickers).toEqual(["SWVXX"]);
   });
+
+  it("reports covering all of a portfolio it could measure entirely", () => {
+    const e = marketExposure({
+      assets: [asset("A", 600, market), asset("B", 400, market)], cash: 0, benchmark: market,
+    });
+    expect(e.includedValueShare).toBeCloseTo(1, 12);
+  });
+
+  it("counts cash as measured, because a return of zero is a real answer for cash", () => {
+    const e = marketExposure({
+      assets: [asset("A", 500, market)], cash: 500, benchmark: market,
+    });
+    expect(e.includedValueShare).toBeCloseTo(1, 12);
+  });
+
+  it("says how little of the portfolio the figures cover when most of it is unmeasurable", () => {
+    // Beta here is arithmetically correct and describes 40% of the money.
+    // Without this field the card would present it as the whole portfolio.
+    const e = marketExposure({
+      assets: [asset("SPX", 400, market), asset("SWVXX", 600, null)],
+      cash: 0, benchmark: market,
+    });
+    expect(e.beta).toBeCloseTo(1, 10);
+    expect(e.includedValueShare).toBeCloseTo(0.4, 12);
+  });
+
+  it("ignores a worthless holding when working out the share covered", () => {
+    const e = marketExposure({
+      assets: [asset("A", 1000, market), asset("SOLD", 0, market)], cash: 0, benchmark: market,
+    });
+    expect(e.includedValueShare).toBeCloseTo(1, 12);
+  });
+
+  it("still reports the share covered when every figure is suppressed", () => {
+    const short = benchmarkSeries(MIN_HISTORY_DAYS - 1);
+    const e = marketExposure({
+      assets: [asset("A", 750, short), asset("X", 250, null)], cash: 0, benchmark: short,
+    });
+    expect(e.alpha).toBeNull();
+    expect(e.includedValueShare).toBeCloseTo(0.75, 12);
+  });
 });

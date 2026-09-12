@@ -132,6 +132,17 @@ export interface MarketExposure {
    * failed to measure, it is not an exposure.
    */
   excludedTickers: string[];
+  /**
+   * The share of the portfolio, 0..1, that the figures above actually cover —
+   * measurable holdings plus cash, over everything the owner holds.
+   *
+   * Weights are renormalised over what could be measured, so beta stays
+   * arithmetically correct however much was dropped. That is exactly the
+   * problem: a confident beta computed over a third of someone's money reads
+   * identically to one computed over all of it. This is the number that tells
+   * them apart, and the UI must show it whenever it is short of 1.
+   */
+  includedValueShare: number;
 }
 
 /**
@@ -164,17 +175,22 @@ export function marketExposure(i: ExposureInputs): MarketExposure {
   // Only name what the owner actually holds and we could not measure. A
   // position worth nothing is not an exposure we failed to compute — it is not
   // an exposure at all, and `concentration()` above drops those silently too.
-  const excludedTickers = i.assets
-    .filter((a) => a.value > 0 && !usable.includes(a))
-    .map((a) => a.ticker);
+  const excluded = i.assets.filter((a) => a.value > 0 && !usable.includes(a));
+  const excludedTickers = excluded.map((a) => a.ticker);
+  const excludedValue = excluded.reduce((sum, a) => sum + a.value, 0);
 
   const cash = Math.max(i.cash, 0);
   const base = usable.reduce((sum, a) => sum + a.value, 0) + cash;
 
+  // Cash counts as measured: it sits in the denominator of the weighting at a
+  // return of 0, which is a real, computed answer for cash, not a gap.
+  const held = base + excludedValue;
+  const includedValueShare = held > 0 ? base / held : 0;
+
   const observations = i.benchmark.length;
   const nothing: MarketExposure = {
     alpha: null, beta: null, r2: null, volatility: null,
-    observations, includedCount: usable.length, excludedTickers,
+    observations, includedCount: usable.length, excludedTickers, includedValueShare,
   };
 
   if (observations < MIN_HISTORY_DAYS || base <= 0) return nothing;
@@ -201,5 +217,6 @@ export function marketExposure(i: ExposureInputs): MarketExposure {
     observations,
     includedCount: usable.length,
     excludedTickers,
+    includedValueShare,
   };
 }
