@@ -126,7 +126,11 @@ export interface MarketExposure {
   observations: number;
   /** Assets that made it into the maths. */
   includedCount: number;
-  /** Assets left out for want of history, named so the UI can say so. */
+  /**
+   * Holdings the owner has whose history was unusable, named so the UI can say
+   * so. A holding worth nothing is not listed here — it is not an exposure we
+   * failed to measure, it is not an exposure.
+   */
   excludedTickers: string[];
 }
 
@@ -147,16 +151,21 @@ export interface MarketExposure {
  * oversight.
  *
  * Cash enters at a return of 0 and so dilutes exposure, which is correct.
- * Assets with no usable history are dropped and named: the remaining weights
- * are renormalised over what is left, because silently treating an unknown
- * holding as cash-like would understate exposure.
+ * Assets the owner holds but with no usable history are dropped and named:
+ * the remaining weights are renormalised over what is left, because silently
+ * treating an unknown holding as cash-like would understate exposure. Assets
+ * worth nothing today are dropped silently instead — a fully-sold position is
+ * not an exposure we failed to measure, so naming it here would be wrong.
  */
 export function marketExposure(i: ExposureInputs): MarketExposure {
   const usable = i.assets.filter(
     (a) => a.returns !== null && a.returns.length === i.benchmark.length && a.value > 0,
   );
+  // Only name what the owner actually holds and we could not measure. A
+  // position worth nothing is not an exposure we failed to compute — it is not
+  // an exposure at all, and `concentration()` above drops those silently too.
   const excludedTickers = i.assets
-    .filter((a) => !usable.includes(a))
+    .filter((a) => a.value > 0 && !usable.includes(a))
     .map((a) => a.ticker);
 
   const cash = Math.max(i.cash, 0);

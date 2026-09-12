@@ -184,4 +184,25 @@ describe("marketExposure", () => {
     expect(e.includedCount).toBe(1);
     expect(e.beta).toBeCloseTo(1, 10);
   });
+
+  it("says nothing about a holding worth nothing, rather than calling it unmeasurable", () => {
+    // A fully-sold position still appears in holdings, carrying realised P&L.
+    // It has plenty of price history — the owner simply does not hold it, so
+    // naming it on a card about current exposure would be wrong twice over.
+    const e = marketExposure({
+      assets: [asset("SPX", 1000, market), asset("SOLD", 0, market)],
+      cash: 0, benchmark: market,
+    });
+    expect(e.excludedTickers).toEqual([]);
+    expect(e.includedCount).toBe(1);
+    expect(e.beta).toBeCloseTo(1, 10);
+  });
+
+  it("still names a holding the owner has, whose history is missing", () => {
+    const e = marketExposure({
+      assets: [asset("SPX", 1000, market), asset("SWVXX", 500, null)],
+      cash: 0, benchmark: market,
+    });
+    expect(e.excludedTickers).toEqual(["SWVXX"]);
+  });
 });
