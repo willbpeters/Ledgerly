@@ -243,7 +243,8 @@ describe("reconstructSeries — invested apart from cash", () => {
     const after = s.find((p) => p.date === "2026-09-03");
     // This is the whole point of the feature: a paycheck moves net worth and
     // must not move the investment line.
-    expect(after?.invested).toBe(before?.invested);
+    expect(before?.invested).toBe(200);
+    expect(after?.invested).toBe(200);
     expect(after?.value).toBe((before?.value ?? 0) + 1000);
   });
 
