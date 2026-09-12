@@ -42,9 +42,13 @@ $142,318.44   │ +$1,204  +$18,447 │ $98,204    $46,114   −$2,000
               │ +1.24%   +23.1%   │
 ```
 
-`Invested + Cash − Owed` sums to Net worth, so the three composition figures
-are checkable against the hero by eye. `Owed` keeps its existing behaviour of
-rendering only when non-zero.
+`Invested + Cash + Owed` sums to Net worth, so the three composition figures are
+checkable against the hero by eye. Note the **plus**: `liabilities` is stored
+negative and renders with its own minus sign, so Owed subtracts itself. Writing
+the identity with a minus — as an earlier draft of this spec did — overshoots net
+worth by twice the debt, which is exactly the sort of error a reader checking the
+row by eye would hit. `Owed` keeps its existing behaviour of rendering only when
+non-zero.
 
 ## The four changes
 

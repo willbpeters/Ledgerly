@@ -64,4 +64,18 @@ describe("buildSummary", () => {
     expect(s.dayChangePct).toBe(0);
     expect(Number.isFinite(s.dayChangePct)).toBe(true);
   });
+
+  it("adds liabilities into net worth rather than subtracting them", () => {
+    // The Dashboard headline shows Invested, Cash and Owed beside Net worth and
+    // invites the reader to check that they add up. They only do if Owed is
+    // *added*: `liabilities` is stored negative and renders with its own minus
+    // sign. Subtracting it as well overshoots net worth by twice the debt, which
+    // is the mistake this test exists to make impossible.
+    const holdings = [h({ shares: 10, marketValue: 1020, costBasis: 1000 })];
+    const s = buildSummary(holdings, 500, new Map(), -2000);
+
+    expect(s.liabilities).toBe(-2000);
+    expect(s.totalValue).toBe(s.investedValue + s.cash + s.liabilities);
+    expect(s.totalValue).toBe(1020 + 500 - 2000);
+  });
 });

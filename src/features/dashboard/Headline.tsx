@@ -5,10 +5,13 @@ import type { PortfolioSummary } from "../../domain/types";
  * The figures at the top of the Dashboard.
  *
  * Two groups with one meaning each. Net worth, Invested, Cash and Owed say what
- * the owner has, and Invested plus Cash minus Owed sums to the hero, so the row
- * is checkable by eye. Today and All time say how the *investments* moved,
- * which is a narrower thing than net worth — hence the labels. A deposit
- * changes the first group and must never change the second.
+ * the owner has, and they add up: Invested + Cash + Owed = Net worth, so the row
+ * is checkable by eye. Owed is *added*, not subtracted, because `liabilities` is
+ * already negative and renders with its own minus sign — subtracting it as well
+ * would double back on itself and overshoot net worth by twice the debt. Today
+ * and All time say how the *investments* moved, which is a narrower thing than
+ * net worth — hence the labels. A deposit changes the first group and must never
+ * change the second.
  *
  * Extracted from `Dashboard` so these figures can be tested by rendering props,
  * rather than mounting a screen that pulls in six data hooks and Recharts.
