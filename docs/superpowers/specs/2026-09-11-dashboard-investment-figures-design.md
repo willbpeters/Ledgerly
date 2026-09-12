@@ -117,7 +117,17 @@ derived in a pure function that a test can reach without React or network.
 | `src/domain/types.ts` | `ValuePoint` |
 | `src/domain/history.ts` | accumulate `invested` alongside `value` |
 | `src/data/useValueSeries.ts` | return type widens to `ValuePoint[]` |
-| `src/features/dashboard/Dashboard.tsx` | `Invested` figure, captions, mode toggle, subtitle |
+| `src/features/dashboard/Headline.tsx` | **new** — the headline row, extracted |
+| `src/features/dashboard/Dashboard.tsx` | renders `Headline`, owns the mode toggle |
+
+**The headline row moves into its own component.** `Dashboard.tsx` pulls in six
+data hooks, Recharts and a colour hook, so it cannot be mounted in a test — which
+is why `Dashboard.test.tsx` today tests only `exposureInputs`, a pure seam
+extracted for exactly that reason. Rather than extend that workaround, the
+headline becomes a component taking one `summary` prop, tested by rendering it
+the way `RiskCard.test.tsx` already renders its card. This also takes roughly
+thirty lines of markup out of a file that has grown to carry the chart, the
+positions table and two risk cards.
 
 `reconstructSeries` is the one function doing real work here, and it is already
 long. The two accumulators are threaded through the blocks that exist rather
@@ -136,8 +146,8 @@ rewrite would put the 90-day reconstruction rules at risk for no gain.
   test.
 - **`history.test.ts`** — a credit-card balance is absent from `invested` and
   present in `value`.
-- **`Dashboard.test.tsx`** — `Invested` renders; the captions carry the
-  investments label; the toggle swaps the plotted key and the subtitle.
+- **`Headline.test.tsx`** — `Invested` renders; both captions carry the
+  investments label; `Owed` stays hidden when nothing is owed.
 
 ## Deliberately out of scope
 
