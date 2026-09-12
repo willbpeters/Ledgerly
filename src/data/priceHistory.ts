@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useBackfillPrices, usePriceHistoryDepth } from "./queries";
+import { MIN_HISTORY_DAYS } from "../domain/risk";
 
 /**
- * How many daily closes a security needs before the risk figures are worth
- * computing. Roughly a quarter of trading days — below this, beta and
- * volatility are noise dressed up as numbers.
+ * Re-exported so callers in the data layer keep their import, while the
+ * threshold itself is defined once, in the maths that depends on it.
  */
-export const MIN_HISTORY_DAYS = 200;
+export { MIN_HISTORY_DAYS };
 
 /**
  * Whether to download price history. `undefined` means the depth query has not

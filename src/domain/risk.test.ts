@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { concentration } from "./risk";
+import { concentration, marketExposure, MIN_HISTORY_DAYS, TRADING_DAYS } from "./risk";
 import type { Holding } from "./types";
 
 function holding(ticker: string, marketValue: number): Holding {
@@ -86,5 +86,102 @@ describe("concentration", () => {
     const c = concentration([holding("A", 100), holding("SOLD", 0)], 0);
     expect(c.weights.map((w) => w.ticker)).toEqual(["A"]);
     expect(c.effectivePositions).toBeCloseTo(1);
+  });
+});
+
+/** A benchmark that moves enough to regress against, long enough to qualify. */
+function benchmarkSeries(days: number = MIN_HISTORY_DAYS): number[] {
+  // Deterministic and not a straight line: a sine keeps variance well away
+  // from zero without needing a random seed.
+  return Array.from({ length: days }, (_, i) => Math.sin(i) * 0.01);
+}
+
+function asset(ticker: string, value: number, returns: number[] | null) {
+  return { securityId: ticker.charCodeAt(0), ticker, value, returns };
+}
+
+describe("marketExposure", () => {
+  const market = benchmarkSeries();
+
+  it("scores a portfolio that is the market as beta 1, alpha 0, R-squared 1", () => {
+    const e = marketExposure({
+      assets: [asset("SPX", 1000, market)], cash: 0, benchmark: market,
+    });
+    expect(e.beta).toBeCloseTo(1, 10);
+    expect(e.alpha).toBeCloseTo(0, 10);
+    expect(e.r2).toBeCloseTo(1, 10);
+  });
+
+  it("scores a twice-leveraged copy of the market as beta 2", () => {
+    const e = marketExposure({
+      assets: [asset("LEV", 1000, market.map((r) => r * 2))], cash: 0, benchmark: market,
+    });
+    expect(e.beta).toBeCloseTo(2, 10);
+  });
+
+  it("annualises a steady daily edge into alpha", () => {
+    const e = marketExposure({
+      assets: [asset("EDGE", 1000, market.map((r) => r + 0.0001))], cash: 0, benchmark: market,
+    });
+    expect(e.alpha).toBeCloseTo(0.0001 * TRADING_DAYS, 10);
+    expect(e.beta).toBeCloseTo(1, 10);
+  });
+
+  it("halves beta when half the portfolio is cash", () => {
+    const e = marketExposure({
+      assets: [asset("SPX", 1000, market)], cash: 1000, benchmark: market,
+    });
+    expect(e.beta).toBeCloseTo(0.5, 10);
+  });
+
+  it("gives a cash-only portfolio beta 0 rather than dividing by zero", () => {
+    const e = marketExposure({ assets: [], cash: 5000, benchmark: market });
+    expect(e.beta).toBe(0);
+    expect(e.alpha).toBe(0);
+    expect(e.volatility).toBe(0);
+  });
+
+  it("refuses to report anything against a benchmark that never moved", () => {
+    const flat = Array(MIN_HISTORY_DAYS).fill(0);
+    const e = marketExposure({ assets: [asset("A", 1000, market)], cash: 0, benchmark: flat });
+    expect(e.beta).toBeNull();
+    expect(e.alpha).toBeNull();
+    expect(e.r2).toBeNull();
+  });
+
+  it("suppresses every figure when the window is too short", () => {
+    const short = benchmarkSeries(MIN_HISTORY_DAYS - 1);
+    const e = marketExposure({ assets: [asset("A", 1000, short)], cash: 0, benchmark: short });
+    expect(e.alpha).toBeNull();
+    expect(e.beta).toBeNull();
+    expect(e.r2).toBeNull();
+    expect(e.volatility).toBeNull();
+    expect(e.observations).toBe(MIN_HISTORY_DAYS - 1);
+  });
+
+  it("gives a constant portfolio series exactly zero volatility", () => {
+    const e = marketExposure({
+      assets: [asset("FLAT", 1000, Array(MIN_HISTORY_DAYS).fill(0))], cash: 0, benchmark: market,
+    });
+    expect(e.volatility).toBe(0);
+  });
+
+  it("annualises volatility by the square root of the trading year", () => {
+    const wobble = Array.from({ length: MIN_HISTORY_DAYS }, (_, i) => (i % 2 === 0 ? 0.01 : -0.01));
+    const e = marketExposure({
+      assets: [asset("W", 1000, wobble)], cash: 0, benchmark: market,
+    });
+    // stdev of an alternating +/-1% series is ~0.01 (sample, n-1).
+    expect(e.volatility!).toBeCloseTo(0.01 * Math.sqrt(TRADING_DAYS), 2);
+  });
+
+  it("leaves out an asset with no returns and says how many it left out", () => {
+    const e = marketExposure({
+      assets: [asset("SPX", 1000, market), asset("SWVXX", 1000, null)],
+      cash: 0, benchmark: market,
+    });
+    expect(e.excludedTickers).toEqual(["SWVXX"]);
+    expect(e.includedCount).toBe(1);
+    expect(e.beta).toBeCloseTo(1, 10);
   });
 });
