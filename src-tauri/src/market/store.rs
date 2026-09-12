@@ -262,6 +262,22 @@ pub fn list_index_quotes(conn: &Connection) -> rusqlite::Result<Vec<IndexQuote>>
     Ok(out)
 }
 
+/// Every stored close for one index, oldest first. The risk maths walks this
+/// forwards turning closes into daily returns, so the order is load-bearing.
+pub fn index_history(conn: &Connection, symbol: &str) -> rusqlite::Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT date, close FROM index_quotes WHERE symbol=?1 ORDER BY date")?;
+    let rows = stmt.query_map([symbol], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
+/// How many closes are stored for one index. The frontend uses this to decide
+/// whether the two-year backfill still needs running.
+pub fn index_history_depth(conn: &Connection, symbol: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT count(*) FROM index_quotes WHERE symbol=?1", [symbol], |r| r.get(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +467,46 @@ mod tests {
              VALUES (1,1,10,100,120,'2026-09-10')", []).unwrap();
         let held = tracked_securities(&conn).unwrap();
         assert_eq!(held, vec![(1, "MU".to_string())], "a security with no position is not tracked");
+    }
+
+    #[test]
+    fn index_history_returns_every_close_oldest_first() {
+        let conn = db::open_in_memory().unwrap();
+        upsert_index_closes(&conn, "^GSPC", &[
+            ("2026-09-10".into(), 7591.7),
+            ("2026-09-08".into(), 7500.0),
+            ("2026-09-09".into(), 7550.0),
+        ]).unwrap();
+
+        let rows = index_history(&conn, "^GSPC").unwrap();
+
+        assert_eq!(rows, vec![
+            ("2026-09-08".to_string(), 7500.0),
+            ("2026-09-09".to_string(), 7550.0),
+            ("2026-09-10".to_string(), 7591.7),
+        ], "the return series is built forwards, so the rows must arrive forwards");
+    }
+
+    #[test]
+    fn index_history_depth_counts_rows_for_that_symbol_only() {
+        let conn = db::open_in_memory().unwrap();
+        upsert_index_closes(&conn, "^GSPC", &[
+            ("2026-09-08".into(), 7500.0), ("2026-09-09".into(), 7550.0),
+        ]).unwrap();
+        upsert_index_closes(&conn, "^IXIC", &[("2026-09-09".into(), 23000.0)]).unwrap();
+
+        assert_eq!(index_history_depth(&conn, "^GSPC").unwrap(), 2);
+        assert_eq!(index_history_depth(&conn, "^DJI").unwrap(), 0, "never fetched is zero, not an error");
+    }
+
+    #[test]
+    fn storing_index_closes_never_creates_a_security() {
+        let conn = db::open_in_memory().unwrap();
+        upsert_index_closes(&conn, "^GSPC", &[("2026-09-09".into(), 7550.0)]).unwrap();
+
+        let securities: i64 = conn
+            .query_row("SELECT count(*) FROM securities", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(securities, 0, "the S&P must never be something the owner appears to hold");
     }
 }
