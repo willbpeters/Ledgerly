@@ -60,9 +60,11 @@ budgeting and spending module.
   category, amount), read-only, because those live in a different table.
 - **Holdings**: overall table, a **per-account breakdown** below it, and a **⚙
   column picker** (persisted to localStorage).
-- **Dashboard**: a serif net-worth figure with today, all-time and cash beside
-  it; a value-over-time area chart with a 1M/3M/1Y/All range picker whose Y axis
-  zooms to the data rather than anchoring at zero; and a positions table.
+- **Dashboard**: a serif net-worth figure with today, all-time, invested, cash
+  and owed beside it — today and all time measure the **investments only**, and
+  say so in their captions; a value-over-time area chart with a Net worth /
+  Investments toggle and a 1M/3M range picker, whose Y axis zooms to the data
+  rather than anchoring at zero; and a positions table.
 - **Risk (Phase 1)**: a **Concentration** card on the dashboard — largest
   holding, top-5 combined, cash share, and **effective positions**
   (`1 / Σwᵢ²`), which is how many equally-sized holdings the portfolio
@@ -168,6 +170,21 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **v5 adds the Markets tables** (`news_items`, `earnings_events`,
   `security_profile`, `index_quotes`). Every statement is `IF NOT EXISTS` and
   the completeness check is `v5_is_complete`.
+- **Today and All time on the Dashboard describe the investments, not net
+  worth.** `dayChangePct` divides by `priorInvested`, never by net worth —
+  dividing by net worth lets a cash balance shrink the percentage, so a 2% day
+  reads as 1% purely because the owner keeps savings beside the portfolio. The
+  captions say `(investments)` for the same reason: the figures sit beside a
+  net-worth hero while measuring something narrower. `reconstructSeries`
+  carries `invested` beside `value` so the chart can plot holdings alone; a
+  deposit must move `value` and leave `invested` flat, which `history.test.ts`
+  pins with concrete figures rather than by comparing two days to each other —
+  the earlier relative assertion passed even when `invested` was `undefined`.
+  Each chart mode's `dataKey` and its subtitle live together in `CHART_MODES`,
+  because the net-worth line genuinely is rebuilt from cash movements and the
+  investments line is not: a caveat that outlives its mode is a false
+  statement, not a stale one. Spec:
+  `docs/superpowers/specs/2026-09-11-dashboard-investment-figures-design.md`
 
 - **Smart App Control must stay OFF** on this machine. It was blocking execution
   of self-compiled unsigned binaries (every Rust build). This is required for
