@@ -101,6 +101,9 @@ describe("MarketExposureCard", () => {
     expect(screen.getByText("22.0%")).toBeInTheDocument();
     expect(screen.getByText(/S&P 500's own history/i)).toBeInTheDocument();
     expect(screen.queryByText(/Not enough price history/i)).not.toBeInTheDocument();
+    // The caveat applies to this figure too: it is the same weighted series.
+    expect(screen.getByText(/hold today/i)).toBeInTheDocument();
+    expect(screen.getByText(/not a forecast/i)).toBeInTheDocument();
   });
 
   it("falls back to the empty state when even volatility is missing", () => {

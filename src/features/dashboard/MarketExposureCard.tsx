@@ -12,6 +12,20 @@ import type { MarketExposure } from "../../domain/risk";
  * two years ago. That is stated on the card, not buried — it is the difference
  * between a useful statistic and a misunderstanding.
  */
+/**
+ * The caveat that makes every figure on this card interpretable, in one place
+ * so no branch can render a number without it. Two copies of this sentence is
+ * how one of them eventually drifts from the other.
+ */
+function Caveat() {
+  return (
+    <p className="muted" style={{ marginBottom: 0 }}>
+      Measured by applying the holdings you hold today to the last two years of
+      prices — not a record of what the account actually did, and not a forecast.
+    </p>
+  );
+}
+
 export function MarketExposureCard(
   { exposure, isLoading }: { exposure: MarketExposure; isLoading: boolean },
 ) {
@@ -37,11 +51,12 @@ export function MarketExposureCard(
               <div className="cell-secondary">your holdings alone</div>
             </div>
           </div>
-          <p className="muted" style={{ marginBottom: 0 }}>
+          <p className="muted">
             How much your portfolio has swung about, measured over {observations}{" "}
             trading days. Alpha, beta and the market comparison need the S&P 500's
             own history, which is not available yet.
           </p>
+          <Caveat />
         </Card>
       );
     }
@@ -98,10 +113,7 @@ export function MarketExposureCard(
         </p>
       )}
 
-      <p className="muted" style={{ marginBottom: 0 }}>
-        Measured by applying the holdings you hold today to the last two years of
-        prices — not a record of what the account actually did, and not a forecast.
-      </p>
+      <Caveat />
     </Card>
   );
 }

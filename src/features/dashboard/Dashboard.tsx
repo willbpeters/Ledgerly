@@ -11,8 +11,9 @@ import { useChartColors } from "../../ui/chartColors";
 import { RiskCard } from "./RiskCard";
 import { MarketExposureCard } from "./MarketExposureCard";
 import { useRiskSeries } from "../../data/useRiskSeries";
-import { marketExposure } from "../../domain/risk";
-import type { Holding, SeriesPoint } from "../../domain/types";
+import { marketExposure, type ExposureInputs } from "../../domain/risk";
+import type { Aligned } from "../../domain/returns";
+import type { Holding, PortfolioSummary, SeriesPoint } from "../../domain/types";
 
 // Only windows the data can actually support: the series is rebuilt from
 // SimpleFIN holdings and transactions, which reach back about 90 days.
@@ -42,15 +43,22 @@ function ChartTip({ active, payload, label }: { active?: boolean; payload?: { va
 
 interface Row extends Holding { weight: number | null; name: string | null; colour: string }
 
+/**
+ * Wires the risk maths' cash input straight from the portfolio summary.
+ * Exported so a test can pin the invariant here without mounting the whole
+ * screen: liabilities must never be netted into cash — credit-card debt
+ * leverages market exposure, it does not reduce it, and netting it here would
+ * make borrowing look like risk reduction.
+ */
+export function exposureInputs(aligned: Pick<Aligned, "assets" | "benchmark">, summary: Pick<PortfolioSummary, "cash">): ExposureInputs {
+  return { assets: aligned.assets, cash: summary.cash, benchmark: aligned.benchmark };
+}
+
 export function Dashboard() {
   const { holdings, summary, isLoading } = usePortfolio();
   const { series: fullSeries } = useValueSeries();
   const { aligned, isLoading: riskLoading } = useRiskSeries(holdings);
-  const exposure = marketExposure({
-    assets: aligned.assets,
-    cash: summary.cash,
-    benchmark: aligned.benchmark,
-  });
+  const exposure = marketExposure(exposureInputs(aligned, summary));
   const { data: securities = [] } = useSecurities();
   const colors = useChartColors();
   const [range, setRange] = useState<Range>("3m");
