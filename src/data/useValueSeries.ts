@@ -3,7 +3,7 @@ import {
   useAccounts, useTransactions, useSyncedHoldings, useBankTransactions, usePriceHistoryRows,
 } from "./queries";
 import { reconstructSeries, type PriceRow } from "../domain/history";
-import type { SeriesPoint } from "../domain/types";
+import type { ValuePoint } from "../domain/types";
 
 /**
  * How far back the value chart is rebuilt.
@@ -25,7 +25,7 @@ function isoDaysAgo(days: number, now: Date = new Date()): string {
  * The portfolio's value day by day, rebuilt from holdings, prices and cash
  * movements rather than read back from the daily snapshots.
  */
-export function useValueSeries(days: number = HISTORY_DAYS): { series: SeriesPoint[]; isLoading: boolean } {
+export function useValueSeries(days: number = HISTORY_DAYS): { series: ValuePoint[]; isLoading: boolean } {
   const today = new Date().toISOString().slice(0, 10);
   const from = isoDaysAgo(days);
 

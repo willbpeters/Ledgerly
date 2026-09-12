@@ -41,6 +41,17 @@ export interface PortfolioSummary {
 export interface AllocationSlice { label: string; value: number; pct: number; }
 export interface SeriesPoint { date: string; value: number; }
 
+/**
+ * One reconstructed day: net worth, and the invested part of it.
+ *
+ * A separate interface rather than an optional field on `SeriesPoint`, because
+ * optional means a caller can forget to set it and plot `undefined` as a gap.
+ */
+export interface ValuePoint extends SeriesPoint {
+  /** Holdings only — unmoved by deposits, withdrawals or card balances. */
+  invested: number;
+}
+
 export interface SyncedHolding {
   id: number; account_id: number; security_id: number;
   shares: number; cost_basis: number; market_value: number; as_of: string;
