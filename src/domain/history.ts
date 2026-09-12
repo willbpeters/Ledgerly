@@ -37,6 +37,10 @@ export interface HistoryInputs {
  * assumed to have been held throughout. That assumption is why the window is
  * kept short; over 90 days it is usually fair, over two years it would be
  * fiction. The UI must say so.
+ *
+ * Each point carries `invested` beside `value`: holdings only, under exactly the
+ * same assumptions as above. It exists so the chart can show investment
+ * performance without a deposit or a card balance reading as a gain.
  */
 export function reconstructSeries(i: HistoryInputs): ValuePoint[] {
   const accounts = i.accounts.filter((a) => !a.hidden);
