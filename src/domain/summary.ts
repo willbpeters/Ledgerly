@@ -30,7 +30,6 @@ export function buildSummary(
   }
   // Debts are negative, so they simply join the sum: net worth is what you own
   // minus what you owe.
-  const priorTotal = priorInvested + cash + liabilities;
   const totalValue = investedValue + cash + liabilities;
 
   return {
@@ -38,6 +37,9 @@ export function buildSummary(
     unrealizedPct: totalCostBasis > 0 ? (unrealized / totalCostBasis) * 100 : 0,
     realized,
     dayChange: hasPrev ? dayChange : 0,
-    dayChangePct: hasPrev && priorTotal > 0 ? (dayChange / priorTotal) * 100 : 0,
+    // Measured against invested value alone. Dividing by net worth would let a
+    // cash balance shrink the percentage, so a 2% day would read as 1% purely
+    // because the owner keeps savings beside the portfolio.
+    dayChangePct: hasPrev && priorInvested > 0 ? (dayChange / priorInvested) * 100 : 0,
   };
 }
