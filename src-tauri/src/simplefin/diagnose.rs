@@ -66,10 +66,11 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
         .expect("a Value tree always serializes"))
 }
 
-/// Keys whose values must survive redaction. These are what the diagnostic
-/// exists to read: `mcc` and the timestamps are numeric, so a rule based on
-/// "looks like a number" would destroy exactly the fields we came for.
-const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending"];
+/// Keys whose values must survive redaction. `mcc` and the timestamps are
+/// numeric, so a rule based on "looks like a number" would destroy exactly the
+/// fields we came for; `sampled` is this module's own row count rather than
+/// anything the bank sent.
+const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending", "sampled"];
 
 /// Key-name fragments that mean money. They only fire on a value containing a
 /// digit, so an English word that happens to contain one of them ("coffee"
@@ -121,44 +122,59 @@ fn looks_like_money(s: &str) -> bool {
     cleaned.contains('.') && cleaned.parse::<f64>().is_ok()
 }
 
+/// Any number outside `KEEP` counts as money — `extra` is unknown by
+/// definition, and money that happens to be round is still money. A matching
+/// key name is not enough on its own: "coffee_shop" contains "fee", and
+/// "value" is the commonest wrapper key there is. Requiring a digit lets
+/// category text through — surfacing that text is the entire point of the
+/// diagnostic.
+fn is_money(key: &str, v: &Value) -> bool {
+    match v {
+        Value::Number(_) => true,
+        Value::String(s) => {
+            looks_like_money(s)
+                || (MONEY_NAMES.iter().any(|m| key.contains(m))
+                    && s.chars().any(|c| c.is_ascii_digit()))
+        }
+        _ => false,
+    }
+}
+
 fn scrub(v: &mut Value) {
+    scrub_under("", v)
+}
+
+fn scrub_under(key: &str, v: &mut Value) {
     match v {
         Value::Object(map) => {
             for (k, val) in map.iter_mut() {
-                let key = k.to_lowercase();
-                if KEEP.contains(&key.as_str()) {
+                let k = k.to_lowercase();
+                if KEEP.contains(&k.as_str()) {
                     // A scalar under one of these keys is a field we came for.
                     // A container is not, and could be hiding anything.
                     if val.is_object() || val.is_array() {
-                        scrub(val);
+                        scrub_under(&k, val);
                     }
                     continue;
                 }
-                let is_money = match &*val {
-                    // Any number outside KEEP. `extra` is unknown by
-                    // definition, and money that happens to be round is
-                    // still money.
-                    Value::Number(_) => true,
-                    // A matching key name is not enough on its own:
-                    // "coffee_shop" contains "fee", and "value" is the
-                    // commonest wrapper key there is. Requiring a digit lets
-                    // category text through — surfacing that text is the
-                    // entire point of the diagnostic.
-                    Value::String(s) => {
-                        looks_like_money(s)
-                            || (MONEY_NAMES.iter().any(|m| key.contains(m))
-                                && s.chars().any(|c| c.is_ascii_digit()))
-                    }
-                    _ => false,
-                };
-                if is_money {
+                if is_money(&k, val) {
                     *val = Value::String("***".into());
                 } else {
-                    scrub(val);
+                    scrub_under(&k, val);
                 }
             }
         }
-        Value::Array(arr) => arr.iter_mut().for_each(scrub),
+        // Elements inherit the array's key, so {"amounts": ["-12.40"]} is
+        // judged exactly as {"amount": "-12.40"} would be.
+        Value::Array(arr) => {
+            for el in arr.iter_mut() {
+                if is_money(key, el) {
+                    *el = Value::String("***".into());
+                } else {
+                    scrub_under(key, el);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -354,9 +370,28 @@ mod tests {
     fn redacts_money_under_a_key_name_that_matches_nothing() {
         // Every other fixture's money sits under a key the name list already
         // catches, so without this the shape rule could be deleted in silence.
-        let redacted = redact(r#"{"extra":{"settled":"-42.75","posted_sum":9876.54}}"#);
+        // Both values here are strings under keys matching nothing, so only
+        // the shape rule can catch them.
+        let redacted = redact(r#"{"extra":{"settled":"-42.75","cleared_at_rate":"9876.54"}}"#);
         assert!(!redacted.contains("42.75"), "{redacted}");
         assert!(!redacted.contains("9876.54"), "{redacted}");
+    }
+
+    #[test]
+    fn redacts_money_held_in_an_array() {
+        // Arrays carry no key of their own, so elements inherit the array's.
+        let redacted = redact(r#"{"extra":{"splits":[12.40,900],"amounts":["-12.40",1200]}}"#);
+        for leaked in ["12.4", "900", "1200"] {
+            assert!(!redacted.contains(leaked), "{leaked} leaked: {redacted}");
+        }
+    }
+
+    #[test]
+    fn keeps_a_list_of_category_names() {
+        // The fix above must not over-tighten into eating category lists.
+        let redacted = redact(r#"{"extra":{"tags":["Food","Coffee"]}}"#);
+        assert!(redacted.contains("Food"), "{redacted}");
+        assert!(redacted.contains("Coffee"), "{redacted}");
     }
 
     #[test]
