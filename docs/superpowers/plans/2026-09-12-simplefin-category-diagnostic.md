@@ -274,10 +274,13 @@ Add these tests inside the existing `mod tests` block in
 
 ```rust
     #[test]
-    fn replaces_amounts_and_balances() {
+    fn leaves_no_amount_from_the_fixture_behind() {
+        // Asserting that "***" appears somewhere would pass against a redactor
+        // that caught one field and missed four. Name every amount instead.
         let redacted = redact(&sample_transactions(BODY, 5).unwrap());
-        assert!(!redacted.contains("-12.40"), "an amount leaked: {redacted}");
-        assert!(!redacted.contains("2000.00"), "an amount leaked: {redacted}");
+        for leaked in ["12.40", "88.00", "9.99", "2000.00"] {
+            assert!(!redacted.contains(leaked), "{leaked} leaked: {redacted}");
+        }
         assert!(redacted.contains("***"));
     }
 
@@ -286,8 +289,25 @@ Add these tests inside the existing `mod tests` block in
         let redacted = redact(&sample_transactions(BODY, 5).unwrap());
         assert!(redacted.contains("extra"));
         assert!(redacted.contains("Coffee Shops"));
-        assert!(redacted.contains("5812"));
+        assert!(redacted.contains("5812"), "the merchant code is the point");
         assert!(redacted.contains("Blue Bottle"));
+        assert!(redacted.contains("1788306430"), "timestamps must survive");
+    }
+
+    #[test]
+    fn redacts_money_inside_fields_nobody_has_seen_before() {
+        // The case a key allowlist misses, and the reason this matters: `extra`
+        // is the one subtree reaching the clipboard that nobody has examined.
+        let body = r#"{"accounts":[{"name":"A","org":{"name":"B"},"transactions":[
+          {"id":"t","mcc":"5411","posted":1788306430,
+           "extra":{"original_amount":"-42.75","running_balance":9876.54,
+                    "amount_cents":4275,"category":"Groceries"}}]}]}"#;
+        let redacted = redact(&sample_transactions(body, 5).unwrap());
+        assert!(!redacted.contains("42.75"), "unknown money key leaked: {redacted}");
+        assert!(!redacted.contains("9876.54"), "unknown money key leaked: {redacted}");
+        assert!(!redacted.contains("4275"), "integer cents leaked: {redacted}");
+        assert!(redacted.contains("Groceries"), "the category must survive");
+        assert!(redacted.contains("5411"), "the merchant code must survive");
     }
 
     #[test]
@@ -321,12 +341,15 @@ Expected: FAIL to compile, with `cannot find function 'redact' in this scope`.
 Add to `src-tauri/src/simplefin/diagnose.rs`, after `sample_transactions`:
 
 ```rust
-/// Keys whose values are money or quantities. Matched by key name at any depth,
-/// so a field we have never seen before is still covered as long as it is named
-/// like the ones SimpleFIN already uses.
-const MONEY_KEYS: &[&str] = &[
-    "amount", "balance", "available-balance", "cost_basis", "market_value", "shares",
-];
+/// Keys whose values must survive redaction. These are what the diagnostic
+/// exists to read: `mcc` and the timestamps are numeric, so a rule based on
+/// "looks like a number" would destroy exactly the fields we came for.
+const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending"];
+
+/// Key-name fragments that mean money regardless of the value's shape. This
+/// catches an integer count of cents, which the decimal test below would miss.
+const MONEY_NAMES: &[&str] =
+    &["amount", "balance", "value", "price", "total", "cost", "cents", "fee"];
 
 /// What the caller gets when redaction cannot run. It deliberately does not
 /// include the input: falling back to the original would leak exactly what this
@@ -335,7 +358,17 @@ const REDACTION_FAILED: &str =
     "Couldn't redact this sample, so it is not shown here. Use \"Copy with amounts\" if you need it.";
 
 /// Replace every money value with `***`, leaving field names, payees, merchant
-/// codes and any unknown objects such as `extra` intact.
+/// codes and the contents of any unknown object such as `extra` intact.
+///
+/// Redaction is driven by the *shape* of the value as well as the name of the
+/// key, because the whole premise of this diagnostic is that nobody knows what
+/// is inside `extra`. A rule keyed only on names we already know would sail
+/// past `extra.original_amount` or `extra.running_balance` — and `extra` is
+/// precisely the subtree that reaches the clipboard unexamined.
+///
+/// Note that account balances never reach this function at all: the sample
+/// emits only the account name, the institution and the transaction body. Do
+/// not "helpfully" add balances to the sample.
 pub fn redact(pretty_json: &str) -> String {
     let Ok(mut v) = serde_json::from_str::<Value>(pretty_json) else {
         return REDACTION_FAILED.to_string();
@@ -344,11 +377,32 @@ pub fn redact(pretty_json: &str) -> String {
     serde_json::to_string_pretty(&v).unwrap_or_else(|_| REDACTION_FAILED.to_string())
 }
 
+/// Money is a number with a fractional part, or a string that parses as one.
+/// A bare integer is not treated as money, because `mcc` ("5812") and the unix
+/// timestamps are bare integers and are the point of the exercise.
+fn looks_like_money(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.as_f64().is_some_and(|f| f.fract() != 0.0),
+        Value::String(s) => {
+            let cleaned: String = s
+                .chars()
+                .filter(|c| !matches!(c, '$' | ',' | '(' | ')' | ' ' | '+'))
+                .collect();
+            cleaned.contains('.') && cleaned.parse::<f64>().is_ok()
+        }
+        _ => false,
+    }
+}
+
 fn scrub(v: &mut Value) {
     match v {
         Value::Object(map) => {
             for (k, val) in map.iter_mut() {
-                if MONEY_KEYS.contains(&k.as_str()) {
+                let key = k.to_lowercase();
+                if KEEP.contains(&key.as_str()) {
+                    continue;
+                }
+                if MONEY_NAMES.iter().any(|m| key.contains(m)) || looks_like_money(val) {
                     *val = Value::String("***".into());
                 } else {
                     scrub(val);
@@ -368,7 +422,7 @@ cd src-tauri
 cargo test diagnose
 ```
 
-Expected: PASS, 11 tests.
+Expected: PASS, 17 tests (12 from Task 1, 5 new).
 
 - [ ] **Step 5: Commit**
 
@@ -473,7 +527,7 @@ cd src-tauri
 cargo test
 ```
 
-Expected: PASS. The count should be 147 existing + 11 from Tasks 1-2 = 158
+Expected: PASS. The count should be 147 existing + 17 from Tasks 1-2 = 164
 passing, with 9 ignored (8 existing network tests plus the one added above).
 `fetch` changed shape
 but not behaviour, so no existing test should need editing — if one fails, stop
@@ -559,7 +613,7 @@ cd src-tauri
 cargo test
 ```
 
-Expected: PASS, 158 tests, no warnings about unused functions.
+Expected: PASS, 164 tests, no warnings about unused functions.
 
 - [ ] **Step 5: Commit**
 
@@ -814,7 +868,7 @@ git commit -m "docs: record what SimpleFIN actually sends for this connection"
 
 ## Done when
 
-- `cargo test` passes 158 tests (147 existing + 11 new), 9 ignored network tests.
+- `cargo test` passes 164 tests (147 existing + 17 new), 9 ignored network tests.
 - `npm test` passes 126 tests and `npx tsc --noEmit` is clean.
 - The diagnostic runs against the real connection and its result is recorded in
   the spec.
