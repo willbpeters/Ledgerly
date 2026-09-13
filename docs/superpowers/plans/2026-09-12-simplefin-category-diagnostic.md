@@ -473,8 +473,9 @@ cd src-tauri
 cargo test
 ```
 
-Expected: PASS. The count should be 89 existing + 11 from Tasks 1-2 = 100
-passing, with the network tests still reported as ignored. `fetch` changed shape
+Expected: PASS. The count should be 147 existing + 11 from Tasks 1-2 = 158
+passing, with 9 ignored (8 existing network tests plus the one added above).
+`fetch` changed shape
 but not behaviour, so no existing test should need editing — if one fails, stop
 and investigate rather than adjusting the test.
 
@@ -558,7 +559,7 @@ cd src-tauri
 cargo test
 ```
 
-Expected: PASS, 100 tests, no warnings about unused functions.
+Expected: PASS, 158 tests, no warnings about unused functions.
 
 - [ ] **Step 5: Commit**
 
@@ -813,7 +814,7 @@ git commit -m "docs: record what SimpleFIN actually sends for this connection"
 
 ## Done when
 
-- `cargo test` passes 100 tests (89 existing + 11 new), network tests ignored.
+- `cargo test` passes 158 tests (147 existing + 11 new), 9 ignored network tests.
 - `npm test` passes 126 tests and `npx tsc --noEmit` is clean.
 - The diagnostic runs against the real connection and its result is recorded in
   the spec.
