@@ -4,6 +4,7 @@
 pub mod parse;
 pub mod client;
 pub mod sync;
+pub mod diagnose;
 
 #[allow(unused_imports)] // re-exported for callers outside this module; not yet consumed
 pub use parse::{SfAccount, SfAccountSet, SfHolding};
