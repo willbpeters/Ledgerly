@@ -261,6 +261,26 @@ git commit -m "feat(simplefin): sample raw transactions for the category diagnos
 
 ### Task 2: Redact the money out of a sample
 
+> **The code below is the starting draft, not what shipped.** Three rounds of
+> code review changed the rules substantially. Read
+> `src-tauri/src/simplefin/diagnose.rs` for the truth, and commits `d746532`,
+> `f36881b`, `b74d8fb` for how it got there. What changed and why:
+>
+> 1. **Key allowlist → value shape.** Matching only field names we already know
+>    (`amount`, `balance`) sailed past `extra.original_amount` — and `extra` is
+>    the one subtree reaching the clipboard that nobody has examined.
+> 2. **A name match now requires a digit in the value.** `"coffee_shop"`
+>    contains `"fee"`, so payees and category text were being destroyed. That is
+>    worse than a leak here: Task 7 pastes the redacted sample into the spec as
+>    the permanent record, so over-redaction corrupts the answer being collected.
+> 3. **Every number outside the keep-list is redacted**, because round money is
+>    still money and `{"charge":1200}` was escaping.
+> 4. **Array elements inherit their array's key**, closing a leak that fix 2
+>    reopened: `{"amounts":["-12.40"]}` had stopped being caught.
+>
+> Both load-bearing rules are pinned by mutation: deleting `looks_like_money` or
+> emptying `KEEP` each turns exactly one test red.
+
 **Files:**
 - Modify: `src-tauri/src/simplefin/diagnose.rs`
 
@@ -422,7 +442,7 @@ cd src-tauri
 cargo test diagnose
 ```
 
-Expected: PASS, 17 tests (12 from Task 1, 5 new).
+Expected: PASS. Ended at 23 after three review rounds; see the note above.
 
 - [ ] **Step 5: Commit**
 
@@ -527,7 +547,7 @@ cd src-tauri
 cargo test
 ```
 
-Expected: PASS. The count should be 147 existing + 17 from Tasks 1-2 = 164
+Expected: PASS. The count should be 170 passing (147 existing + 23 from Tasks 1-2)
 passing, with 9 ignored (8 existing network tests plus the one added above).
 `fetch` changed shape
 but not behaviour, so no existing test should need editing — if one fails, stop
@@ -613,7 +633,7 @@ cd src-tauri
 cargo test
 ```
 
-Expected: PASS, 164 tests, no warnings about unused functions.
+Expected: PASS, 170 tests, no warnings about unused functions.
 
 - [ ] **Step 5: Commit**
 
@@ -868,7 +888,7 @@ git commit -m "docs: record what SimpleFIN actually sends for this connection"
 
 ## Done when
 
-- `cargo test` passes 164 tests (147 existing + 17 new), 9 ignored network tests.
+- `cargo test` passes 170 tests (147 existing + 23 new), 9 ignored network tests.
 - `npm test` passes 126 tests and `npx tsc --noEmit` is clean.
 - The diagnostic runs against the real connection and its result is recorded in
   the spec.
