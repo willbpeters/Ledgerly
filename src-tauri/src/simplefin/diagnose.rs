@@ -28,7 +28,7 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
         // account gives up its second, so a chatty account cannot crowd out a
         // second institution. Banks differ in what they enrich, and seeing only
         // one of them defeats the diagnostic.
-        for take in 0.. {
+        for take in 0..n {
             let mut progressed = false;
             for a in accounts {
                 if out.len() >= n {
@@ -54,7 +54,8 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
                 }
             }
             // Stop when the sample is full, or when a whole pass found nothing
-            // left to take — which is also what ends the loop for `n = 0`.
+            // left to take. The `n = 0` case never enters the loop at all,
+            // since the range `0..0` is empty.
             if out.len() >= n || !progressed {
                 break;
             }
@@ -63,6 +64,79 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
 
     Ok(serde_json::to_string_pretty(&json!({ "sampled": out.len(), "transactions": out }))
         .expect("a Value tree always serializes"))
+}
+
+/// Keys whose values must survive redaction. These are what the diagnostic
+/// exists to read: `mcc` and the timestamps are numeric, so a rule based on
+/// "looks like a number" would destroy exactly the fields we came for.
+const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending"];
+
+/// Key-name fragments that mean money regardless of the value's shape. This
+/// catches an integer count of cents, which the decimal test below would miss.
+const MONEY_NAMES: &[&str] =
+    &["amount", "balance", "value", "price", "total", "cost", "cents", "fee"];
+
+/// What the caller gets when redaction cannot run. It deliberately does not
+/// include the input: falling back to the original would leak exactly what this
+/// function exists to hide.
+const REDACTION_FAILED: &str =
+    "Couldn't redact this sample, so it is not shown here. Use \"Copy with amounts\" if you need it.";
+
+/// Replace every money value with `***`, leaving field names, payees, merchant
+/// codes and the contents of any unknown object such as `extra` intact.
+///
+/// Redaction is driven by the *shape* of the value as well as the name of the
+/// key, because the whole premise of this diagnostic is that nobody knows what
+/// is inside `extra`. A rule keyed only on names we already know would sail
+/// past `extra.original_amount` or `extra.running_balance` — and `extra` is
+/// precisely the subtree that reaches the clipboard unexamined.
+///
+/// Note that account balances never reach this function at all: the sample
+/// emits only the account name, the institution and the transaction body. Do
+/// not "helpfully" add balances to the sample.
+pub fn redact(pretty_json: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<Value>(pretty_json) else {
+        return REDACTION_FAILED.to_string();
+    };
+    scrub(&mut v);
+    serde_json::to_string_pretty(&v).unwrap_or_else(|_| REDACTION_FAILED.to_string())
+}
+
+/// Money is a number with a fractional part, or a string that parses as one.
+/// A bare integer is not treated as money, because `mcc` ("5812") and the unix
+/// timestamps are bare integers and are the point of the exercise.
+fn looks_like_money(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.as_f64().is_some_and(|f| f.fract() != 0.0),
+        Value::String(s) => {
+            let cleaned: String = s
+                .chars()
+                .filter(|c| !matches!(c, '$' | ',' | '(' | ')' | ' ' | '+'))
+                .collect();
+            cleaned.contains('.') && cleaned.parse::<f64>().is_ok()
+        }
+        _ => false,
+    }
+}
+
+fn scrub(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                let key = k.to_lowercase();
+                if KEEP.contains(&key.as_str()) {
+                    continue;
+                }
+                if MONEY_NAMES.iter().any(|m| key.contains(m)) || looks_like_money(val) {
+                    *val = Value::String("***".into());
+                } else {
+                    scrub(val);
+                }
+            }
+        }
+        Value::Array(arr) => arr.iter_mut().for_each(scrub),
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -197,5 +271,58 @@ mod tests {
         let body = r#"{"accounts":[{"name":"A","transactions":[{"id":"1"}]}]}"#;
         let v = parsed(&sample_transactions(body, 5).unwrap());
         assert_eq!(v["transactions"][0]["institution"], "Unknown institution");
+    }
+
+    #[test]
+    fn leaves_no_amount_from_the_fixture_behind() {
+        // Asserting that "***" appears somewhere would pass against a redactor
+        // that caught one field and missed four. Name every amount instead.
+        let redacted = redact(&sample_transactions(BODY, 5).unwrap());
+        for leaked in ["12.40", "88.00", "9.99", "2000.00"] {
+            assert!(!redacted.contains(leaked), "{leaked} leaked: {redacted}");
+        }
+        assert!(redacted.contains("***"));
+    }
+
+    #[test]
+    fn keeps_everything_needed_to_identify_a_field() {
+        let redacted = redact(&sample_transactions(BODY, 5).unwrap());
+        assert!(redacted.contains("extra"));
+        assert!(redacted.contains("Coffee Shops"));
+        assert!(redacted.contains("5812"), "the merchant code is the point");
+        assert!(redacted.contains("Blue Bottle"));
+        assert!(redacted.contains("1788306430"), "timestamps must survive");
+    }
+
+    #[test]
+    fn redacts_money_inside_fields_nobody_has_seen_before() {
+        // The case a key allowlist misses, and the reason this matters: `extra`
+        // is the one subtree reaching the clipboard that nobody has examined.
+        let body = r#"{"accounts":[{"name":"A","org":{"name":"B"},"transactions":[
+          {"id":"t","mcc":"5411","posted":1788306430,
+           "extra":{"original_amount":"-42.75","running_balance":9876.54,
+                    "amount_cents":4275,"category":"Groceries"}}]}]}"#;
+        let redacted = redact(&sample_transactions(body, 5).unwrap());
+        assert!(!redacted.contains("42.75"), "unknown money key leaked: {redacted}");
+        assert!(!redacted.contains("9876.54"), "unknown money key leaked: {redacted}");
+        assert!(!redacted.contains("4275"), "integer cents leaked: {redacted}");
+        assert!(redacted.contains("Groceries"), "the category must survive");
+        assert!(redacted.contains("5411"), "the merchant code must survive");
+    }
+
+    #[test]
+    fn redacts_money_at_any_depth() {
+        let nested = r#"{"a":{"b":[{"amount":"-5.00","balance":"9.99"}]}}"#;
+        let redacted = redact(nested);
+        assert!(!redacted.contains("5.00"), "{redacted}");
+        assert!(!redacted.contains("9.99"), "{redacted}");
+    }
+
+    #[test]
+    fn never_returns_unredacted_text_when_it_cannot_parse() {
+        // If redaction cannot run, it must not fall back to handing the caller
+        // the original, money and all.
+        let redacted = redact("not json at all, amount -12.40");
+        assert!(!redacted.contains("-12.40"), "leaked on the error path: {redacted}");
     }
 }
