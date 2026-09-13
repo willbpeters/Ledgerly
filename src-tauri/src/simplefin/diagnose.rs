@@ -71,10 +71,18 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
 /// "looks like a number" would destroy exactly the fields we came for.
 const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending"];
 
-/// Key-name fragments that mean money regardless of the value's shape. This
-/// catches an integer count of cents, which the decimal test below would miss.
-const MONEY_NAMES: &[&str] =
-    &["amount", "balance", "value", "price", "total", "cost", "cents", "fee"];
+/// Key-name fragments that mean money. They only fire on a value containing a
+/// digit, so an English word that happens to contain one of them ("coffee"
+/// contains "fee") does not eat a category name.
+///
+/// Known gap: a bare numeric string under a key matching nothing here (say
+/// `{"charge":"1200"}`) still gets through. Closing it would also redact a
+/// numeric category code, which is a thing we want to see, and the unredacted
+/// copy exists for the cases this misses.
+const MONEY_NAMES: &[&str] = &[
+    "amount", "balance", "value", "price", "total", "cost", "cents", "fee",
+    "charge", "debit", "credit", "sum", "paid", "due", "interest",
+];
 
 /// What the caller gets when redaction cannot run. It deliberately does not
 /// include the input: falling back to the original would leak exactly what this
@@ -102,21 +110,15 @@ pub fn redact(pretty_json: &str) -> String {
     serde_json::to_string_pretty(&v).unwrap_or_else(|_| REDACTION_FAILED.to_string())
 }
 
-/// Money is a number with a fractional part, or a string that parses as one.
-/// A bare integer is not treated as money, because `mcc` ("5812") and the unix
-/// timestamps are bare integers and are the point of the exercise.
-fn looks_like_money(v: &Value) -> bool {
-    match v {
-        Value::Number(n) => n.as_f64().is_some_and(|f| f.fract() != 0.0),
-        Value::String(s) => {
-            let cleaned: String = s
-                .chars()
-                .filter(|c| !matches!(c, '$' | ',' | '(' | ')' | ' ' | '+'))
-                .collect();
-            cleaned.contains('.') && cleaned.parse::<f64>().is_ok()
-        }
-        _ => false,
-    }
+/// A string is money when, after stripping currency punctuation, it parses as
+/// a decimal number. Bare integers are deliberately not handled here: on their
+/// own they are ambiguous — `mcc` is "5812" — so the caller decides them.
+fn looks_like_money(s: &str) -> bool {
+    let cleaned: String = s
+        .chars()
+        .filter(|c| !matches!(c, '$' | ',' | '(' | ')' | ' ' | '+'))
+        .collect();
+    cleaned.contains('.') && cleaned.parse::<f64>().is_ok()
 }
 
 fn scrub(v: &mut Value) {
@@ -125,9 +127,31 @@ fn scrub(v: &mut Value) {
             for (k, val) in map.iter_mut() {
                 let key = k.to_lowercase();
                 if KEEP.contains(&key.as_str()) {
+                    // A scalar under one of these keys is a field we came for.
+                    // A container is not, and could be hiding anything.
+                    if val.is_object() || val.is_array() {
+                        scrub(val);
+                    }
                     continue;
                 }
-                if MONEY_NAMES.iter().any(|m| key.contains(m)) || looks_like_money(val) {
+                let is_money = match &*val {
+                    // Any number outside KEEP. `extra` is unknown by
+                    // definition, and money that happens to be round is
+                    // still money.
+                    Value::Number(_) => true,
+                    // A matching key name is not enough on its own:
+                    // "coffee_shop" contains "fee", and "value" is the
+                    // commonest wrapper key there is. Requiring a digit lets
+                    // category text through — surfacing that text is the
+                    // entire point of the diagnostic.
+                    Value::String(s) => {
+                        looks_like_money(s)
+                            || (MONEY_NAMES.iter().any(|m| key.contains(m))
+                                && s.chars().any(|c| c.is_ascii_digit()))
+                    }
+                    _ => false,
+                };
+                if is_money {
                     *val = Value::String("***".into());
                 } else {
                     scrub(val);
@@ -324,5 +348,41 @@ mod tests {
         // the original, money and all.
         let redacted = redact("not json at all, amount -12.40");
         assert!(!redacted.contains("-12.40"), "leaked on the error path: {redacted}");
+    }
+
+    #[test]
+    fn redacts_money_under_a_key_name_that_matches_nothing() {
+        // Every other fixture's money sits under a key the name list already
+        // catches, so without this the shape rule could be deleted in silence.
+        let redacted = redact(r#"{"extra":{"settled":"-42.75","posted_sum":9876.54}}"#);
+        assert!(!redacted.contains("42.75"), "{redacted}");
+        assert!(!redacted.contains("9876.54"), "{redacted}");
+    }
+
+    #[test]
+    fn keeps_category_text_sitting_under_a_money_ish_key() {
+        // "coffee" contains "fee"; "value" is the commonest wrapper key there
+        // is. Eating these would answer the diagnostic's question wrongly.
+        let redacted = redact(
+            r#"{"extra":{"value":"Groceries","coffee_shop":"Blue Bottle","total_category":"Food"}}"#,
+        );
+        assert!(redacted.contains("Groceries"), "{redacted}");
+        assert!(redacted.contains("Blue Bottle"), "{redacted}");
+        assert!(redacted.contains("Food"), "{redacted}");
+    }
+
+    #[test]
+    fn redacts_money_that_happens_to_be_round() {
+        let redacted = redact(r#"{"extra":{"settled":1200,"interest":250}}"#);
+        assert!(!redacted.contains("1200"), "{redacted}");
+        assert!(!redacted.contains("250"), "{redacted}");
+    }
+
+    #[test]
+    fn looks_inside_containers_under_kept_keys() {
+        // `extra` is unknown by definition, so a container under a kept key
+        // could be hiding anything.
+        let redacted = redact(r#"{"extra":{"id":{"amount":"-12.40"}}}"#);
+        assert!(!redacted.contains("12.40"), "{redacted}");
     }
 }
