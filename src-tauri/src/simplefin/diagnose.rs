@@ -8,16 +8,15 @@
 
 use serde_json::{json, Value};
 
-/// At most this many transactions are taken from any single account, so a
-/// chatty first account cannot crowd out a second institution. Banks differ in
-/// what they enrich, and seeing only one of them defeats the diagnostic.
-const PER_ACCOUNT: usize = 2;
-
 /// The raw JSON of up to `n` transactions, pretty-printed, each tagged with the
 /// account and institution it came from.
 ///
 /// Transactions are passed through untouched — unknown fields included — which
-/// is the entire purpose: `parse.rs` would drop them.
+/// is the entire purpose: `parse.rs` would drop them. Sampling proceeds
+/// round-robin across accounts (every account gives up its first transaction
+/// before any account gives up its second) so a chatty account cannot crowd
+/// out a second institution, then keeps topping up until it reaches `n` or
+/// every account runs dry.
 pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
     let root: Value = serde_json::from_str(body).map_err(|_| {
         "SimpleFIN sent a response Ledgerly couldn't read. Try again in a minute.".to_string()
@@ -25,9 +24,12 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
 
     let mut out: Vec<Value> = Vec::new();
     if let Some(accounts) = root.get("accounts").and_then(Value::as_array) {
-        // Two passes: one transaction from each account first, then top up.
-        // This guarantees every account appears before any account repeats.
-        for take in 1..=PER_ACCOUNT {
+        // Round-robin: every account gives up its first transaction before any
+        // account gives up its second, so a chatty account cannot crowd out a
+        // second institution. Banks differ in what they enrich, and seeing only
+        // one of them defeats the diagnostic.
+        for take in 0.. {
+            let mut progressed = false;
             for a in accounts {
                 if out.len() >= n {
                     break;
@@ -37,21 +39,30 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
                     .get("org")
                     .and_then(|o| o.get("name"))
                     .and_then(Value::as_str)
-                    .unwrap_or("");
-                let txns = a.get("transactions").and_then(Value::as_array);
-                if let Some(t) = txns.and_then(|arr| arr.get(take - 1)) {
+                    .unwrap_or("Unknown institution");
+                let picked = a
+                    .get("transactions")
+                    .and_then(Value::as_array)
+                    .and_then(|arr| arr.get(take));
+                if let Some(t) = picked {
                     out.push(json!({
                         "account": name,
                         "institution": org,
                         "transaction": t,
                     }));
+                    progressed = true;
                 }
+            }
+            // Stop when the sample is full, or when a whole pass found nothing
+            // left to take — which is also what ends the loop for `n = 0`.
+            if out.len() >= n || !progressed {
+                break;
             }
         }
     }
 
-    serde_json::to_string_pretty(&json!({ "sampled": out.len(), "transactions": out }))
-        .map_err(|e| e.to_string())
+    Ok(serde_json::to_string_pretty(&json!({ "sampled": out.len(), "transactions": out }))
+        .expect("a Value tree always serializes"))
 }
 
 #[cfg(test)]
@@ -111,8 +122,8 @@ mod tests {
 
     #[test]
     fn takes_from_more_than_one_account() {
-        // Without a per-account cap, account a1's three transactions would fill
-        // a sample of 3 and the second institution would never be seen — which
+        // Without round-robin, account a1's three transactions would fill a
+        // sample of 3 and the second institution would never be seen — which
         // is the case that matters, since banks differ in what they enrich.
         let v = parsed(&sample_transactions(BODY, 3).unwrap());
         let accounts: Vec<&str> = v["transactions"].as_array().unwrap()
@@ -143,5 +154,48 @@ mod tests {
     #[test]
     fn rejects_a_body_that_is_not_json() {
         assert!(sample_transactions("<html>nope</html>", 5).is_err());
+    }
+
+    #[test]
+    fn fills_up_from_a_single_account_when_it_is_the_only_one() {
+        // The common case: one bank connected. The sample must still reach `n`
+        // rather than stopping at some per-account ceiling, or a thin sample
+        // reads as "my bank sends nothing".
+        let body = r#"{"accounts":[{"id":"a","name":"Solo","org":{"name":"Only Bank"},
+          "transactions":[{"id":"1"},{"id":"2"},{"id":"3"},{"id":"4"},{"id":"5"},{"id":"6"}]}]}"#;
+        let v = parsed(&sample_transactions(body, 5).unwrap());
+        assert_eq!(v["sampled"], 5);
+    }
+
+    #[test]
+    fn samples_everything_available_when_asked_for_more_than_exists() {
+        let v = parsed(&sample_transactions(BODY, 99).unwrap());
+        assert_eq!(v["sampled"], 4); // three on Everyday, one on Savings
+    }
+
+    #[test]
+    fn returns_nothing_when_asked_for_nothing() {
+        let v = parsed(&sample_transactions(BODY, 0).unwrap());
+        assert_eq!(v["sampled"], 0);
+    }
+
+    #[test]
+    fn tolerates_shapes_simplefin_should_never_send() {
+        // Untrusted third-party JSON: degrade to an empty sample, never panic.
+        for body in [
+            r#"{"accounts":"not an array"}"#,
+            r#"{"accounts":[1,2,3]}"#,
+            r#"{"accounts":[{"name":"A","transactions":"not an array"}]}"#,
+        ] {
+            let v = parsed(&sample_transactions(body, 5).unwrap());
+            assert_eq!(v["sampled"], 0, "body was {body}");
+        }
+    }
+
+    #[test]
+    fn says_so_when_an_account_carries_no_institution() {
+        let body = r#"{"accounts":[{"name":"A","transactions":[{"id":"1"}]}]}"#;
+        let v = parsed(&sample_transactions(body, 5).unwrap());
+        assert_eq!(v["transactions"][0]["institution"], "Unknown institution");
     }
 }
