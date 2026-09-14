@@ -36,6 +36,7 @@ export function SimplefinCard() {
   const backfill = useSimplefinBackfill();
   const diagnose = useSimplefinDiagnose();
   const [sample, setSample] = useState<SimplefinSample | null>(null);
+  const [copied, setCopied] = useState("");
   const [token, setToken] = useState("");
   const [report, setReport] = useState<SyncReport | null>(null);
   const [error, setError] = useState("");
@@ -57,11 +58,20 @@ export function SimplefinCard() {
     disconnect.mutate(removeAccounts, { onError: (e) => setError(String(e)) });
   }
   function doDiagnose() {
-    setError(""); setReport(null);
+    setError(""); setReport(null); setSample(null); setCopied("");
     diagnose.mutate(undefined, {
       onSuccess: setSample,
       onError: (e) => setError(String(e)),
     });
+  }
+  async function copy(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(""), 2000);
+    } catch {
+      setError("Couldn't copy to the clipboard. Select the text below and copy it manually.");
+    }
   }
 
   if (isLoading) return <Card title="SimpleFIN"><p className="muted">Checking connection…</p></Card>;
@@ -98,16 +108,42 @@ export function SimplefinCard() {
                 {sample && (
                   <>
                     <Button variant="secondary"
-                      onClick={() => navigator.clipboard.writeText(sample.redacted)}>
+                      onClick={() => copy(sample.redacted, "amounts-hidden")}>
                       Copy (amounts hidden)
                     </Button>
                     <Button variant="secondary"
-                      onClick={() => navigator.clipboard.writeText(sample.raw)}>
+                      onClick={() => copy(sample.raw, "with-amounts")}>
                       Copy with amounts
                     </Button>
+                    {copied && (
+                      <span className="muted">
+                        Copied the {copied === "amounts-hidden" ? "amounts-hidden" : "full"} version.
+                      </span>
+                    )}
                   </>
                 )}
               </div>
+              {sample && (() => {
+                let n: number | null = null;
+                try {
+                  n = (JSON.parse(sample.raw) as { sampled: number }).sampled;
+                } catch {
+                  n = null;
+                }
+                if (n === null) return null;
+                return n === 0 ? (
+                  <div className="notice warn">
+                    SimpleFIN returned no transactions in the last 44 days, so there is
+                    nothing to inspect. This isn't an error — try again after your next
+                    sync, or once some new transactions have posted.
+                  </div>
+                ) : (
+                  <div className="muted">
+                    Showing {n} transaction{n === 1 ? "" : "s"}. Look for an <code>extra</code> field —
+                    that is where a bank's own category would be.
+                  </div>
+                );
+              })()}
               {sample && (
                 <pre style={{
                   maxHeight: 320, overflow: "auto", fontSize: 12, lineHeight: 1.5,

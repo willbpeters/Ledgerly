@@ -148,9 +148,12 @@ pub async fn simplefin_backfill(app: tauri::AppHandle, days: i64) -> Result<Sync
 }
 
 /// How far back the diagnostic looks, and how many transactions it shows.
-/// Small on both counts: this is a look at the shape of the data, not an
-/// export, and a wide ask spends the SimpleFIN politeness budget for nothing.
-const DIAGNOSE_DAYS: i64 = 30;
+/// 44 is `client::MAX_WINDOW_DAYS`, the house limit chosen because SimpleFIN
+/// warns at 45 days — going right up to it is no less polite than 30, and it
+/// is materially more likely to return a non-empty sample on a quiet account.
+/// The sample count stays small: this is a look at the shape of the data, not
+/// an export.
+const DIAGNOSE_DAYS: i64 = 44;
 const DIAGNOSE_SAMPLE: usize = 5;
 
 /// Both renderings of the sample. `raw` is shown on screen; `redacted` is what
