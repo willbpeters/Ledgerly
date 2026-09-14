@@ -1,7 +1,7 @@
 use crate::db::Db;
 use crate::models::SyncedHolding;
 use crate::secrets;
-use crate::simplefin::{client, sync, SyncReport};
+use crate::simplefin::{client, diagnose, sync, SyncReport};
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::Manager;
@@ -145,6 +145,34 @@ pub async fn simplefin_backfill(app: tauri::AppHandle, days: i64) -> Result<Sync
         run_sync_with_transactions(&app.state::<Db>(), &access_url, days.clamp(1, 2000))
     })
     .await
+}
+
+/// How far back the diagnostic looks, and how many transactions it shows.
+/// Small on both counts: this is a look at the shape of the data, not an
+/// export, and a wide ask spends the SimpleFIN politeness budget for nothing.
+const DIAGNOSE_DAYS: i64 = 30;
+const DIAGNOSE_SAMPLE: usize = 5;
+
+/// Both renderings of the sample. `raw` is shown on screen; `redacted` is what
+/// the default copy button puts on the clipboard.
+#[derive(Serialize)]
+pub struct SimplefinSample {
+    pub raw: String,
+    pub redacted: String,
+}
+
+/// Show what SimpleFIN actually sends, so we can see whether this connection
+/// carries the free-form `extra` object that holds an institution's own
+/// category.
+///
+/// Read-only: it takes no database handle and writes nothing.
+#[tauri::command]
+pub fn simplefin_diagnose() -> Result<SimplefinSample, String> {
+    let access_url = access_url()?;
+    let body = client::fetch_raw(&access_url, Some(client::Range::last_days(DIAGNOSE_DAYS)))?;
+    let raw = diagnose::sample_transactions(&body, DIAGNOSE_SAMPLE)?;
+    let redacted = diagnose::redact(&raw);
+    Ok(SimplefinSample { raw, redacted })
 }
 
 fn access_url() -> Result<String, String> {

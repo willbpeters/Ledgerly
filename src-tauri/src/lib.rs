@@ -45,6 +45,7 @@ pub fn run() {
             commands::simplefin::simplefin_connect,
             commands::simplefin::simplefin_sync,
             commands::simplefin::simplefin_backfill,
+            commands::simplefin::simplefin_diagnose,
             commands::simplefin::simplefin_disconnect,
             commands::simplefin::synced_holdings_list,
             commands::budget::categories_list,
