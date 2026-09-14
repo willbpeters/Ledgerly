@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill } from "../../data/queries";
+import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose } from "../../data/queries";
 import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
-import type { SyncReport } from "../../domain/types";
+import type { SyncReport, SimplefinSample } from "../../domain/types";
 
 // SimpleFIN's public demo. Its shared *setup token* is permanently claimed and
 // answers 403 to everyone, so the demo uses the access URL, which Ledgerly
@@ -34,6 +34,8 @@ export function SimplefinCard() {
   const sync = useSimplefinSync();
   const disconnect = useSimplefinDisconnect();
   const backfill = useSimplefinBackfill();
+  const diagnose = useSimplefinDiagnose();
+  const [sample, setSample] = useState<SimplefinSample | null>(null);
   const [token, setToken] = useState("");
   const [report, setReport] = useState<SyncReport | null>(null);
   const [error, setError] = useState("");
@@ -54,6 +56,13 @@ export function SimplefinCard() {
     setError(""); setReport(null);
     disconnect.mutate(removeAccounts, { onError: (e) => setError(String(e)) });
   }
+  function doDiagnose() {
+    setError(""); setReport(null);
+    diagnose.mutate(undefined, {
+      onSuccess: setSample,
+      onError: (e) => setError(String(e)),
+    });
+  }
 
   if (isLoading) return <Card title="SimpleFIN"><p className="muted">Checking connection…</p></Card>;
 
@@ -72,6 +81,44 @@ export function SimplefinCard() {
             <Button variant="danger" onClick={doDisconnect} loading={disconnect.isPending}>Disconnect</Button>
           </div>
           {report && <Report r={report} />}
+
+          <details onToggle={(e) => { if (!(e.currentTarget as HTMLDetailsElement).open) setSample(null); }}>
+            <summary className="muted" style={{ cursor: "pointer" }}>
+              Raw transaction data
+            </summary>
+            <div className="grid" style={{ gap: 10, paddingTop: 10 }}>
+              <div className="muted">
+                Shows exactly what SimpleFIN sends for a few of your recent
+                transactions. Nothing is changed or uploaded — this only reads.
+              </div>
+              <div className="row center">
+                <Button variant="secondary" onClick={doDiagnose} loading={diagnose.isPending}>
+                  Show raw transaction data
+                </Button>
+                {sample && (
+                  <>
+                    <Button variant="secondary"
+                      onClick={() => navigator.clipboard.writeText(sample.redacted)}>
+                      Copy (amounts hidden)
+                    </Button>
+                    <Button variant="secondary"
+                      onClick={() => navigator.clipboard.writeText(sample.raw)}>
+                      Copy with amounts
+                    </Button>
+                  </>
+                )}
+              </div>
+              {sample && (
+                <pre style={{
+                  maxHeight: 320, overflow: "auto", fontSize: 12, lineHeight: 1.5,
+                  background: "var(--surface-2)", padding: 12, borderRadius: 8,
+                  border: "1px solid var(--line)", whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}>{sample.raw}</pre>
+              )}
+            </div>
+          </details>
+
           {error && <div className="notice neg">{error}</div>}
         </div>
       </Card>
