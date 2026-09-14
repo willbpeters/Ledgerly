@@ -20,6 +20,31 @@ Nothing is written to the database.
 
 **Spec:** `docs/superpowers/specs/2026-09-12-bank-supplied-categories-design.md`
 
+## Status
+
+Tasks 1-6 are **built, reviewed and committed** on `feature/simplefin-diagnostic`.
+Task 7 is the owner's: run the app, look at the output, record the answer.
+
+Suite: 170 Rust tests passing (9 ignored, network), 240 TypeScript passing,
+`tsc --noEmit` clean.
+
+Two gaps in this plan that review caught, both now fixed in the code:
+
+- **Task 2's redaction rules** changed substantially over three rounds. See the
+  note on that task.
+- **Task 6 specified the markup but neither the copy-feedback nor the
+  empty-sample state.** `navigator.clipboard.writeText` can reject on WebView2
+  ("Document is not focused"), and an unawaited promise meant the safe copy
+  button could fail silently — which would push the owner to click "Copy with
+  amounts" instead. That is the feature's main privacy risk, caused by a
+  missing `catch`. Both copy actions now confirm on success and explain on
+  failure. Separately, an empty sample rendered as bare `{"sampled": 0}`, which
+  reads as a broken tool rather than "no transactions in range"; it now says so
+  in English.
+- `DIAGNOSE_DAYS` was widened from 30 to 44 (the house limit in `client.rs`,
+  set by SimpleFIN's 45-day warning), because the cost of an empty sample is
+  the owner re-running and possibly misreading it.
+
 **Why this ships alone:** Stages 2 and 3 of the spec depend on what this
 diagnostic reveals. The public SimpleFIN demo sends no `extra` at all, so the
 translation table cannot be written against real values until this has been run.
@@ -53,7 +78,7 @@ one responsibility over two.
 - Create: `src-tauri/src/simplefin/diagnose.rs`
 - Modify: `src-tauri/src/simplefin/mod.rs`
 
-- [ ] **Step 1: Create the module file with only the header and imports**
+- [x] **Step 1: Create the module file with only the header and imports**
 
 Create `src-tauri/src/simplefin/diagnose.rs`:
 
@@ -69,7 +94,7 @@ Create `src-tauri/src/simplefin/diagnose.rs`:
 use serde_json::{json, Value};
 ```
 
-- [ ] **Step 2: Register the module**
+- [x] **Step 2: Register the module**
 
 In `src-tauri/src/simplefin/mod.rs`, add `pub mod diagnose;` after the existing
 module declarations, so the block reads:
@@ -81,7 +106,7 @@ pub mod sync;
 pub mod diagnose;
 ```
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 Append to `src-tauri/src/simplefin/diagnose.rs`:
 
@@ -179,7 +204,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they fail**
+- [x] **Step 4: Run the tests to verify they fail**
 
 ```bash
 cd src-tauri
@@ -188,7 +213,7 @@ cargo test diagnose
 
 Expected: FAIL to compile, with `cannot find function 'sample_transactions' in this scope`.
 
-- [ ] **Step 5: Write the implementation**
+- [x] **Step 5: Write the implementation**
 
 Insert into `src-tauri/src/simplefin/diagnose.rs`, between the `use` line and
 the `#[cfg(test)]` block:
@@ -241,7 +266,7 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 ```bash
 cd src-tauri
@@ -250,7 +275,7 @@ cargo test diagnose
 
 Expected: PASS, 7 tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src-tauri/src/simplefin/diagnose.rs src-tauri/src/simplefin/mod.rs
@@ -287,7 +312,7 @@ git commit -m "feat(simplefin): sample raw transactions for the category diagnos
 The sample is real financial data. The reason to copy it is to share a field
 name with someone, and nobody needs balances to read a field name.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add these tests inside the existing `mod tests` block in
 `src-tauri/src/simplefin/diagnose.rs`:
@@ -347,7 +372,7 @@ Add these tests inside the existing `mod tests` block in
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd src-tauri
@@ -356,7 +381,7 @@ cargo test diagnose
 
 Expected: FAIL to compile, with `cannot find function 'redact' in this scope`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add to `src-tauri/src/simplefin/diagnose.rs`, after `sample_transactions`:
 
@@ -435,7 +460,7 @@ fn scrub(v: &mut Value) {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 cd src-tauri
@@ -444,7 +469,7 @@ cargo test diagnose
 
 Expected: PASS. Ended at 23 after three review rounds; see the note above.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/simplefin/diagnose.rs
@@ -461,7 +486,7 @@ git commit -m "feat(simplefin): redact money from diagnostic samples"
 `fetch` currently reads the body and immediately hands it to `parse`, discarding
 it. The diagnostic needs the body itself.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `mod tests` block in `src-tauri/src/simplefin/client.rs`:
 
@@ -479,7 +504,7 @@ Add to the `mod tests` block in `src-tauri/src/simplefin/client.rs`:
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd src-tauri
@@ -488,7 +513,7 @@ cargo test --lib simplefin::client -- --ignored live_demo_fetch_raw
 
 Expected: FAIL to compile, with `cannot find function 'fetch_raw' in this scope`.
 
-- [ ] **Step 3: Add `fetch_raw` and route `fetch` through it**
+- [x] **Step 3: Add `fetch_raw` and route `fetch` through it**
 
 In `src-tauri/src/simplefin/client.rs`, replace the whole existing `fetch`
 function with these two functions:
@@ -519,7 +544,7 @@ fn fetch(access_url: &str, range: Option<Range>) -> Result<SfAccountSet, String>
 }
 ```
 
-- [ ] **Step 4: Remove the now-wrong `dead_code` allow on `Range::last_days`**
+- [x] **Step 4: Remove the now-wrong `dead_code` allow on `Range::last_days`**
 
 `last_days` is about to be used by the diagnostic command, not only by an
 ignored test. In `src-tauri/src/simplefin/client.rs`, delete this line from the
@@ -540,7 +565,7 @@ impl Range {
 }
 ```
 
-- [ ] **Step 5: Run the full Rust suite to verify nothing regressed**
+- [x] **Step 5: Run the full Rust suite to verify nothing regressed**
 
 ```bash
 cd src-tauri
@@ -553,7 +578,7 @@ passing, with 9 ignored (8 existing network tests plus the one added above).
 but not behaviour, so no existing test should need editing — if one fails, stop
 and investigate rather than adjusting the test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src-tauri/src/simplefin/client.rs
@@ -568,7 +593,7 @@ git commit -m "refactor(simplefin): expose the raw accounts body as fetch_raw"
 - Modify: `src-tauri/src/commands/simplefin.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Import the new module**
+- [x] **Step 1: Import the new module**
 
 In `src-tauri/src/commands/simplefin.rs`, change the existing import line:
 
@@ -582,7 +607,7 @@ to:
 use crate::simplefin::{client, diagnose, sync, SyncReport};
 ```
 
-- [ ] **Step 2: Add the command**
+- [x] **Step 2: Add the command**
 
 Add to `src-tauri/src/commands/simplefin.rs`, immediately after the existing
 `simplefin_backfill` command:
@@ -617,7 +642,7 @@ pub fn simplefin_diagnose() -> Result<SimplefinSample, String> {
 }
 ```
 
-- [ ] **Step 3: Register the command**
+- [x] **Step 3: Register the command**
 
 In `src-tauri/src/lib.rs`, add one line to the invoke handler list, after
 `commands::simplefin::simplefin_backfill,`:
@@ -626,7 +651,7 @@ In `src-tauri/src/lib.rs`, add one line to the invoke handler list, after
             commands::simplefin::simplefin_diagnose,
 ```
 
-- [ ] **Step 4: Verify it compiles and the suite still passes**
+- [x] **Step 4: Verify it compiles and the suite still passes**
 
 ```bash
 cd src-tauri
@@ -635,7 +660,7 @@ cargo test
 
 Expected: PASS, 170 tests, no warnings about unused functions.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/commands/simplefin.rs src-tauri/src/lib.rs
@@ -651,7 +676,7 @@ git commit -m "feat(simplefin): add the read-only simplefin_diagnose command"
 - Modify: `src/data/api.ts:58-63`
 - Modify: `src/data/queries.ts`
 
-- [ ] **Step 1: Add the type**
+- [x] **Step 1: Add the type**
 
 Append to `src/domain/types.ts`:
 
@@ -661,7 +686,7 @@ Append to `src/domain/types.ts`:
 export type SimplefinSample = { raw: string; redacted: string };
 ```
 
-- [ ] **Step 2: Add the invoke binding**
+- [x] **Step 2: Add the invoke binding**
 
 In `src/data/api.ts`, inside the `simplefin` object, add after the `backfill`
 line:
@@ -673,7 +698,7 @@ line:
 Then add `SimplefinSample` to the existing type import from `../domain/types` at
 the top of the file, alongside the other imported types.
 
-- [ ] **Step 3: Add the hook**
+- [x] **Step 3: Add the hook**
 
 Append to `src/data/queries.ts`:
 
@@ -685,7 +710,7 @@ export function useSimplefinDiagnose() {
 }
 ```
 
-- [ ] **Step 4: Verify types compile and the suite still passes**
+- [x] **Step 4: Verify types compile and the suite still passes**
 
 ```bash
 npx tsc --noEmit
@@ -694,7 +719,7 @@ npm test
 
 Expected: `tsc` reports no errors; `npm test` PASSES 126 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/domain/types.ts src/data/api.ts src/data/queries.ts
@@ -712,7 +737,7 @@ This is a thin view over a tested command. The repo has no UI tests and this
 plan does not invent a testing approach for one card — Task 7 verifies it by
 running the app, which is how the rest of this codebase's UI is checked.
 
-- [ ] **Step 1: Extend the imports**
+- [x] **Step 1: Extend the imports**
 
 In `src/features/settings/SimplefinCard.tsx`, change the first two import lines
 to:
@@ -728,7 +753,7 @@ and change the type import to:
 import type { SyncReport, SimplefinSample } from "../../domain/types";
 ```
 
-- [ ] **Step 2: Add the hook and state**
+- [x] **Step 2: Add the hook and state**
 
 Inside `export function SimplefinCard()`, after the existing
 `const backfill = useSimplefinBackfill();` line, add:
@@ -738,7 +763,7 @@ Inside `export function SimplefinCard()`, after the existing
   const [sample, setSample] = useState<SimplefinSample | null>(null);
 ```
 
-- [ ] **Step 3: Add the handler**
+- [x] **Step 3: Add the handler**
 
 Add after the existing `doDisconnect` function, still inside the component:
 
@@ -752,7 +777,7 @@ Add after the existing `doDisconnect` function, still inside the component:
   }
 ```
 
-- [ ] **Step 4: Add the button and output panel**
+- [x] **Step 4: Add the button and output panel**
 
 In the `status?.connected` branch, replace this block:
 
@@ -806,7 +831,7 @@ with:
           {error && <div className="notice neg">{error}</div>}
 ```
 
-- [ ] **Step 5: Confirm the CSS variables used above are declared in both themes**
+- [x] **Step 5: Confirm the CSS variables used above are declared in both themes**
 
 ```bash
 grep -n "\-\-surface-2:\|--line:" src/styles.css
@@ -818,7 +843,7 @@ under `:root` (around line 24) and once under `:root[data-theme="dark"]`
 only one theme renders wrong in the other. Do not invent a new variable if
 something is missing; use the nearest token already declared in both.
 
-- [ ] **Step 6: Verify types compile and the suite still passes**
+- [x] **Step 6: Verify types compile and the suite still passes**
 
 ```bash
 npx tsc --noEmit
@@ -827,7 +852,7 @@ npm test
 
 Expected: `tsc` reports no errors; `npm test` PASSES 126 tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/features/settings/SimplefinCard.tsx
