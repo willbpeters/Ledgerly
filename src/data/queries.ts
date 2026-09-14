@@ -247,6 +247,12 @@ export function useBackfillIndices() {
   });
 }
 
+/** Read-only: it changes nothing, so there is nothing to invalidate. A
+ *  mutation rather than a query because it must only run when clicked. */
+export function useSimplefinDiagnose() {
+  return useMutation({ mutationFn: () => api.simplefin.diagnose() });
+}
+
 /** A market refresh can change all four, so they are invalidated together. */
 export function useMarketRefresh() {
   const qc = useQueryClient();

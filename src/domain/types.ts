@@ -99,3 +99,7 @@ export interface MarketRefreshReport {
   news_added: number; profiles_updated: number; earnings_updated: number;
   indices_updated: number; errors: string[];
 }
+
+/** Two renderings of the SimpleFIN diagnostic sample: what to show, and what
+ *  is safe to put on the clipboard. */
+export type SimplefinSample = { raw: string; redacted: string };

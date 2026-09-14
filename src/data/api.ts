@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, Security, Transaction, Snapshot,
-  SyncedHolding, SyncReport, SimplefinStatus,
+  SyncedHolding, SyncReport, SimplefinStatus, SimplefinSample,
   Category, BankTransaction, CategoryRule, Budget,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
@@ -60,6 +60,7 @@ export const api = {
     connect: (setupToken: string) => invoke<SyncReport>("simplefin_connect", { setupToken }),
     sync: () => invoke<SyncReport>("simplefin_sync"),
     backfill: (days: number) => invoke<SyncReport>("simplefin_backfill", { days }),
+    diagnose: () => invoke<SimplefinSample>("simplefin_diagnose"),
     disconnect: (deleteAccounts: boolean) => invoke<void>("simplefin_disconnect", { deleteAccounts }),
   },
   categories: {
