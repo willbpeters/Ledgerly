@@ -68,7 +68,6 @@ pub struct Range {
 
 impl Range {
     /// The last `days` up to now.
-    #[allow(dead_code)] // used by the ignored live test
     pub fn last_days(days: i64) -> Self {
         Range { since: chrono::Utc::now().timestamp() - days * 86_400, until: None }
     }
@@ -114,7 +113,11 @@ pub fn fetch_accounts_in(access_url: &str, range: Range) -> Result<SfAccountSet,
     fetch(access_url, Some(range))
 }
 
-fn fetch(access_url: &str, range: Option<Range>) -> Result<SfAccountSet, String> {
+/// The raw `/accounts` body, unparsed.
+///
+/// The diagnostic needs this because `parse` keeps only the fields Ledgerly
+/// models and drops everything else — including the free-form `extra` object.
+pub fn fetch_raw(access_url: &str, range: Option<Range>) -> Result<String, String> {
     let (url, user, pass) = accounts_request_parts(access_url, range)?;
     let mut req = http()?.get(url);
     if !user.is_empty() {
@@ -122,14 +125,16 @@ fn fetch(access_url: &str, range: Option<Range>) -> Result<SfAccountSet, String>
     }
     let resp = req.send().map_err(|_| NETWORK_ERR.to_string())?;
     match resp.status().as_u16() {
-        200 => {
-            let body = resp.text().map_err(|_| NETWORK_ERR.to_string())?;
-            parse::parse_accounts_json(&body)
-        }
+        200 => resp.text().map_err(|_| NETWORK_ERR.to_string()),
         402 => Err("Your SimpleFIN subscription needs renewing before Ledgerly can sync.".into()),
         403 => Err("SimpleFIN rejected the saved connection. Disconnect, then connect again with a new setup token.".into()),
         s => Err(format!("SimpleFIN returned an unexpected status ({s}). Try again later.")),
     }
+}
+
+fn fetch(access_url: &str, range: Option<Range>) -> Result<SfAccountSet, String> {
+    let body = fetch_raw(access_url, range)?;
+    parse::parse_accounts_json(&body)
 }
 
 #[cfg(test)]
@@ -203,5 +208,17 @@ mod tests {
     fn live_demo_fetch() {
         let set = fetch_accounts("https://demo:demo@beta-bridge.simplefin.org/simplefin").unwrap();
         assert!(set.accounts.len() >= 2);
+    }
+
+    #[test]
+    #[ignore = "hits the network"]
+    fn live_demo_fetch_raw_returns_the_unparsed_body() {
+        let body = fetch_raw(
+            "https://demo:demo@beta-bridge.simplefin.org/simplefin",
+            Some(Range::last_days(MAX_WINDOW_DAYS)),
+        )
+        .unwrap();
+        assert!(body.contains("\"accounts\""), "should be the raw JSON document");
+        assert!(body.contains("\"mcc\""), "and should carry fields verbatim");
     }
 }
