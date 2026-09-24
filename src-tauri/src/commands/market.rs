@@ -3,6 +3,7 @@
 //! the way `derivePortfolio` is.
 use crate::db::Db;
 use crate::market::{self, store};
+use tauri::Manager;
 
 #[tauri::command]
 pub fn market_news_list(db: tauri::State<Db>) -> Result<Vec<store::StoredNews>, String> {
@@ -33,8 +34,9 @@ pub fn market_indices(db: tauri::State<Db>) -> Result<Vec<store::IndexQuote>, St
 /// A full refresh. Takes the database lock only to read and to store, never
 /// across a download — see `market::refresh_all`.
 #[tauri::command]
-pub fn market_refresh(db: tauri::State<Db>) -> Result<market::MarketRefreshReport, String> {
-    Ok(market::refresh_all(&db, &market::LiveSource))
+pub async fn market_refresh(app: tauri::AppHandle) -> Result<market::MarketRefreshReport, String> {
+    super::off_main_thread(move || Ok(market::refresh_all(&app.state::<Db>(), &market::LiveSource)))
+        .await
 }
 
 /// Two years of benchmark closes, oldest first, as (date, close).
@@ -55,6 +57,6 @@ pub fn market_index_depth(db: tauri::State<Db>) -> Result<i64, String> {
 /// Download the benchmark's two-year history. Run rarely — see
 /// `backfill_benchmark`.
 #[tauri::command]
-pub fn market_index_backfill(db: tauri::State<Db>) -> Result<usize, String> {
-    market::backfill_benchmark(&db)
+pub async fn market_index_backfill(app: tauri::AppHandle) -> Result<usize, String> {
+    super::off_main_thread(move || market::backfill_benchmark(&app.state::<Db>())).await
 }

@@ -4,6 +4,7 @@ use crate::secrets;
 use crate::simplefin::{client, sync, SyncReport};
 use rusqlite::Connection;
 use serde::Serialize;
+use tauri::Manager;
 
 const KEY: &str = "simplefin_access_url";
 
@@ -111,29 +112,39 @@ pub fn simplefin_status(db: tauri::State<Db>) -> Result<SimplefinStatus, String>
 }
 
 #[tauri::command]
-pub fn simplefin_connect(db: tauri::State<Db>, setup_token: String) -> Result<SyncReport, String> {
-    let access_url = client::resolve_access_url(&setup_token)?;
-    secrets::set(KEY, &access_url)?;
-    // A first connect brings a year of history so budgeting has something to show.
-    run_sync_with_transactions(&db, &access_url, DEFAULT_BACKFILL_DAYS)
+pub async fn simplefin_connect(app: tauri::AppHandle, setup_token: String) -> Result<SyncReport, String> {
+    super::off_main_thread(move || {
+        let access_url = client::resolve_access_url(&setup_token)?;
+        secrets::set(KEY, &access_url)?;
+        // A first connect brings a year of history so budgeting has something to show.
+        run_sync_with_transactions(&app.state::<Db>(), &access_url, DEFAULT_BACKFILL_DAYS)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn simplefin_sync(db: tauri::State<Db>) -> Result<SyncReport, String> {
-    let access_url = access_url()?;
-    let days = {
-        let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        days_back_for_incremental(&conn)
-    };
-    run_sync_with_transactions(&db, &access_url, days)
+pub async fn simplefin_sync(app: tauri::AppHandle) -> Result<SyncReport, String> {
+    super::off_main_thread(move || {
+        let db = app.state::<Db>();
+        let access_url = access_url()?;
+        let days = {
+            let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+            days_back_for_incremental(&conn)
+        };
+        run_sync_with_transactions(&db, &access_url, days)
+    })
+    .await
 }
 
 /// Reach further back than the routine sync does, for someone who wants more
 /// history than they started with.
 #[tauri::command]
-pub fn simplefin_backfill(db: tauri::State<Db>, days: i64) -> Result<SyncReport, String> {
-    let access_url = access_url()?;
-    run_sync_with_transactions(&db, &access_url, days.clamp(1, 2000))
+pub async fn simplefin_backfill(app: tauri::AppHandle, days: i64) -> Result<SyncReport, String> {
+    super::off_main_thread(move || {
+        let access_url = access_url()?;
+        run_sync_with_transactions(&app.state::<Db>(), &access_url, days.clamp(1, 2000))
+    })
+    .await
 }
 
 fn access_url() -> Result<String, String> {

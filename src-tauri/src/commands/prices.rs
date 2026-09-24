@@ -1,5 +1,6 @@
 use crate::db::Db;
 use rusqlite::Connection;
+use tauri::Manager;
 
 pub fn upsert(conn: &Connection, security_id: i64, date: &str, close: f64, source: &str)
     -> rusqlite::Result<()> {
@@ -68,15 +69,21 @@ pub fn prices_set_manual(db: tauri::State<Db>, security_id: i64, date: String, c
 }
 
 #[tauri::command]
-pub fn prices_refresh(db: tauri::State<Db>) -> Result<usize, String> {
-    crate::prices::refresh_all(&db, &crate::prices::YahooProvider)
+pub async fn prices_refresh(app: tauri::AppHandle) -> Result<usize, String> {
+    super::off_main_thread(move || {
+        crate::prices::refresh_all(&app.state::<Db>(), &crate::prices::YahooProvider)
+    })
+    .await
 }
 
 /// Download the full daily history for every security. Run rarely — see
 /// `backfill_all`.
 #[tauri::command]
-pub fn prices_backfill(db: tauri::State<Db>) -> Result<usize, String> {
-    crate::prices::backfill_all(&db, &crate::prices::YahooProvider)
+pub async fn prices_backfill(app: tauri::AppHandle) -> Result<usize, String> {
+    super::off_main_thread(move || {
+        crate::prices::backfill_all(&app.state::<Db>(), &crate::prices::YahooProvider)
+    })
+    .await
 }
 
 /// How many days of history the best-covered security has. The frontend uses
