@@ -51,7 +51,12 @@ export function derivePortfolio(i: PortfolioInputs): Portfolio {
     if (isCredit.has(accountId)) liabilities += value;
     else cash += value;
   }
-  const summary = buildSummary(holdings, cash, prevMap, liabilities);
+  // Realized gains come from every position, not from `holdings`: a position
+  // sold in full leaves the holdings list, but the profit it made is still real.
+  const summary = {
+    ...buildSummary(holdings, cash, prevMap, liabilities),
+    realized: positions.reduce((s, p) => s + p.realized, 0),
+  };
 
   const accountValues = new Map<number, number>(cashMap);
   for (const p of positions) accountValues.set(p.account_id, (accountValues.get(p.account_id) ?? 0) + p.marketValue);

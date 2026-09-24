@@ -43,6 +43,18 @@ describe("derivePortfolio", () => {
     expect(p.summary.totalValue).toBe(750);
   });
 
+  // Selling a whole position drops it from the holdings table, but the profit
+  // it made is still real and must stay in the summary.
+  it("keeps the realized gain of a position that has been sold in full", () => {
+    const soldOut: Transaction[] = [
+      { id: 1, account_id: 1, security_id: 10, type: "buy", date: "2026-01-02", quantity: 5, price: 100, amount: 0, fees: 0, note: null },
+      { id: 2, account_id: 1, security_id: 10, type: "sell", date: "2026-02-02", quantity: 5, price: 130, amount: 0, fees: 0, note: null },
+    ];
+    const p = derivePortfolio({ txns: soldOut, securities, accounts: [accounts[0]], latest: [[10, 130]], previous: [], synced: [] });
+    expect(p.holdings).toHaveLength(0);
+    expect(p.summary.realized).toBe(150);
+  });
+
   // The uninvested remainder is real cash and must survive.
   it("keeps the part of a synced balance that is not in holdings as cash", () => {
     const p = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
