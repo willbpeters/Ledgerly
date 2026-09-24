@@ -53,6 +53,19 @@ describe("reconstructSeries — manual accounts", () => {
     expect(s.find((p) => p.date === "2026-09-05")?.value).toBe(1100);
   });
 
+  // The chart must agree with the dashboard: an oversell sells what was held
+  // and nothing more, so shares never go negative and no cash is invented.
+  it("treats an oversell the way the dashboard does", () => {
+    const oversold: Transaction[] = [
+      ...txns,
+      { id: 3, account_id: 1, security_id: 10, type: "sell", date: "2026-09-03",
+        quantity: 5, price: 100, amount: 500, fees: 0, note: null },
+    ];
+    const s = reconstructSeries({ ...base, accounts: [brokerage], txns: oversold, synced: [], bankTxns: [], prices });
+    // 2 shares sold at 100: back to 1000 cash, and the later price rise is not ours.
+    expect(s.find((p) => p.date === "2026-09-05")?.value).toBe(1000);
+  });
+
   it("never shows a position that was later deleted, because it reads the transactions", () => {
     const s = reconstructSeries({ ...base, accounts: [brokerage], txns: [], synced: [], bankTxns: [], prices });
     expect(s.every((p) => p.value === 0)).toBe(true);

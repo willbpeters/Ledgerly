@@ -1,4 +1,5 @@
 import { cashEffect } from "./cash";
+import { clampOversells } from "./positions";
 import type { Account, BankTransaction, SeriesPoint, SyncedHolding, Transaction } from "./types";
 
 /** One stored daily close. */
@@ -43,7 +44,8 @@ export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
   const visible = new Set(accounts.map((a) => a.id));
   const isSynced = new Set(accounts.filter((a) => a.source === "simplefin").map((a) => a.id));
 
-  const txns = i.txns.filter((t) => visible.has(t.account_id));
+  // Same oversell rule as the dashboard, so the chart never holds negative shares.
+  const txns = clampOversells(i.txns.filter((t) => visible.has(t.account_id)));
   const synced = i.synced.filter((h) => visible.has(h.account_id));
   const bankTxns = i.bankTxns.filter((t) => visible.has(t.account_id));
 

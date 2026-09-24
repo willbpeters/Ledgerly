@@ -56,6 +56,33 @@ export function buildPositions(
   });
 }
 
+/**
+ * Apply `buildPositions`' oversell policy to the transactions themselves, so
+ * cash and the value chart obey it too: each sell is cut to the shares held in
+ * that account at the time, and a sell with nothing to match is dropped.
+ * Without this an oversell typo credits cash for shares that never existed.
+ */
+export function clampOversells(txns: Transaction[]): Transaction[] {
+  const order = txns
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => (a.t.date < b.t.date ? -1 : a.t.date > b.t.date ? 1 : a.t.id - b.t.id));
+  const held = new Map<string, number>();
+  const out: (Transaction | null)[] = txns.slice();
+  for (const { t, i } of order) {
+    if (t.security_id == null || (t.type !== "buy" && t.type !== "sell")) continue;
+    const k = keyOf(t.account_id, t.security_id);
+    const shares = held.get(k) ?? 0;
+    if (t.type === "buy") {
+      held.set(k, shares + t.quantity);
+      continue;
+    }
+    const qty = Math.min(t.quantity, shares);
+    held.set(k, shares - qty <= 1e-9 ? 0 : shares - qty);
+    out[i] = qty > 0 ? (qty === t.quantity ? t : { ...t, quantity: qty }) : null;
+  }
+  return out.filter((t): t is Transaction => t != null);
+}
+
 /** Group positions by security across accounts. Omits zero-share securities. */
 export function aggregateHoldings(positions: Position[], securities: Security[]): Holding[] {
   const secById = new Map(securities.map((s) => [s.id, s]));

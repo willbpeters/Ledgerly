@@ -1,4 +1,4 @@
-import { buildPositions, aggregateHoldings } from "./positions";
+import { buildPositions, aggregateHoldings, clampOversells } from "./positions";
 import { buildSummary } from "./summary";
 import { allocationByType, allocationByAccount } from "./allocation";
 import { cashByAccount } from "./cash";
@@ -33,7 +33,8 @@ export function derivePortfolio(i: PortfolioInputs): Portfolio {
 
   const latestMap = new Map<number, number>(i.latest);
   const prevMap = new Map<number, number>(i.previous);
-  const manualTxns = manualOnly(txns, accounts);
+  // Oversells are cut once, here, so cash and positions read the same numbers.
+  const manualTxns = clampOversells(manualOnly(txns, accounts));
 
   const positions = [
     ...buildPositions(manualTxns, latestMap),

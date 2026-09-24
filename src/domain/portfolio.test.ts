@@ -55,6 +55,19 @@ describe("derivePortfolio", () => {
     expect(p.summary.realized).toBe(150);
   });
 
+  // Positions treat the excess of an oversell as a typo and ignore it. Cash
+  // must follow the same rule, or the typo mints money that never existed.
+  it("credits cash only for the shares an oversell could actually sell", () => {
+    const oversold: Transaction[] = [
+      { id: 1, account_id: 1, security_id: null, type: "deposit", date: "2026-01-01", quantity: 0, price: 0, amount: 500, fees: 0, note: null },
+      { id: 2, account_id: 1, security_id: 10, type: "buy", date: "2026-01-02", quantity: 5, price: 100, amount: 0, fees: 0, note: null },
+      { id: 3, account_id: 1, security_id: 10, type: "sell", date: "2026-02-02", quantity: 10, price: 130, amount: 0, fees: 0, note: null },
+    ];
+    const p = derivePortfolio({ txns: oversold, securities, accounts: [accounts[0]], latest: [[10, 130]], previous: [], synced: [] });
+    expect(p.cash).toBe(650);
+    expect(p.summary.totalValue).toBe(650);
+  });
+
   // The uninvested remainder is real cash and must survive.
   it("keeps the part of a synced balance that is not in holdings as cash", () => {
     const p = derivePortfolio({ txns, securities, accounts, latest: [[10, 250]], previous: [[10, 240]], synced });
