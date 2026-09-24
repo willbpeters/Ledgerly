@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { localIsoDate } from "../domain/dates";
 import {
   useAccounts, useTransactions, useSyncedHoldings, useBankTransactions, usePriceHistoryRows,
 } from "./queries";
@@ -16,7 +17,7 @@ import type { SeriesPoint } from "../domain/types";
 export const HISTORY_DAYS = 90;
 
 function isoDaysAgo(days: number, now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   d.setUTCDate(d.getUTCDate() - days);
   return d.toISOString().slice(0, 10);
 }
@@ -26,7 +27,7 @@ function isoDaysAgo(days: number, now: Date = new Date()): string {
  * movements rather than read back from the daily snapshots.
  */
 export function useValueSeries(days: number = HISTORY_DAYS): { series: SeriesPoint[]; isLoading: boolean } {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localIsoDate();
   const from = isoDaysAgo(days);
 
   const { data: accounts = [], isLoading: l1 } = useAccounts();

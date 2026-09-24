@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localIsoDate } from "../../domain/dates";
 import { useCreateTransactions } from "../../data/queries";
 import { api } from "../../data/api";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,7 +14,7 @@ export function AddPositionForm({ accountId }: { accountId: number }) {
   const [kind, setKind] = useState("stock");
   const [shares, setShares] = useState("");
   const [avgCost, setAvgCost] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => localIsoDate());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localIsoDate } from "../../domain/dates";
 import { Link } from "react-router-dom";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { usePortfolio } from "../../data/usePortfolio";
@@ -25,7 +26,7 @@ function clipSeries(series: SeriesPoint[], range: Range): SeriesPoint[] {
   if (series.length === 0) return series;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
-  const iso = cutoff.toISOString().slice(0, 10);
+  const iso = localIsoDate(cutoff);
   const clipped = series.filter((p) => p.date >= iso);
   // Never show an empty chart just because the window is narrower than the data.
   return clipped.length >= 2 ? clipped : series;

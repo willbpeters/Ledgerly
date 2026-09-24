@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { localIsoDate } from "../../domain/dates";
 import {
   useSecurities, useMarketNews, useMarketEarnings, useMarketProfiles,
   useMarketIndices, useLatestPrices, usePreviousPrices,
@@ -46,7 +47,7 @@ export function useMarketView() {
     const view = buildMarketView({
       securities, profiles, news, earnings, indices,
       holdings: value, dayChange,
-      today: new Date().toISOString().slice(0, 10),
+      today: localIsoDate(),
     });
     return { view, you: summary.dayChangePct };
   }, [securities, profiles, news, earnings, indices, latest, previous, holdings, summary]);

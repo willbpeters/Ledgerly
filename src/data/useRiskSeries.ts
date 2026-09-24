@@ -11,7 +11,7 @@ import type { Holding } from "../domain/types";
 export const RISK_YEARS = 2;
 
 function isoYearsAgo(years: number, now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   d.setUTCFullYear(d.getUTCFullYear() - years);
   return d.toISOString().slice(0, 10);
 }

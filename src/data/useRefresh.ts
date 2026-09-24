@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { keys } from "./queries";
+import { localIsoDate } from "../domain/dates";
 import { derivePortfolio } from "../domain/portfolio";
 
 export function useRefreshPrices() {
@@ -18,7 +19,7 @@ export function useRefreshPrices() {
         api.prices.latest(), api.prices.previous(), api.syncedHoldings.list(),
       ]);
       const { summary } = derivePortfolio({ txns, securities, accounts, latest, previous, synced });
-      await api.snapshots.record(new Date().toISOString().slice(0, 10), summary.totalValue);
+      await api.snapshots.record(localIsoDate(), summary.totalValue);
       await qc.invalidateQueries({ queryKey: keys.snapshots });
       return updated;
     },
