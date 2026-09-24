@@ -1,4 +1,5 @@
 mod db;
+mod http;
 mod models;
 mod commands;
 mod prices;

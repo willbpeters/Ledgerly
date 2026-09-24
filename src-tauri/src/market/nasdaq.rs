@@ -1,11 +1,9 @@
 //! HTTP for Nasdaq's earnings endpoints. Parsing lives in `nasdaq_parse`.
 use crate::market::nasdaq_parse::{parse_calendar, parse_surprise, ParsedEarnings};
-use crate::market::yahoo_news::UA;
 use chrono::Datelike;
 
 fn get(url: String) -> anyhow::Result<String> {
-    let client = reqwest::blocking::Client::builder().user_agent(UA).build()?;
-    Ok(client.get(url).send()?.text()?)
+    Ok(crate::http::client()?.get(url).send()?.text()?)
 }
 
 /// Every company reporting on one date. Callers intersect with held tickers;

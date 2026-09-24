@@ -3,9 +3,6 @@
 //! `simplefin::parse`.
 use crate::market::rss::{parse_feed, NewsItem};
 
-/// Yahoo rejects plain clients; the same UA the price provider uses works.
-pub const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ledgerly/0.1";
-
 pub fn feed_url(ticker: &str) -> String {
     format!(
         "https://feeds.finance.yahoo.com/rss/2.0/headline?s={}&region=US&lang=en-US",
@@ -23,8 +20,7 @@ pub struct YahooNews;
 
 impl NewsProvider for YahooNews {
     fn headlines(&self, ticker: &str) -> anyhow::Result<Vec<NewsItem>> {
-        let client = reqwest::blocking::Client::builder().user_agent(UA).build()?;
-        let body = client.get(feed_url(ticker)).send()?.text()?;
+        let body = crate::http::client()?.get(feed_url(ticker)).send()?.text()?;
         Ok(parse_feed(&body))
     }
 }

@@ -27,20 +27,14 @@ pub fn history_url(symbol: &str) -> String {
 /// Two years of daily closes for one index, oldest first. Run once, not on a
 /// timer: `fetch_closes` stays the 5-day call the market strip uses.
 pub fn fetch_history(symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(crate::market::yahoo_news::UA)
-        .build()?;
-    let body = client.get(history_url(symbol)).send()?.text()?;
+    let body = crate::http::client()?.get(history_url(symbol)).send()?.text()?;
     Ok(crate::prices::yahoo::parse_chart_json(&body))
 }
 
 /// Fetch the last few daily closes for one index, oldest first.
 pub fn fetch_closes(symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(crate::market::yahoo_news::UA)
-        .build()?;
     let url = crate::prices::yahoo::chart_url(symbol, crate::prices::yahoo::RECENT_RANGE);
-    let body = client.get(url).send()?.text()?;
+    let body = crate::http::client()?.get(url).send()?.text()?;
     Ok(crate::prices::yahoo::parse_chart_json(&body))
 }
 

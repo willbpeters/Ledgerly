@@ -23,10 +23,7 @@ pub struct YahooProvider;
 
 impl YahooProvider {
     fn fetch(&self, ticker: &str, range: &str) -> anyhow::Result<Vec<(String, f64)>> {
-        let client = reqwest::blocking::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ledgerly/0.1")
-            .build()?;
-        let body = client.get(yahoo::chart_url(ticker, range)).send()?.text()?;
+        let body = crate::http::client()?.get(yahoo::chart_url(ticker, range)).send()?.text()?;
         Ok(yahoo::parse_chart_json(&body))
     }
 }
@@ -50,7 +47,7 @@ pub struct StooqProvider;
 impl PriceProvider for StooqProvider {
     fn recent(&self, ticker: &str) -> anyhow::Result<Vec<(String, f64)>> {
         let url = stooq::daily_url(ticker);
-        let body = reqwest::blocking::get(url)?.text()?;
+        let body = crate::http::client()?.get(url).send()?.text()?;
         Ok(stooq::parse_daily_csv(&body))
     }
     fn name(&self) -> &'static str { "stooq" }

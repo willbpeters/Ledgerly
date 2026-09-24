@@ -160,9 +160,9 @@ pub fn check_fetched(symbol: &str, closes: &[(String, f64)]) -> Result<(), Strin
 /// timer — the ordinary market refresh keeps the last few days current.
 ///
 /// The fetch happens before the lock is taken. `Db` is one mutex shared by
-/// every command in the app and none of our HTTP calls set a timeout, so
-/// holding it across a download would freeze every other screen for as long
-/// as Yahoo takes to answer.
+/// every command in the app, so holding it across a download would freeze
+/// every other screen for as long as Yahoo takes to answer — up to
+/// `http::REQUEST_TIMEOUT`.
 pub fn backfill_benchmark(db: &crate::db::Db) -> Result<usize, String> {
     let closes = indices::fetch_history(indices::BENCHMARK).map_err(|e| e.to_string())?;
     check_fetched(indices::BENCHMARK, &closes)?;

@@ -50,10 +50,7 @@ pub fn parse_profile(body: &str, ticker: &str) -> Option<ParsedProfile> {
 
 /// Fetch one security's profile. Separate from parsing so parsing stays pure.
 pub fn fetch_profile(ticker: &str) -> anyhow::Result<Option<ParsedProfile>> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(crate::market::yahoo_news::UA)
-        .build()?;
-    let body = client.get(search_url(ticker)).send()?.text()?;
+    let body = crate::http::client()?.get(search_url(ticker)).send()?.text()?;
     Ok(parse_profile(&body, ticker))
 }
 
