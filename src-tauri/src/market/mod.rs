@@ -10,6 +10,7 @@ pub mod rss;
 pub mod store;
 pub mod yahoo_news;
 
+use crate::db::Db;
 use rusqlite::Connection;
 use serde::Serialize;
 use yahoo_news::{NewsProvider, YahooNews};
@@ -60,72 +61,141 @@ pub fn news_targets(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
         .collect())
 }
 
+/// Everything the market refresh downloads, behind one trait so a test can
+/// stand in for the network — and check the database is free while it does.
+pub trait MarketSource {
+    fn profile(&self, ticker: &str) -> anyhow::Result<Option<profile::ParsedProfile>>;
+    fn headlines(&self, ticker: &str) -> anyhow::Result<Vec<rss::NewsItem>>;
+    fn earnings_calendar(&self, date: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>>;
+    fn earnings_surprise(&self, ticker: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>>;
+    fn index_closes(&self, symbol: &str) -> anyhow::Result<Vec<(String, f64)>>;
+}
+
+/// The real sources: Yahoo for profiles, news and indices; Nasdaq for earnings.
+pub struct LiveSource;
+
+impl MarketSource for LiveSource {
+    fn profile(&self, ticker: &str) -> anyhow::Result<Option<profile::ParsedProfile>> {
+        profile::fetch_profile(ticker)
+    }
+    fn headlines(&self, ticker: &str) -> anyhow::Result<Vec<rss::NewsItem>> {
+        YahooNews.headlines(ticker)
+    }
+    fn earnings_calendar(&self, date: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>> {
+        nasdaq::calendar_for(date)
+    }
+    fn earnings_surprise(&self, ticker: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>> {
+        nasdaq::surprise_for(ticker)
+    }
+    fn index_closes(&self, symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
+        indices::fetch_closes(symbol)
+    }
+}
+
+fn lock(db: &Db) -> std::sync::MutexGuard<'_, Connection> {
+    db.0.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Refresh everything. Each ticker is isolated, as `simplefin::sync` isolates
 /// each account: one failure is recorded and the rest carry on.
-pub fn refresh_all(conn: &Connection) -> MarketRefreshReport {
+///
+/// The database is locked only to read what to fetch and to store what came
+/// back — never across a download. `Db` is one mutex shared by every command,
+/// so holding it through twenty-odd requests froze every other screen for the
+/// length of the refresh.
+pub fn refresh_all(db: &Db, src: &dyn MarketSource) -> MarketRefreshReport {
     let mut report = MarketRefreshReport::default();
     let now = chrono::Utc::now().to_rfc3339();
 
     // Profiles first: they decide which securities get news at all. A profile
     // barely changes, so it is refetched weekly — refetching all of them on
     // every 30-minute news poll would multiply the request budget for nothing.
-    match store::tracked_securities(conn) {
-        Ok(held) => {
-            for (id, ticker) in held {
-                let fresh = match store::profile_updated_at(conn, id) {
-                    Ok(Some(t)) => age_days(&t, &now) < PROFILE_MAX_AGE_DAYS,
-                    _ => false,
-                };
-                if fresh {
-                    continue;
-                }
-                match profile::fetch_profile(&ticker) {
-                    Ok(Some(p)) => {
-                        if store::upsert_profile(conn, id, &p, &now).is_ok() {
-                            report.profiles_updated += 1;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => report.errors.push(format!("{ticker} profile: {e}")),
-                }
+    let stale_profiles: Vec<(i64, String)> = {
+        let conn = lock(db);
+        match store::tracked_securities(&conn) {
+            Ok(held) => held
+                .into_iter()
+                .filter(|(id, _)| match store::profile_updated_at(&conn, *id) {
+                    Ok(Some(t)) => age_days(&t, &now) >= PROFILE_MAX_AGE_DAYS,
+                    _ => true,
+                })
+                .collect(),
+            Err(e) => {
+                report.errors.push(format!("held securities: {e}"));
+                Vec::new()
             }
         }
-        Err(e) => report.errors.push(format!("held securities: {e}")),
-    }
-
-    match news_targets(conn) {
-        Ok(targets) => {
-            for (id, ticker) in targets {
-                match YahooNews.headlines(&ticker) {
-                    Ok(items) => match store::upsert_news(conn, id, &items, &now) {
-                        Ok(n) => report.news_added += n,
-                        Err(e) => report.errors.push(format!("{ticker} news store: {e}")),
-                    },
-                    Err(e) => report.errors.push(format!("{ticker} news: {e}")),
-                }
-            }
-        }
-        Err(e) => report.errors.push(format!("news targets: {e}")),
-    }
-
-    // Earnings move once a quarter, so once a day is plenty. This is the
-    // difference between roughly 6 requests per poll and roughly 27.
-    let earnings_stale = match store::earnings_last_updated(conn) {
-        Ok(Some(t)) => age_days(&t, &now) >= EARNINGS_MAX_AGE_DAYS,
-        _ => true,
     };
-    if earnings_stale {
-        report.earnings_updated = refresh_earnings(conn, &now, &mut report.errors);
+    let profiles: Vec<_> = stale_profiles
+        .into_iter()
+        .map(|(id, ticker)| {
+            let fetched = src.profile(&ticker);
+            (id, ticker, fetched)
+        })
+        .collect();
+
+    let (targets, earnings_stale) = {
+        let conn = lock(db);
+        for (id, ticker, fetched) in profiles {
+            match fetched {
+                Ok(Some(p)) => {
+                    if store::upsert_profile(&conn, id, &p, &now).is_ok() {
+                        report.profiles_updated += 1;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => report.errors.push(format!("{ticker} profile: {e}")),
+            }
+        }
+        let targets = news_targets(&conn).unwrap_or_else(|e| {
+            report.errors.push(format!("news targets: {e}"));
+            Vec::new()
+        });
+        // Earnings move once a quarter, so once a day is plenty. This is the
+        // difference between roughly 6 requests per poll and roughly 27.
+        let earnings_stale = match store::earnings_last_updated(&conn) {
+            Ok(Some(t)) => age_days(&t, &now) >= EARNINGS_MAX_AGE_DAYS,
+            _ => true,
+        };
+        (targets, earnings_stale)
+    };
+
+    let headlines: Vec<_> = targets
+        .iter()
+        .map(|(id, ticker)| (*id, ticker, src.headlines(ticker)))
+        .collect();
+    {
+        let conn = lock(db);
+        for (id, ticker, fetched) in headlines {
+            match fetched {
+                Ok(items) => match store::upsert_news(&conn, id, &items, &now) {
+                    Ok(n) => report.news_added += n,
+                    Err(e) => report.errors.push(format!("{ticker} news store: {e}")),
+                },
+                Err(e) => report.errors.push(format!("{ticker} news: {e}")),
+            }
+        }
     }
 
-    for (symbol, _) in indices::INDICES {
-        match indices::fetch_closes(symbol) {
-            Ok(closes) => {
-                if store::upsert_index_closes(conn, symbol, &closes).is_ok() {
-                    report.indices_updated += 1;
+    if earnings_stale {
+        report.earnings_updated = refresh_earnings(db, src, &targets, &now, &mut report.errors);
+    }
+
+    let closes: Vec<_> = indices::INDICES
+        .iter()
+        .map(|(symbol, _)| (*symbol, src.index_closes(symbol)))
+        .collect();
+    {
+        let conn = lock(db);
+        for (symbol, fetched) in closes {
+            match fetched {
+                Ok(closes) => {
+                    if store::upsert_index_closes(&conn, symbol, &closes).is_ok() {
+                        report.indices_updated += 1;
+                    }
                 }
+                Err(e) => report.errors.push(format!("{symbol}: {e}")),
             }
-            Err(e) => report.errors.push(format!("{symbol}: {e}")),
         }
     }
 
@@ -173,22 +243,26 @@ pub fn backfill_benchmark(db: &crate::db::Db) -> Result<usize, String> {
 /// The calendar is fetched by date for the whole market and intersected with
 /// held tickers locally — one request per day rather than one per holding.
 /// Per-company surprise is then fetched only for companies actually held.
-fn refresh_earnings(conn: &Connection, now: &str, errors: &mut Vec<String>) -> usize {
-    let Ok(targets) = news_targets(conn) else { return 0 };
+/// Everything is downloaded before the lock is taken, as in `refresh_all`.
+fn refresh_earnings(
+    db: &Db,
+    src: &dyn MarketSource,
+    targets: &[(i64, String)],
+    now: &str,
+    errors: &mut Vec<String>,
+) -> usize {
     if targets.is_empty() {
         return 0;
     }
-    let mut updated = 0usize;
 
+    let mut calendar: Vec<(i64, nasdaq_parse::ParsedEarnings)> = Vec::new();
     let today = chrono::Utc::now().date_naive();
     for date in nasdaq::upcoming_weekdays(today, CALENDAR_DAYS) {
-        match nasdaq::calendar_for(&date) {
+        match src.earnings_calendar(&date) {
             Ok(rows) => {
-                for (id, ticker) in &targets {
+                for (id, ticker) in targets {
                     for row in rows.iter().filter(|r| &r.symbol == ticker) {
-                        if let Ok(n) = store::upsert_earnings(conn, *id, std::slice::from_ref(row), now) {
-                            updated += n;
-                        }
+                        calendar.push((*id, row.clone()));
                     }
                 }
             }
@@ -196,13 +270,27 @@ fn refresh_earnings(conn: &Connection, now: &str, errors: &mut Vec<String>) -> u
         }
     }
 
-    for (id, ticker) in &targets {
-        match nasdaq::surprise_for(ticker) {
-            Ok(rows) => match store::upsert_earnings(conn, *id, &rows, now) {
-                Ok(n) => updated += n,
-                Err(e) => errors.push(format!("{ticker} earnings store: {e}")),
-            },
+    let mut surprises = Vec::new();
+    for (id, ticker) in targets {
+        match src.earnings_surprise(ticker) {
+            Ok(rows) => surprises.push((*id, ticker, rows)),
             Err(e) => errors.push(format!("{ticker} surprise: {e}")),
+        }
+    }
+
+    // Calendar rows before surprise rows, as before: `upsert_earnings`
+    // COALESCEs the actual, so the order decides nothing is overwritten.
+    let conn = lock(db);
+    let mut updated = 0usize;
+    for (id, row) in &calendar {
+        if let Ok(n) = store::upsert_earnings(&conn, *id, std::slice::from_ref(row), now) {
+            updated += n;
+        }
+    }
+    for (id, ticker, rows) in surprises {
+        match store::upsert_earnings(&conn, id, &rows, now) {
+            Ok(n) => updated += n,
+            Err(e) => errors.push(format!("{ticker} earnings store: {e}")),
         }
     }
     updated
@@ -303,6 +391,117 @@ mod tests {
         };
         store::upsert_profile(&conn, 1, &etf, "2026-09-10T00:00:00Z").unwrap();
         assert!(news_targets(&conn).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    use crate::db::{self, Db};
+    use nasdaq_parse::ParsedEarnings;
+    use rss::NewsItem;
+    use std::cell::Cell;
+
+    /// Answers every fetch with canned data, and notes whether the database
+    /// lock was held at the moment it was asked — the thing that froze every
+    /// other screen for the length of a refresh.
+    struct Fake<'a> {
+        db: &'a Db,
+        lock_was_held: Cell<bool>,
+        calls: Cell<usize>,
+    }
+
+    impl Fake<'_> {
+        fn fetching(&self) {
+            self.calls.set(self.calls.get() + 1);
+            if self.db.0.try_lock().is_err() {
+                self.lock_was_held.set(true);
+            }
+        }
+    }
+
+    fn earnings(date: &str, actual: Option<f64>) -> ParsedEarnings {
+        ParsedEarnings {
+            symbol: "MU".into(), fiscal_period: None, report_date: date.into(),
+            eps_actual: actual, eps_estimate: Some(1.0), estimate_count: None,
+        }
+    }
+
+    impl MarketSource for Fake<'_> {
+        fn profile(&self, _ticker: &str) -> anyhow::Result<Option<profile::ParsedProfile>> {
+            self.fetching();
+            Ok(Some(profile::ParsedProfile {
+                long_name: Some("Micron".into()), sector: Some("Technology".into()),
+                quote_type: Some("EQUITY".into()),
+            }))
+        }
+        fn headlines(&self, _ticker: &str) -> anyhow::Result<Vec<NewsItem>> {
+            self.fetching();
+            Ok(vec![NewsItem {
+                guid: "g1".into(), title: "Micron news".into(), summary: String::new(),
+                url: "https://example.com/a".into(), published: "2026-09-10T00:00:00Z".into(),
+            }])
+        }
+        fn earnings_calendar(&self, date: &str) -> anyhow::Result<Vec<ParsedEarnings>> {
+            self.fetching();
+            Ok(vec![earnings(date, None)])
+        }
+        fn earnings_surprise(&self, _ticker: &str) -> anyhow::Result<Vec<ParsedEarnings>> {
+            self.fetching();
+            Ok(vec![earnings("2026-06-25", Some(1.2))])
+        }
+        fn index_closes(&self, _symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
+            self.fetching();
+            Ok(vec![("2026-09-09".into(), 100.0), ("2026-09-10".into(), 101.0)])
+        }
+    }
+
+    fn db_holding_mu() -> Db {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
+             VALUES ('B','brokerage','USD','2026-01-01','simplefin','x')", []).unwrap();
+        conn.execute("INSERT INTO securities (ticker,type,currency) VALUES ('MU','stock','USD')", []).unwrap();
+        conn.execute(
+            "INSERT INTO synced_holdings (account_id,security_id,shares,cost_basis,market_value,as_of)
+             VALUES (1,1,10,100,120,'2026-09-10')", []).unwrap();
+        Db(std::sync::Mutex::new(conn))
+    }
+
+    #[test]
+    fn the_database_is_never_locked_while_the_refresh_is_downloading() {
+        let db = db_holding_mu();
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0) };
+        refresh_all(&db, &fake);
+        assert!(fake.calls.get() > 0, "the fake must actually have been asked");
+        assert!(!fake.lock_was_held.get(), "a download ran with the database locked");
+    }
+
+    #[test]
+    fn a_refresh_stores_everything_it_fetched() {
+        let db = db_holding_mu();
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0) };
+        let report = refresh_all(&db, &fake);
+        assert_eq!(report.profiles_updated, 1);
+        assert_eq!(report.news_added, 1);
+        assert_eq!(report.indices_updated, indices::INDICES.len());
+        assert!(report.earnings_updated > 0);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+    }
+
+    #[test]
+    fn a_second_refresh_skips_profiles_and_earnings_that_are_still_fresh() {
+        let db = db_holding_mu();
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0) };
+        refresh_all(&db, &fake);
+        fake.calls.set(0);
+
+        let report = refresh_all(&db, &fake);
+
+        assert_eq!(report.profiles_updated, 0, "profiles are refetched weekly");
+        assert_eq!(report.earnings_updated, 0, "earnings are refetched daily");
+        // What remains per poll: one news feed and the three indices.
+        assert_eq!(fake.calls.get(), 1 + indices::INDICES.len());
     }
 }
 

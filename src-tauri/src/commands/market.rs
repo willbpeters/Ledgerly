@@ -30,12 +30,11 @@ pub fn market_indices(db: tauri::State<Db>) -> Result<Vec<store::IndexQuote>, St
     store::list_index_quotes(&conn).map_err(|e| e.to_string())
 }
 
-/// A full refresh. Holds the database lock for the duration, which is fine
-/// because it is driven by the screen's own timer, never by a render.
+/// A full refresh. Takes the database lock only to read and to store, never
+/// across a download — see `market::refresh_all`.
 #[tauri::command]
 pub fn market_refresh(db: tauri::State<Db>) -> Result<market::MarketRefreshReport, String> {
-    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    Ok(market::refresh_all(&conn))
+    Ok(market::refresh_all(&db, &market::LiveSource))
 }
 
 /// Two years of benchmark closes, oldest first, as (date, close).
