@@ -1,7 +1,7 @@
 # Ledgerly — Handoff & Next Steps
 
-**Last updated:** 2026-09-11
-**Repo:** `C:\Users\willi\Dev\FinTech` → GitHub `willbpeters/Ledgerly` (private), branch `master`
+**Last updated:** 2026-09-24
+**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (private), branch `master`
 
 ## What this project is
 
@@ -20,8 +20,9 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 126 TypeScript (Vitest) + 89 Rust (`cargo test`), plus 4 tests marked
-  `#[ignore]` that touch the network or the OS credential store — all passing.
+- **Tests:** 246 TypeScript (Vitest) + 154 Rust (`cargo test`), plus 8 tests marked
+  `#[ignore]` that touch the network or the OS credential store — all passing
+  as of 2026-09-24. Run the live ones with `cargo test --lib live_ -- --ignored`.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
 
@@ -111,6 +112,27 @@ budgeting and spending module.
   open decision #1.
 - **Price polling backed off** from 5s to 60s and paused when hidden (above).
 
+### Review fixes (2026-09-24)
+A full project review found three money bugs and a freeze. All fixed on
+`master`, each with a test that failed first:
+- **Realized gains survive selling a whole position.** `derivePortfolio` now
+  sums realized over every *position*, not over `holdings` — `holdings` drops
+  zero-share rows, which erased the profit of anything sold out.
+- **"Today" is the local date.** `localIsoDate()` in `src/domain/dates.ts`
+  replaces `toISOString().slice(0, 10)`, which is UTC and on Pacific time was
+  already tomorrow from 5pm: snapshots were stored a day ahead and the forms
+  defaulted to tomorrow. Snapshots recorded in the evening before this fix
+  still carry the next day's date.
+- **An oversell no longer invents cash.** `clampOversells()` in
+  `src/domain/positions.ts` cuts each sell to the shares held; both
+  `derivePortfolio` and `reconstructSeries` read the clamped list, so cash,
+  positions and the value chart agree (previously cash credited the whole sell
+  and the chart let shares go negative).
+- **Network work no longer freezes the window.** Every Yahoo/Nasdaq request
+  has a 15s timeout (`src-tauri/src/http.rs`); `market_refresh` no longer holds
+  the database lock across its downloads; and the seven network commands are
+  `async` and run on a worker thread via `commands::off_main_thread`.
+
 ## Architecture — keep these seams intact
 
 1. **Rust core** (`src-tauri/src/`) — the only layer doing I/O. Owns SQLite
@@ -140,6 +162,36 @@ a hidden manual account's transactions still counting toward cash, because
 pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Gotchas worth knowing
+
+- **`cargo` is not on PATH on this machine.** Rust *is* installed
+  (`C:\Users\willi\.cargo\bin`, stable MSVC toolchain, VS 2022 Build Tools),
+  but that folder is missing from the user PATH, so `cargo` and
+  `npm run tauri dev` fail in a fresh terminal. Either add it permanently:
+  `[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";C:\Users\willi\.cargo\bin", "User")`
+  or prefix a session with `$env:Path = "C:\Users\willi\.cargo\bin;" + $env:Path`.
+- **Never use `toISOString().slice(0, 10)` for "today".** It is the UTC date.
+  Use `localIsoDate()`. UTC is still right for *shifting* an ISO date by whole
+  days (`shiftDays` in `history.ts` and `market.ts`), which is why those stay.
+- **Network commands must be `async` and never hold the lock across a
+  download.** A plain `fn` command runs on the main thread, which draws the
+  window. New network commands take `app: tauri::AppHandle`, wrap their work
+  in `super::off_main_thread(move || ...)`, and read the database with
+  `app.state::<Db>()`. Inside, fetch first and lock only to read or store — see
+  `market::refresh_all`, whose test fails if any fetch runs while locked.
+- **Build HTTP clients with `crate::http::client()`**, never
+  `reqwest::blocking::Client::builder()` directly: it sets the browser-like
+  User-Agent Yahoo needs and the 15s timeout. SimpleFIN keeps its own client
+  (45s timeout, its own UA) in `simplefin/client.rs`.
+- **Market fetchers sit behind the `MarketSource` trait** (`LiveSource` is the
+  real one). Add a new market fetch to the trait rather than calling HTTP from
+  `refresh_all`, so the lock test keeps covering it.
+- **Refreshes can now overlap** (e.g. the price timer and a manual Sync). This
+  is safe because every write is an upsert; keep it that way.
+- **An oversell is cut once, at the top of the derivation** — pass
+  transactions through `clampOversells()` before any new cash or share maths,
+  or it will disagree with the dashboard.
+- **PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM.** Edit source
+  files with an editor or Git Bash tools instead.
 
 - **Yahoo's `quoteSummary` endpoint is dead to us.** It answers
   `401 Invalid Crumb` to any plain HTTP client — the same anti-bot pattern that
@@ -256,8 +308,41 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Remaining work
 
-Each item below should get its own **spec → plan → implement** cycle rather than
-being bolted on ad hoc. Suggested order:
+Features below get their own **spec → plan → implement** cycle rather than
+being bolted on ad hoc. The first block came out of the 2026-09-24 review and
+is ordered by how much it protects the owner's data; smaller items can go
+straight to TDD.
+
+**Next up (from the review):**
+
+A. **Backup & export** — *start here.* Everything lives in one unencrypted
+   SQLite file, and the only backup is the old `finance.sqlite.backup-pre-v2`.
+   Wanted: a "Back up now" button in Settings, an automatic dated copy before
+   every migration and on launch (keep the last N), and a CSV/JSON export.
+   Use SQLite's online backup API (`rusqlite` `backup` feature) rather than a
+   file copy, so a backup taken mid-write is still consistent.
+B. **CSV import de-duplication** — importing the same file twice doubles the
+   holdings. Detect rows already present (same account, date, type, security,
+   quantity, price) in the preview step and skip them by default.
+C. **Edit a transaction** — only create/delete exist today (`transactions_*`
+   commands, Activity screen), so a typo means delete and re-enter.
+D. **Stock splits** — there is no `split` transaction type, so a split breaks
+   share count and average cost. Needs a v6 migration widening the
+   `transactions.type` CHECK (a table rebuild, like v3) and a branch in
+   `buildPositions` / `clampOversells` / `reconstructSeries`.
+E. **CI** — no `.github/workflows` yet. A GitHub Action on push running
+   `npm test`, `npx tsc --noEmit` and `cargo test` on `windows-latest`.
+F. **Hardening / tidy-up:** `"csp": null` in `tauri.conf.json` disables the
+   content security policy while the app renders third-party headlines — set
+   a real CSP. `Cargo.toml` still says `name = "fintech-scaffold"`,
+   `authors = ["you"]` (renaming the crate also renames `fintech_scaffold_lib`
+   in `main.rs`). Two component tests time out when the machine is busy
+   (seen in `Activity.test.tsx`); raise their timeout or make them cheaper.
+   Stooq's unused `parse_daily_csv` / `daily_url` warn on every build.
+G. **Dividends in returns** — dividends add cash but count toward no gain
+   figure. Fold into the XIRR/TWR work (item 6 below).
+
+**Roadmap (unchanged in intent):**
 
 0. **Local model summaries for the Markets screen** — an optional Ollama
    integration that reads `news_items` plus current positions and writes a
@@ -268,10 +353,14 @@ being bolted on ad hoc. Suggested order:
    the risk module already does. Ollama stays an *optional* dependency,
    detected on localhost: no Ollama, no summary panel, everything else
    unaffected. See the follow-on section of the Markets spec.
+   The review suggests doing item 2 (encryption) before this one: it is
+   financial data, and a summary panel is a nice-to-have.
 1. **SimpleFIN scheduled auto-sync** — sync is manual today. A timer alongside
-   the price auto-refresh would do it.
+   the price auto-refresh would do it. `simplefin_sync` is now async, so a
+   timer-driven sync no longer freezes the window.
 2. **Encrypted database (SQLCipher) + app lock** — Windows Hello / passkey /
-   master password, with an auto-lock timeout.
+   master password, with an auto-lock timeout. Do backup (A) first, and make
+   the backup encrypted too once this lands.
 3. **Holding detail drill-down** — a per-holding view showing individual lots.
    This is in the design spec but was scoped out of v1.
 4. **Crypto and manual/other asset types** (real estate, private assets).
@@ -281,10 +370,11 @@ being bolted on ad hoc. Suggested order:
    volatility versus `^GSPC`) are done. Specs:
    `docs/superpowers/specs/2026-09-08-risk-analytics-design.md` and
    `docs/superpowers/specs/2026-09-11-alpha-vs-benchmark-design.md`
-6. **Advanced returns** (XIRR / time-weighted return, benchmarks) and
-   **historical backfill** for the value-over-time chart (today it only builds
-   forward from daily snapshots).
-6. **Multi-currency** (v1 is USD-only).
+6. **Advanced returns** (XIRR / time-weighted return, benchmarks), including
+   dividends. The value-over-time chart is already rebuilt from transactions
+   and prices by `reconstructSeries`, but only ~90 days back (SimpleFIN's
+   transaction limit — see `HISTORY_DAYS`); manual accounts could go further.
+7. **Multi-currency** (v1 is USD-only).
 
 ## Reference documents
 
