@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
+import { MIN_HISTORY_DAYS } from "../domain/risk";
 
 export const keys = {
   accounts: ["accounts"] as const,
@@ -36,7 +37,9 @@ export const useSimplefinStatus = () => useQuery({ queryKey: keys.simplefin, que
  *  user stopped sharing, which cascades away its transactions, so the
  *  transaction lists are refreshed too. */
 function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
-  for (const k of [keys.accounts, keys.securities, keys.synced, keys.latest, keys.previous, keys.simplefin, keys.transactions]) {
+  // historyDepth too: a newly synced holding has no price history, and the
+  // depth dropping is what tells usePriceHistory to fetch it.
+  for (const k of [keys.accounts, keys.securities, keys.synced, keys.latest, keys.previous, keys.simplefin, keys.transactions, keys.historyDepth]) {
     qc.invalidateQueries({ queryKey: k });
   }
   qc.invalidateQueries({ queryKey: ["bankTxns"] });
@@ -75,12 +78,11 @@ export const usePriceHistoryRows = (from: string) =>
 export function useBackfillPrices() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.prices.backfill(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.historyDepth });
-      qc.invalidateQueries({ queryKey: keys.latest });
-      qc.invalidateQueries({ queryKey: keys.previous });
-    },
+    mutationFn: () => api.prices.backfill(MIN_HISTORY_DAYS),
+    // Every "prices" query, the chart's history rows included: invalidating only
+    // depth and the latest closes left the chart showing its empty state until
+    // something else happened to refetch it.
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["prices"] }); },
   });
 }
 export function useCreateAccount() {

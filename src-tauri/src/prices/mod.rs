@@ -81,15 +81,22 @@ pub fn refresh_all(db: &Db, provider: &dyn PriceProvider) -> Result<usize, Strin
     Ok(updated)
 }
 
-/// Store the full daily history for every security. Unlike `refresh_all` this
-/// keeps every close it is given, which is what the risk maths needs; it is one
-/// request per security, same as a refresh, so it is run rarely rather than on
-/// the polling timer. Safe to re-run: prices upsert on (security_id, date).
-pub fn backfill_all(db: &Db, provider: &dyn PriceProvider) -> Result<usize, String> {
+/// Store the full daily history for every security with fewer than `min_days`
+/// closes. Unlike `refresh_all` this keeps every close it is given, which is
+/// what the risk maths and the value chart need. Securities that already have
+/// their history are skipped, so a newly synced holding costs one request,
+/// not one per holding. Run rarely rather than on the polling timer. Safe to
+/// re-run: prices upsert on (security_id, date).
+pub fn backfill_all(db: &Db, provider: &dyn PriceProvider, min_days: i64) -> Result<usize, String> {
     let tickers: Vec<(i64, String)> = {
         let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id, ticker FROM securities").map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, ticker FROM securities s
+                 WHERE (SELECT count(*) FROM prices p WHERE p.security_id = s.id) < ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([min_days], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
     };
@@ -149,24 +156,57 @@ mod tests {
         assert_eq!(price_count(&db), 2, "the 60s refresh must stay cheap");
     }
 
+    /// Any threshold above the fake history's length, so nothing is skipped.
+    const ALWAYS: i64 = 200;
+
     #[test]
     fn backfill_stores_the_whole_history() {
         let db = db_with_one_security();
-        backfill_all(&db, &FakeProvider).unwrap();
+        backfill_all(&db, &FakeProvider, ALWAYS).unwrap();
         assert_eq!(price_count(&db), DAYS.len() as i64);
     }
 
     #[test]
     fn backfill_can_be_run_again_without_duplicating_rows() {
         let db = db_with_one_security();
-        backfill_all(&db, &FakeProvider).unwrap();
-        backfill_all(&db, &FakeProvider).unwrap();
+        backfill_all(&db, &FakeProvider, ALWAYS).unwrap();
+        backfill_all(&db, &FakeProvider, ALWAYS).unwrap();
         assert_eq!(price_count(&db), DAYS.len() as i64);
     }
 
     #[test]
     fn backfill_reports_how_many_securities_it_filled() {
         let db = db_with_one_security();
-        assert_eq!(backfill_all(&db, &FakeProvider).unwrap(), 1);
+        assert_eq!(backfill_all(&db, &FakeProvider, ALWAYS).unwrap(), 1);
+    }
+
+    /// Remembers which tickers it was asked for.
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl PriceProvider for Recording {
+        fn recent(&self, t: &str) -> anyhow::Result<Vec<(String, f64)>> {
+            self.0.borrow_mut().push(t.to_string());
+            Ok(DAYS.iter().map(|(d, c)| (d.to_string(), *c)).collect())
+        }
+        fn name(&self) -> &'static str { "recording" }
+    }
+
+    #[test]
+    fn backfill_downloads_only_securities_still_missing_their_history() {
+        // Re-downloading two years for every holding each time one new holding
+        // arrives would spend the politeness budget that cost us Stooq.
+        let db = db_with_one_security();
+        {
+            let conn = db.0.lock().unwrap();
+            let vti: i64 = conn.query_row("SELECT id FROM securities WHERE ticker='VTI'", [], |r| r.get(0)).unwrap();
+            for (date, close) in DAYS {
+                upsert(&conn, vti, date, *close, "test").unwrap();
+            }
+            conn.execute("INSERT INTO securities (ticker,type) VALUES ('NEW','etf')", []).unwrap();
+        }
+        let provider = Recording(std::cell::RefCell::new(Vec::new()));
+
+        backfill_all(&db, &provider, DAYS.len() as i64).unwrap();
+
+        assert_eq!(*provider.0.borrow(), vec!["NEW".to_string()]);
     }
 }

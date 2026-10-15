@@ -76,32 +76,116 @@ pub async fn prices_refresh(app: tauri::AppHandle) -> Result<usize, String> {
     .await
 }
 
-/// Download the full daily history for every security. Run rarely — see
-/// `backfill_all`.
+/// Download the full daily history for every security with fewer than
+/// `min_days` closes. Run rarely — see `backfill_all`.
 #[tauri::command]
-pub async fn prices_backfill(app: tauri::AppHandle) -> Result<usize, String> {
+pub async fn prices_backfill(app: tauri::AppHandle, min_days: i64) -> Result<usize, String> {
     super::off_main_thread(move || {
-        crate::prices::backfill_all(&app.state::<Db>(), &crate::prices::YahooProvider)
+        crate::prices::backfill_all(&app.state::<Db>(), &crate::prices::YahooProvider, min_days)
     })
     .await
 }
 
-/// How many days of history the best-covered security has. The frontend uses
-/// this to decide whether a backfill is needed, so it is not re-downloaded on
-/// every launch.
+/// How many days of history the *least*-covered holding has. The frontend
+/// backfills when this is short, so it is not re-downloaded on every launch.
+///
+/// The least-covered, not the best: asking about the best meant that once the
+/// first holdings had two years, a holding added later — a newly synced
+/// account — never got any, and the value chart, which skips any day a
+/// holding cannot be priced, went blank. Only securities actually held count,
+/// so a long-sold ticker cannot keep asking for downloads.
+pub fn history_depth(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COALESCE(MIN((SELECT count(*) FROM prices p WHERE p.security_id = held.id)), 0)
+         FROM (SELECT security_id AS id FROM synced_holdings
+               UNION
+               SELECT security_id FROM transactions
+               WHERE security_id IS NOT NULL AND type IN ('buy','sell')) held",
+        [],
+        |r| r.get(0),
+    )
+}
+
 #[tauri::command]
 pub fn prices_history_depth(db: tauri::State<Db>) -> Result<i64, String> {
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    conn.query_row(
-        "SELECT COALESCE(MAX(n), 0) FROM (SELECT count(*) n FROM prices GROUP BY security_id)",
-        [], |r| r.get(0),
-    ).map_err(|e| e.to_string())
+    history_depth(&conn).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db;
+
+    /// A security with `closes` consecutive daily closes, returning its id.
+    fn security_with_closes(conn: &Connection, ticker: &str, closes: u32) -> i64 {
+        conn.execute("INSERT INTO securities (ticker,type) VALUES (?1,'etf')", [ticker]).unwrap();
+        let sid = conn.last_insert_rowid();
+        let start = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        for d in 0..closes {
+            let date = (start + chrono::Duration::days(d as i64)).format("%Y-%m-%d").to_string();
+            upsert(conn, sid, &date, 100.0, "test").unwrap();
+        }
+        sid
+    }
+
+    fn account(conn: &Connection) -> i64 {
+        conn.execute("INSERT INTO accounts (name,type,created_at) VALUES ('Brokerage','brokerage','2026-10-14')", []).unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn hold_synced(conn: &Connection, account: i64, sid: i64) {
+        conn.execute(
+            "INSERT INTO synced_holdings (account_id,security_id,shares,cost_basis,market_value,as_of)
+             VALUES (?1,?2,1,100,100,'2026-10-14')",
+            [account, sid],
+        ).unwrap();
+    }
+
+    #[test]
+    fn depth_is_the_shallowest_holding_so_a_new_one_triggers_a_download() {
+        // The bug this pins: a newly synced holding with one close sat beside
+        // two years of others, and depth reported the two years.
+        let conn = db::open_in_memory().unwrap();
+        let acct = account(&conn);
+        let old = security_with_closes(&conn, "SWPPX", 300);
+        let new = security_with_closes(&conn, "SFNNX", 1);
+        hold_synced(&conn, acct, old);
+        hold_synced(&conn, acct, new);
+        assert_eq!(history_depth(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_manual_holding_counts_too() {
+        let conn = db::open_in_memory().unwrap();
+        let acct = account(&conn);
+        let sid = security_with_closes(&conn, "VTI", 5);
+        conn.execute(
+            "INSERT INTO transactions (account_id,security_id,type,date,quantity,price,amount)
+             VALUES (?1,?2,'buy','2026-10-01',1,100,100)",
+            [acct, sid],
+        ).unwrap();
+        assert_eq!(history_depth(&conn).unwrap(), 5);
+    }
+
+    #[test]
+    fn a_security_nobody_holds_does_not_hold_the_depth_down() {
+        let conn = db::open_in_memory().unwrap();
+        let acct = account(&conn);
+        let held = security_with_closes(&conn, "SWPPX", 300);
+        security_with_closes(&conn, "SOLD", 1);
+        hold_synced(&conn, acct, held);
+        assert_eq!(history_depth(&conn).unwrap(), 300);
+    }
+
+    #[test]
+    fn a_holding_with_no_prices_at_all_reads_as_zero() {
+        let conn = db::open_in_memory().unwrap();
+        let acct = account(&conn);
+        let sid = security_with_closes(&conn, "NEWFUND", 0);
+        hold_synced(&conn, acct, sid);
+        assert_eq!(history_depth(&conn).unwrap(), 0);
+    }
 
     #[test]
     fn history_since_returns_only_dates_in_range_oldest_first() {

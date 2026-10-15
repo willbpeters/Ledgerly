@@ -34,7 +34,8 @@ export const api = {
     setManual: (security_id: number, date: string, close: number) =>
       invoke<void>("prices_set_manual", { securityId: security_id, date, close }),
     refresh: () => invoke<number>("prices_refresh"), // added in Task 15
-    backfill: () => invoke<number>("prices_backfill"),
+    /** Two years of closes for every security with fewer than `minDays`. */
+    backfill: (minDays: number) => invoke<number>("prices_backfill", { minDays }),
     historyDepth: () => invoke<number>("prices_history_depth"),
     history: (from: string) => invoke<[number, string, number][]>("prices_history", { from }),
   },

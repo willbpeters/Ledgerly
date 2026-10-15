@@ -20,6 +20,20 @@ describe("shouldBackfill", () => {
     expect(shouldBackfill(500)).toBe(false);
   });
 
+  it("backfills again when a newly synced holding has no history", () => {
+    // Depth is the least-covered holding, so a new account drops it to 0 even
+    // though everything else already has years.
+    expect(shouldBackfill(0, null)).toBe(true);
+  });
+
+  it("does not retry a depth it has already tried, so a ticker Yahoo cannot price does not loop", () => {
+    expect(shouldBackfill(1, 1)).toBe(false);
+  });
+
+  it("tries again once the depth has changed since the last try", () => {
+    expect(shouldBackfill(0, 507)).toBe(true);
+  });
+
   it("asks for enough history to make the risk maths meaningful", () => {
     // Beta and volatility on a handful of points are noise dressed as numbers.
     expect(MIN_HISTORY_DAYS).toBeGreaterThanOrEqual(60);
