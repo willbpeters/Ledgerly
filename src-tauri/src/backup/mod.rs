@@ -3,6 +3,8 @@
 pub mod naming;
 pub mod settings;
 pub mod snapshot;
+pub mod restore;
+pub mod startup;
 
 use chrono::NaiveDateTime;
 use naming::Kind;
