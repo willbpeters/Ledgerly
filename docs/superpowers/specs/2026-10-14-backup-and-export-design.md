@@ -114,7 +114,11 @@ the app would turn a backup problem into a lost-access problem.
    - copies the chosen file to `finance.sqlite.restore-pending` in the app data
      folder. Copying first means a USB drive can be unplugged safely after
      this point.
-4. The app restarts (`AppHandle::restart`).
+4. The command swaps the managed connection for an in-memory one, which
+   closes `finance.sqlite`, and the app restarts (`AppHandle::restart`).
+   Windows will not replace a file that is still open, and the old process may
+   still be exiting when the new one starts, so the swap at launch also retries
+   the rename for up to two seconds.
 5. On launch, step 1 of the startup sequence deletes `finance.sqlite-journal`,
    `-wal` and `-shm` if present — a leftover journal from the *old* database
    would otherwise be replayed into the restored one and corrupt it — then
@@ -146,8 +150,8 @@ are not exported: they are re-fetchable or derived.
 CSV rules: UTF-8 with a byte-order mark (so Excel reads accented payees
 correctly), comma-separated, a header row, fields containing a comma, quote or
 line break wrapped in quotes with quotes doubled. Dates are ISO `YYYY-MM-DD`;
-money is the plain stored number. **Text fields starting with `=`, `+`, `-` or
-`@` get a leading `'`**, because bank descriptions are third-party text and
+money is the plain stored number. **Text fields starting with `=`, `+`, `-`,
+`@`, a tab or a carriage return get a leading `'`**, because bank descriptions are third-party text and
 Excel would otherwise run them as formulas. Numeric columns are never prefixed,
 so a negative amount stays a number.
 
@@ -202,8 +206,10 @@ file gains `dialog:allow-open`.
   plus the one-line note that a cloud folder holds the data unencrypted.
 - **Backups list:** date, kind, size, and a **Restore** button per row; an empty
   state before the first backup. **Restore from a file…** below the list.
-- **Export to CSV…** button; on success a toast with the folder path and an
-  "Open folder" action through the opener plugin already installed.
+- **Export to CSV…** button; on success the card shows the folder path and a
+  **Show in folder** button, which opens Explorer through the opener plugin
+  already installed. (The toast component has no action buttons, so this lives
+  in the card.)
 
 ## Testing
 
