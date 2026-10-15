@@ -2,6 +2,7 @@
 //! Design: docs/superpowers/specs/2026-10-14-backup-and-export-design.md
 pub mod naming;
 pub mod settings;
+pub mod snapshot;
 
 use chrono::NaiveDateTime;
 use naming::Kind;
