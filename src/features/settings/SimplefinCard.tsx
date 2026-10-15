@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose } from "../../data/queries";
 import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
+import { askToConfirm } from "../../ui/confirm";
 import type { SyncReport, SimplefinSample } from "../../domain/types";
 
 // SimpleFIN's public demo. Its shared *setup token* is permanently claimed and
@@ -52,8 +53,11 @@ export function SimplefinCard() {
     setError(""); setReport(null);
     sync.mutate(undefined, { onSuccess: setReport, onError: (e) => setError(String(e)) });
   }
-  function doDisconnect() {
-    const removeAccounts = confirm("Also remove the accounts SimpleFIN created in Ledgerly?\n\nOK = remove them and their holdings.\nCancel = keep them (they just stop updating).");
+  async function doDisconnect() {
+    const removeAccounts = await askToConfirm(
+      "Also remove the accounts SimpleFIN created in Ledgerly? Keeping them means they stay, but stop updating.",
+      { okLabel: "Remove them", cancelLabel: "Keep them" },
+    );
     setError(""); setReport(null);
     disconnect.mutate(removeAccounts, { onError: (e) => setError(String(e)) });
   }

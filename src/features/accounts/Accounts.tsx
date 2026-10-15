@@ -5,6 +5,7 @@ import { AccountForm } from "./AccountForm";
 import { PageHeader, Card, Button, Badge, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { money, timeAgo } from "../../ui/format";
+import { askToConfirm } from "../../ui/confirm";
 import type { Account } from "../../domain/types";
 
 export function Accounts() {
@@ -51,9 +52,9 @@ export function Accounts() {
             onClick={() => setHidden.mutate({ id: a.id, hidden: !a.hidden })}>
             {a.hidden ? "Unhide" : "Hide"}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => {
+          <Button variant="ghost" size="sm" onClick={async () => {
             const extra = a.source === "simplefin" ? " If you still share it with SimpleFIN it will come back on the next sync; if you have stopped sharing it, it is gone for good." : "";
-            if (confirm(`Delete "${a.name}"? This removes its transactions.${extra}`)) del.mutate(a.id);
+            if (await askToConfirm(`Delete "${a.name}"? This removes its transactions.${extra}`)) del.mutate(a.id);
           }}>Delete</Button>
         </div>) },
   ];

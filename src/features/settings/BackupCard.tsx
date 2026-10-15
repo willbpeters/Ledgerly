@@ -6,6 +6,7 @@ import {
 import { localIsoDate } from "../../domain/dates";
 import { whenLabel } from "../../domain/backup";
 import { useToast } from "../../ui/toast";
+import { askToConfirm } from "../../ui/confirm";
 import { BackupPanel } from "./BackupPanel";
 
 export function BackupCard() {
@@ -23,8 +24,12 @@ export function BackupCard() {
   const failed = (title: string) => (e: unknown) => toast.push({ tone: "neg", title, body: String(e) });
 
   // On success the app restarts, so only failure needs handling here.
-  const restoreFrom = (path: string, what: string) => {
-    if (!confirm(`Replace everything in Ledgerly with ${what}?\n\nYour current data is backed up first, so this can be undone. Ledgerly restarts to finish.`)) return;
+  const restoreFrom = async (path: string, what: string) => {
+    const ok = await askToConfirm(
+      `Replace everything in Ledgerly with ${what}?\n\nYour current data is backed up first, so this can be undone. Ledgerly restarts to finish.`,
+      { okLabel: "Restore", cancelLabel: "Cancel" },
+    );
+    if (!ok) return;
     restore.mutate(path, { onError: failed("Restore didn't happen") });
   };
 

@@ -10,6 +10,7 @@ import { CsvImport } from "./CsvImportForm";
 import { money, fmtDate } from "../../ui/format";
 import { PageHeader, Card, Button, Badge, Tabs, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
+import { askToConfirm } from "../../ui/confirm";
 import type { BankTransaction, Transaction } from "../../domain/types";
 
 type Tab = "position" | "transaction" | "csv";
@@ -55,8 +56,8 @@ export function Activity() {
     { key: "price", label: "Price", render: (t) => (t.price ? money(t.price) : "—") },
     { key: "amount", label: "Amount", render: (t) => money(t.amount) },
     { key: "actions", label: "", render: (t) => (
-        <Button variant="ghost" size="sm" onClick={() => {
-          if (confirm("Delete this transaction? Holdings and balances will recompute.")) del.mutate(t.id);
+        <Button variant="ghost" size="sm" onClick={async () => {
+          if (await askToConfirm("Delete this transaction? Holdings and balances will recompute.")) del.mutate(t.id);
         }}>Delete</Button>) },
   ];
 

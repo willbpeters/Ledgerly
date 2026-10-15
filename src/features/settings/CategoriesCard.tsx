@@ -4,6 +4,7 @@ import {
 } from "../../data/queries";
 import { Card, Button, Badge, EmptyState } from "../../ui/components";
 import { useChartColors } from "../../ui/chartColors";
+import { askToConfirm } from "../../ui/confirm";
 import type { Category } from "../../domain/types";
 
 const TOKENS = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5", "chart-6"];
@@ -71,8 +72,8 @@ export function CategoriesCard() {
                   {!c.is_builtin && <Badge tone="accent">yours</Badge>}
                   <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
                     <Button variant="ghost" size="sm" onClick={() => setEditing(c)}>Edit</Button>
-                    <Button variant="ghost" size="sm" onClick={() => {
-                      if (confirm(`Delete "${c.name}"? Transactions in it become uncategorised.`)) remove.mutate(c.id);
+                    <Button variant="ghost" size="sm" onClick={async () => {
+                      if (await askToConfirm(`Delete "${c.name}"? Transactions in it become uncategorised.`)) remove.mutate(c.id);
                     }}>Delete</Button>
                   </span>
                 </>
