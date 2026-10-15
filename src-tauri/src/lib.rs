@@ -19,8 +19,14 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
-            let conn = db::open(&dir.join("finance.sqlite")).expect("open db");
+            let paths = backup::Paths::new(&dir);
+            // Before db::open: a staged restore must be swapped in first, and a
+            // database about to be migrated must be backed up while it still
+            // is the old version.
+            let report = backup::startup::run(&paths, backup::now());
+            let conn = db::open(&paths.db()).expect("open db");
             app.manage(db::Db(std::sync::Mutex::new(conn)));
+            app.manage(backup::BackupState::new(paths, report.attempt, report.restore_error));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -70,6 +76,13 @@ pub fn run() {
             commands::market::market_index_depth,
             commands::market::market_index_backfill,
             commands::market::market_refresh,
+            commands::backup::backup_status,
+            commands::backup::backup_list,
+            commands::backup::backup_now,
+            commands::backup::backup_set_extra_folder,
+            commands::backup::backup_restore,
+            commands::backup::export_csv,
+            commands::backup::reveal_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
