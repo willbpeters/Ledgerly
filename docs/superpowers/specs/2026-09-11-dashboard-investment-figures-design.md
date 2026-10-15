@@ -42,9 +42,13 @@ $142,318.44   │ +$1,204  +$18,447 │ $98,204    $46,114   −$2,000
               │ +1.24%   +23.1%   │
 ```
 
-`Invested + Cash − Owed` sums to Net worth, so the three composition figures
-are checkable against the hero by eye. `Owed` keeps its existing behaviour of
-rendering only when non-zero.
+`Invested + Cash + Owed` sums to Net worth, so the three composition figures are
+checkable against the hero by eye. Note the **plus**: `liabilities` is stored
+negative and renders with its own minus sign, so Owed subtracts itself. Writing
+the identity with a minus — as an earlier draft of this spec did — overshoots net
+worth by twice the debt, which is exactly the sort of error a reader checking the
+row by eye would hit. `Owed` keeps its existing behaviour of rendering only when
+non-zero.
 
 ## The four changes
 
@@ -69,12 +73,18 @@ as it does today.
 
 ### 3. Today and All time are labelled as investments
 
-The captions become `Today · investments` and `All time · investments`.
+The captions become `Today (investments)` and `All time (investments)`.
 
 This is not decoration. The project rule is that a figure never appears without
 the caveat that explains it, and here two percentages sit beside a net-worth
 hero while measuring something narrower than it. A reader who assumes Today is
 a net-worth move will be wrong by exactly the proportion of their cash.
+
+**Parentheses rather than a `·` separator**, which was the first choice and was
+wrong: the values themselves already read `+$1,204.00 · +1.24%`, so a caption of
+`Today · investments` put the same glyph directly above a different use of it,
+one grammatical and one numeric, in the same narrow column. The label exists to
+clarify the figure, so it must not compete with it.
 
 ### 4. The chart gets a Net worth / Investments toggle
 

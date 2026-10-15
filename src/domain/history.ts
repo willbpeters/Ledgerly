@@ -1,6 +1,6 @@
 import { cashEffect } from "./cash";
 import { clampOversells } from "./positions";
-import type { Account, BankTransaction, SeriesPoint, SyncedHolding, Transaction } from "./types";
+import type { Account, BankTransaction, SyncedHolding, Transaction, ValuePoint } from "./types";
 
 /** One stored daily close. */
 export interface PriceRow {
@@ -38,8 +38,12 @@ export interface HistoryInputs {
  * assumed to have been held throughout. That assumption is why the window is
  * kept short; over 90 days it is usually fair, over two years it would be
  * fiction. The UI must say so.
+ *
+ * Each point carries `invested` beside `value`: holdings only, under exactly the
+ * same assumptions as above. It exists so the chart can show investment
+ * performance without a deposit or a card balance reading as a gain.
  */
-export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
+export function reconstructSeries(i: HistoryInputs): ValuePoint[] {
   const accounts = i.accounts.filter((a) => !a.hidden);
   const visible = new Set(accounts.map((a) => a.id));
   const isSynced = new Set(accounts.filter((a) => a.source === "simplefin").map((a) => a.id));
@@ -87,7 +91,7 @@ export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
     .filter((d) => d >= from && d <= i.today)
     .sort();
 
-  const series: SeriesPoint[] = [];
+  const series: ValuePoint[] = [];
   for (const date of dates) {
     // A holding whose price history simply starts later makes this date
     // unvaluable: a partial total would read as a dip that never happened. A
@@ -96,6 +100,9 @@ export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
     if ([...heldSecurities].some((id) => closes.has(id) && priceOn(id, date) == null)) continue;
 
     let value = 0;
+    // Holdings only. Tracked beside `value` so the chart can plot investment
+    // performance without a deposit reading as a gain.
+    let invested = 0;
 
     // Manual holdings: shares actually held on the day, from the transactions.
     const manualShares = new Map<number, number>();
@@ -108,7 +115,9 @@ export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
     for (const [securityId, shares] of manualShares) {
       const close = priceOn(securityId, date);
       // With no price at all, the last price paid is the best estimate there is.
-      value += shares * (close ?? lastPaid.get(securityId) ?? 0);
+      const held = shares * (close ?? lastPaid.get(securityId) ?? 0);
+      value += held;
+      invested += held;
     }
 
     // Synced holdings: today's shares, valued at that day's close. When the
@@ -116,7 +125,9 @@ export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
     // funds — the value SimpleFIN itself reported is used, held flat.
     for (const h of synced) {
       const close = priceOn(h.security_id, date);
-      value += close != null ? h.shares * close : h.market_value;
+      const held = close != null ? h.shares * close : h.market_value;
+      value += held;
+      invested += held;
     }
 
     // Manual cash: every cash effect up to and including the day.
@@ -131,16 +142,16 @@ export function reconstructSeries(i: HistoryInputs): SeriesPoint[] {
     // them, and leaving it in counted every invested dollar twice.
     for (const a of accounts) {
       if (a.source !== "simplefin" || a.synced_balance == null) continue;
-      const invested = synced
+      const accountHoldings = synced
         .filter((h) => h.account_id === a.id)
         .reduce((sum, h) => sum + h.market_value, 0);
       const posted = bankTxns
         .filter((t) => t.account_id === a.id && t.posted > date)
         .reduce((sum, t) => sum + t.amount, 0);
-      value += a.synced_balance - invested - posted;
+      value += a.synced_balance - accountHoldings - posted;
     }
 
-    series.push({ date, value });
+    series.push({ date, value, invested });
   }
   return series;
 }

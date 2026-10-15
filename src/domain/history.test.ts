@@ -224,3 +224,50 @@ describe("reconstructSeries — securities Yahoo has never priced", () => {
     expect(s.map((p) => p.date)).toEqual([TODAY]);
   });
 });
+
+describe("reconstructSeries — invested apart from cash", () => {
+  const brokerage = acct(1, "Brokerage", "brokerage", "manual", null);
+  // Deposit 1000 and buy 2 shares at 100 on the 1st. Deposit another 1000 on
+  // the 3rd — a paycheck. The price never moves.
+  const txns: Transaction[] = [
+    { id: 1, account_id: 1, security_id: 10, type: "deposit", date: "2026-09-01",
+      quantity: 0, price: 0, amount: 1000, fees: 0, note: null },
+    { id: 2, account_id: 1, security_id: 10, type: "buy", date: "2026-09-01",
+      quantity: 2, price: 100, amount: 200, fees: 0, note: null },
+    { id: 3, account_id: 1, security_id: 10, type: "deposit", date: "2026-09-03",
+      quantity: 0, price: 0, amount: 1000, fees: 0, note: null },
+  ];
+  const prices = [
+    price(10, "2026-09-01", 100), price(10, "2026-09-03", 100), price(10, "2026-09-05", 100),
+  ];
+  const series = () => reconstructSeries({
+    ...base, accounts: [brokerage], txns, synced: [], bankTxns: [], prices,
+  });
+
+  it("counts only holdings in invested", () => {
+    const day = series().find((p) => p.date === "2026-09-01");
+    expect(day?.invested).toBe(200);  // 2 shares at 100
+    expect(day?.value).toBe(1000);    // plus 800 cash left over
+  });
+
+  it("leaves invested flat when a deposit lands", () => {
+    const s = series();
+    const before = s.find((p) => p.date === "2026-09-01");
+    const after = s.find((p) => p.date === "2026-09-03");
+    // This is the whole point of the feature: a paycheck moves net worth and
+    // must not move the investment line.
+    expect(before?.invested).toBe(200);
+    expect(after?.invested).toBe(200);
+    expect(after?.value).toBe((before?.value ?? 0) + 1000);
+  });
+
+  it("keeps a credit-card balance out of invested and in value", () => {
+    const card = acct(2, "Card", "credit", "simplefin", -500);
+    const s = reconstructSeries({
+      ...base, accounts: [brokerage, card], txns, synced: [], bankTxns: [], prices,
+    });
+    const day = s.find((p) => p.date === "2026-09-05");
+    expect(day?.invested).toBe(200);
+    expect(day?.value).toBe(2000 - 500);
+  });
+});

@@ -11,17 +11,39 @@ import { DataTable, type Column } from "../../ui/DataTable";
 import { useChartColors } from "../../ui/chartColors";
 import { RiskCard } from "./RiskCard";
 import { MarketExposureCard } from "./MarketExposureCard";
+import { Headline } from "./Headline";
 import { useRiskSeries } from "../../data/useRiskSeries";
 import { marketExposure, type ExposureInputs } from "../../domain/risk";
 import type { Aligned } from "../../domain/returns";
-import type { Holding, PortfolioSummary, SeriesPoint } from "../../domain/types";
+import type { Holding, PortfolioSummary, ValuePoint } from "../../domain/types";
 
 // Only windows the data can actually support: the series is rebuilt from
 // SimpleFIN holdings and transactions, which reach back about 90 days.
 type Range = "1m" | "3m";
 const WINDOW_DAYS: Record<Range, number> = { "1m": 30, "3m": HISTORY_DAYS };
 
-function clipSeries(series: SeriesPoint[], range: Range): SeriesPoint[] {
+/** Which line the value chart plots. */
+type Mode = "networth" | "invested";
+
+// The caveat has to change with the mode. The net-worth line really is rebuilt
+// from cash movements, so it must say so; the investments line is not, and
+// repeating the clause there would be untrue. The share-count caveat applies to
+// both — today's synced share counts are assumed to have been held throughout,
+// which is what bounds the window to 90 days either way.
+export const CHART_MODES: Record<Mode, { dataKey: keyof ValuePoint; subtitle: string }> = {
+  networth: {
+    dataKey: "value",
+    subtitle:
+      "Rebuilt from your holdings, prices and cash movements. Share counts are today’s — SimpleFIN does not report holdings history.",
+  },
+  invested: {
+    dataKey: "invested",
+    subtitle:
+      "Your holdings’ market value, rebuilt from daily closes. A deposit does not move this line. Share counts are today’s — SimpleFIN does not report holdings history.",
+  },
+};
+
+function clipSeries(series: ValuePoint[], range: Range): ValuePoint[] {
   const days = WINDOW_DAYS[range];
   if (series.length === 0) return series;
   const cutoff = new Date();
@@ -63,6 +85,8 @@ export function Dashboard() {
   const { data: securities = [] } = useSecurities();
   const colors = useChartColors();
   const [range, setRange] = useState<Range>("3m");
+  // Net worth is the default, so the screen opens as it always has.
+  const [mode, setMode] = useState<Mode>("networth");
 
   const series = useMemo(() => clipSeries(fullSeries, range), [fullSeries, range]);
 
@@ -108,46 +132,22 @@ export function Dashboard() {
     },
   ];
 
-  const [dollars, cents] = money(summary.totalValue).split(".");
-
   return (
     <>
-      <div className="headline">
-        <div className="headline-figure">
-          <div className="cap">Net worth</div>
-          <div className="hero-value">{dollars}<span className="hero-cents">.{cents}</span></div>
-        </div>
-        <div className="headline-side">
-          <div className="cap">Today</div>
-          <div className={`n ${summary.dayChange >= 0 ? "pos" : "neg"}`}>
-            {summary.dayChange >= 0 ? "+" : ""}{money(summary.dayChange)} · {pct(summary.dayChangePct)}
-          </div>
-        </div>
-        <div className="headline-side">
-          <div className="cap">All time</div>
-          <div className={`n ${summary.unrealized >= 0 ? "pos" : "neg"}`}>
-            {summary.unrealized >= 0 ? "+" : ""}{money(summary.unrealized)} · {pct(summary.unrealizedPct)}
-          </div>
-        </div>
-        <div className="headline-side">
-          <div className="cap">Cash</div>
-          <div className="n">{money(summary.cash)}</div>
-        </div>
-        {summary.liabilities !== 0 && (
-          <div className="headline-side">
-            <div className="cap">Owed</div>
-            <div className="n neg">{money(summary.liabilities)}</div>
-          </div>
-        )}
-      </div>
+      <Headline summary={summary} />
 
       <Card
         title="Portfolio value"
-        subtitle="Rebuilt from your holdings, prices and cash movements. Share counts are today’s — SimpleFIN does not report holdings history."
+        subtitle={CHART_MODES[mode].subtitle}
         actions={
-          <Segmented<Range> value={range} onChange={setRange} items={[
-            { value: "1m", label: "1M" }, { value: "3m", label: "3M" },
-          ]} />
+          <div className="row">
+            <Segmented<Mode> value={mode} onChange={setMode} items={[
+              { value: "networth", label: "Net worth" }, { value: "invested", label: "Investments" },
+            ]} />
+            <Segmented<Range> value={range} onChange={setRange} items={[
+              { value: "1m", label: "1M" }, { value: "3m", label: "3M" },
+            ]} />
+          </div>
         }>
         {series.length < 2 ? (
           <EmptyState title="Not enough price history yet"
@@ -167,9 +167,11 @@ export function Dashboard() {
                   that has never been near zero wastes most of the chart. */}
               <YAxis fontSize={10} stroke={colors.text} tickLine={false} axisLine={false} width={58}
                 domain={[(min: number) => Math.max(0, min * 0.97), (max: number) => max * 1.02]}
-                tickFormatter={(v) => `$${Math.round(Number(v) / 1000)}k`} />
+                // Below a thousand dollars, dividing by 1000 rounds every tick to $0k —
+                // and the investments line is the one most likely to be that small.
+                tickFormatter={(v) => Number(v) < 1000 ? `$${Math.round(Number(v))}` : `$${Math.round(Number(v) / 1000)}k`} />
               <Tooltip content={<ChartTip />} cursor={{ stroke: colors.grid, strokeDasharray: "3 4" }} />
-              <Area type="monotone" dataKey="value" stroke={colors.accent} strokeWidth={1.9} fill="url(#valueFill)" />
+              <Area type="monotone" dataKey={CHART_MODES[mode].dataKey} stroke={colors.accent} strokeWidth={1.9} fill="url(#valueFill)" />
             </AreaChart>
           </ResponsiveContainer>
         )}
