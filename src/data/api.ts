@@ -5,6 +5,7 @@ import type {
   Category, BankTransaction, CategoryRule, Budget,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
+  BackupEntry, BackupAttempt, BackupStatus,
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
@@ -62,6 +63,16 @@ export const api = {
     backfill: (days: number) => invoke<SyncReport>("simplefin_backfill", { days }),
     diagnose: () => invoke<SimplefinSample>("simplefin_diagnose"),
     disconnect: (deleteAccounts: boolean) => invoke<void>("simplefin_disconnect", { deleteAccounts }),
+  },
+  backup: {
+    status: () => invoke<BackupStatus>("backup_status"),
+    list: () => invoke<BackupEntry[]>("backup_list"),
+    now: () => invoke<BackupAttempt>("backup_now"),
+    setExtraFolder: (folder: string | null) => invoke<void>("backup_set_extra_folder", { folder }),
+    /** Restarts the app on success, so the promise only ever settles with an error. */
+    restore: (path: string) => invoke<void>("backup_restore", { path }),
+    exportCsv: (folder: string) => invoke<string>("export_csv", { folder }),
+    reveal: (path: string) => invoke<void>("reveal_path", { path }),
   },
   categories: {
     list: () => invoke<Category[]>("categories_list"),

@@ -19,6 +19,8 @@ export const keys = {
   marketIndices: ["market", "indices"] as const,
   indexHistory: ["market", "indexHistory"] as const,
   indexDepth: ["market", "indexDepth"] as const,
+  backupStatus: ["backup", "status"] as const,
+  backupList: ["backup", "list"] as const,
 };
 
 export const useAccounts = () => useQuery({ queryKey: keys.accounts, queryFn: api.accounts.list });
@@ -264,4 +266,33 @@ export function useMarketRefresh() {
       }
     },
   });
+}
+
+export const useBackupStatus = () => useQuery({ queryKey: keys.backupStatus, queryFn: api.backup.status });
+export const useBackupList = () => useQuery({ queryKey: keys.backupList, queryFn: api.backup.list });
+
+/** Status and list both describe the backups folder, so they refresh together. */
+function useInvalidateBackups() {
+  const qc = useQueryClient();
+  return () => { qc.invalidateQueries({ queryKey: ["backup"] }); };
+}
+
+export function useBackupNow() {
+  const invalidate = useInvalidateBackups();
+  return useMutation({ mutationFn: () => api.backup.now(), onSettled: invalidate });
+}
+
+export function useSetExtraFolder() {
+  const invalidate = useInvalidateBackups();
+  return useMutation({ mutationFn: (folder: string | null) => api.backup.setExtraFolder(folder), onSuccess: invalidate });
+}
+
+export function useRestoreBackup() {
+  const invalidate = useInvalidateBackups();
+  return useMutation({ mutationFn: (path: string) => api.backup.restore(path), onSettled: invalidate });
+}
+
+/** Read-only, so nothing to invalidate. */
+export function useExportCsv() {
+  return useMutation({ mutationFn: (folder: string) => api.backup.exportCsv(folder) });
 }

@@ -114,3 +114,27 @@ export interface MarketRefreshReport {
 /** Two renderings of the SimpleFIN diagnostic sample: what to show, and what
  *  is safe to put on the clipboard. */
 export type SimplefinSample = { raw: string; redacted: string };
+
+export type BackupKind = "daily" | "pre-migration" | "pre-restore" | "manual";
+
+export interface BackupEntry {
+  file_name: string; path: string;
+  /** Local date and time, `YYYY-MM-DD` and `HH:MM:SS`. */
+  date: string; time: string;
+  kind: BackupKind; size: number;
+}
+
+export interface BackupAttempt {
+  at: string; kind: BackupKind; file: string | null;
+  error: string | null;
+  /** The backup worked, but the extra-folder copy or pruning did not. */
+  warning: string | null;
+}
+
+export interface BackupStatus {
+  latest: BackupEntry | null;
+  last_attempt: BackupAttempt | null;
+  restore_error: string | null;
+  extra_folder: string | null;
+  backups_folder: string;
+}
