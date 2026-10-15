@@ -100,7 +100,12 @@ budgeting and spending module.
   Syncing is incremental from a few days before the newest row held; "Import
   2 years" pages backwards in 45-day windows, which is what SimpleFIN asks for.
   Synced accounts show a badge and last-synced time in Accounts, and their
-  manual entry forms are disabled in Activity.
+  manual entry forms are disabled in Activity. **Adding a bank** happens on
+  SimpleFIN's site: "Add another bank or brokerage" in the card opens
+  `beta-bridge.simplefin.org/my-account`, and the next sync creates any account
+  it has not seen. If the connection does not pick the bank up, "Update
+  connection" takes a fresh setup token in place (backing up first, since a sync
+  removes accounts the token no longer shares).
 - **Backups** (`src-tauri/src/backup/`): a checked `VACUUM INTO` copy in
   `%APPDATA%\com.ledgerly.app\backups\` at the first launch each day, before any
   migration, before any restore, and on "Back up now"; the newest 14 dailies are
@@ -442,6 +447,12 @@ G. **Dividends in returns** — dividends add cash but count toward no gain
   explains the second at the point it is enforced.
 
 ## Commands
+
+The easiest start is the **"Ledgerly (test)" shortcut on the Desktop**, which
+runs `scripts/start-ledgerly.cmd`: it puts Rust on the PATH, then runs
+`npm run tauri dev` from the project folder. Closing its console window closes
+the app. The first start after code or dependency changes takes a minute
+(Rust compiles, Vite re-optimises); later starts take seconds.
 
 ```bash
 npm run tauri dev      # run the app live (hot-reloads the UI)
