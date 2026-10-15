@@ -292,6 +292,18 @@ mod tests {
     }
 
     #[test]
+    fn the_review_list_holds_only_unreviewed_rows() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute("INSERT INTO accounts (name,type,currency,created_at) VALUES ('C','credit','USD','2026-01-01')", []).unwrap();
+        conn.execute_batch(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,reviewed)
+             VALUES (1,'new','2026-10-02',-5,'x',0), (1,'seen','2026-10-01',-5,'y',1);",
+        ).unwrap();
+        let ids: Vec<String> = list_to_review(&conn).unwrap().into_iter().map(|t| t.external_id).collect();
+        assert_eq!(ids, vec!["new".to_string()]);
+    }
+
+    #[test]
     fn transactions_are_listed_newest_first_within_a_window() {
         let conn = db::open_in_memory().unwrap();
         conn.execute("INSERT INTO accounts (name,type,currency,created_at) VALUES ('C','credit','USD','2026-01-01')", []).unwrap();

@@ -47,6 +47,15 @@ pub fn apply(conn: &mut Connection, set: &SfAccountSet) -> Result<SyncReport, St
             }
         }
     }
+    // Transfers can only be paired once every account is in: the two sides
+    // of a card payment arrive in different accounts. Only recent rows are
+    // looked at, so the cost stays flat as history grows.
+    let since = (chrono::Local::now().date_naive() - chrono::Duration::days(60))
+        .format("%Y-%m-%d")
+        .to_string();
+    if let Err(e) = crate::budget::store::mark_transfer_pairs(conn, &since) {
+        report.errors.push(format!("Matching transfers: {e}"));
+    }
     report.accounts_removed = remove_unshared(conn, set).map_err(|e| e.to_string())?;
     Ok(report)
 }
