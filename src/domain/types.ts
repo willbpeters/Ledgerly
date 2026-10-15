@@ -76,6 +76,8 @@ export interface BankTransaction {
   payee: string | null; memo: string | null; mcc: string | null;
   pending: boolean; category_id: number | null;
   category_source: "auto" | "manual";
+  /** False until the owner has approved it or chosen a category. */
+  reviewed: boolean;
 }
 export interface CategoryRule {
   id: number; match_type: "payee" | "description" | "mcc";

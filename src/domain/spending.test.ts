@@ -13,7 +13,7 @@ let n = 0;
 const txn = (amount: number, category_id: number | null, posted = "2026-09-10"): BankTransaction => ({
   id: ++n, account_id: 1, external_id: `e${n}`, posted, amount,
   description: "x", payee: null, memo: null, mcc: null, pending: false,
-  category_id, category_source: "auto",
+  category_id, category_source: "auto", reviewed: true,
 });
 
 describe("month helpers", () => {
@@ -143,5 +143,11 @@ describe("fromVisibleAccounts", () => {
 
   it("keeps a transaction whose account is not in the list rather than losing it silently", () => {
     expect(fromVisibleAccounts(rows, [accounts[0]]).map((t) => t.id)).toEqual([1, 2]);
+  });
+
+  it("leaves investment accounts out, as Copilot does", () => {
+    // Robinhood interest and crypto sales are neither spending nor income.
+    const brokerage: Account = { ...accounts[1], type: "brokerage", hidden: false };
+    expect(fromVisibleAccounts(rows, [accounts[0], brokerage]).map((t) => t.id)).toEqual([1]);
   });
 });

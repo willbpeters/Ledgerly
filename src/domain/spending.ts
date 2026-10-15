@@ -1,16 +1,18 @@
 import type { Account, BankTransaction, Budget, Category } from "./types";
 
 /**
- * Transactions belonging to accounts that are not hidden.
+ * Transactions that count toward spending: not in a hidden account, and not in
+ * an investment account.
  *
- * Hiding an account takes it out of every total, and spending is a total. A
- * transaction whose account is not in the list at all is kept rather than
- * dropped: the account list may still be loading, and quietly losing money off
- * the screen is the worse failure.
+ * Hiding an account takes it out of every total, and spending is a total.
+ * Investment accounts are left out the way Copilot leaves them out: interest
+ * and trades are not spending or income. A transaction whose account is not in
+ * the list at all is kept rather than dropped: the account list may still be
+ * loading, and quietly losing money off the screen is the worse failure.
  */
 export function fromVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
-  const hidden = new Set(accounts.filter((a) => a.hidden).map((a) => a.id));
-  return txns.filter((t) => !hidden.has(t.account_id));
+  const excluded = new Set(accounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
+  return txns.filter((t) => !excluded.has(t.account_id));
 }
 
 /** First and last day of a `YYYY-MM` month, inclusive. */

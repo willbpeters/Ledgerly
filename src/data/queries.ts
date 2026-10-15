@@ -148,6 +148,7 @@ export const budgetKeys = {
   budgets: ["budgets"] as const,
   txns: (from: string, to: string) => ["bankTxns", from, to] as const,
   range: ["bankTxns", "range"] as const,
+  toReview: ["bankTxns", "toReview"] as const,
 };
 
 export const useCategories = () => useQuery({ queryKey: budgetKeys.categories, queryFn: api.categories.list });
@@ -163,6 +164,19 @@ function invalidateSpending(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["bankTxns"] });
   qc.invalidateQueries({ queryKey: budgetKeys.categories });
   qc.invalidateQueries({ queryKey: budgetKeys.rules });
+}
+
+export const useBankTransactionsToReview = () =>
+  useQuery({ queryKey: budgetKeys.toReview, queryFn: api.bankTransactions.toReview });
+
+/** Approving changes which rows are reviewed and makes them manual, so the
+ *  month lists and the review list are refetched together. */
+export function useApproveTransactions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: number[]) => api.bankTransactions.approve(ids),
+    onSuccess: () => invalidateSpending(qc),
+  });
 }
 
 export function useSetTransactionCategory() {

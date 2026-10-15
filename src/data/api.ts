@@ -89,6 +89,8 @@ export const api = {
     range: () => invoke<[string | null, string | null]>("bank_transactions_range"),
     setCategory: (id: number, categoryId: number | null, applyToPayee: boolean) =>
       invoke<number>("bank_transaction_set_category", { id, categoryId, applyToPayee }),
+    toReview: () => invoke<BankTransaction[]>("bank_transactions_to_review"),
+    approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
   },
   rules: {
     list: () => invoke<CategoryRule[]>("rules_list"),
