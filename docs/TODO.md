@@ -16,12 +16,10 @@ are small enough to go straight to test-first implementation.
 
 ## Phase 1 — Protect your data
 
-- [ ] **1. Backup & export.** Everything lives in one unencrypted SQLite file,
-      and the only backup is the old `finance.sqlite.backup-pre-v2`. Wanted: a
-      "Back up now" button in Settings, an automatic dated copy on launch and
-      before every migration (keep the last N), and a CSV/JSON export. Use
-      SQLite's online backup API (`rusqlite` `backup` feature), not a file copy,
-      so a backup taken mid-write is still consistent. **(spec)**
+- [x] **1. Backup & export.** Done 2026-10-14: daily, pre-migration,
+      pre-restore and manual backups, an optional extra folder, in-app restore
+      and CSV export, all in Settings → Backups. Checked in the running app,
+      including a real restore. See HANDOFF "Backups".
 - [ ] **2. CI on GitHub.** There is no `.github/workflows` yet. Add an Action on
       push running `npm test`, `npx tsc --noEmit` and `cargo test` on
       `windows-latest`, so a broken change is caught on GitHub, not in the app.

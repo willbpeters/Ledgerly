@@ -1,6 +1,6 @@
 # Ledgerly — Handoff & Next Steps
 
-**Last updated:** 2026-09-24
+**Last updated:** 2026-10-14
 **Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (private), branch `master`
 
 ## What this project is
@@ -20,9 +20,9 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 246 TypeScript (Vitest) + 154 Rust (`cargo test`), plus 8 tests marked
+- **Tests:** 270 TypeScript (Vitest) + 212 Rust (`cargo test`), plus 9 tests marked
   `#[ignore]` that touch the network or the OS credential store — all passing
-  as of 2026-09-24. Run the live ones with `cargo test --lib live_ -- --ignored`.
+  as of 2026-10-14. Run the live ones with `cargo test --lib live_ -- --ignored`.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
 
@@ -101,6 +101,15 @@ budgeting and spending module.
   2 years" pages backwards in 45-day windows, which is what SimpleFIN asks for.
   Synced accounts show a badge and last-synced time in Accounts, and their
   manual entry forms are disabled in Activity.
+- **Backups** (`src-tauri/src/backup/`): a checked `VACUUM INTO` copy in
+  `%APPDATA%\com.ledgerly.app\backups\` at the first launch each day, before any
+  migration, before any restore, and on "Back up now"; the newest 14 dailies are
+  kept and every other kind is kept for good. An optional extra folder gets a
+  copy of each. **Restore** stages the chosen file as
+  `finance.sqlite.restore-pending`, lets go of the database and restarts; the
+  swap happens at launch, before `db::open`. **Export to CSV** writes seven
+  spreadsheet-ready files. Settings → Backups. Spec:
+  `docs/superpowers/specs/2026-10-14-backup-and-export-design.md`
 
 ### Reliability pass (2026-09-08)
 - **Error boundary** (`src/ui/ErrorBoundary.tsx`) wraps both the whole app and
@@ -164,6 +173,26 @@ a hidden manual account's transactions still counting toward cash, because
 pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Gotchas worth knowing
+
+- **Never call the browser's `confirm()`; `await askToConfirm()` from
+  `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an
+  async version whose Promise is always truthy, so `if (confirm(...))` deletes
+  without asking. `src/ui/confirm.test.ts` fails if any screen calls it.
+- **Keep each Tauri npm package on its Rust crate's major.minor.** `tauri build`
+  refuses to run on a mismatch, and `npm install` happily pulls a newer minor.
+  `@tauri-apps/api` and `@tauri-apps/plugin-dialog` are pinned with `~` in
+  `package.json` for this reason; `npx tauri info` shows the pairs.
+- **A new migration must also go into `db::migration_pending`.** That is how the
+  launch backup knows to label itself `pre-migration`; forget it and the backup
+  before your migration is an ordinary daily that pruning will eventually delete.
+- **The launch order in `lib.rs` matters**: `backup::startup::run` (restore swap,
+  then backup) must stay before `db::open`.
+- **After a restore in `npm run tauri dev`, the reopened window is blank.** The
+  restart outlives the dev server it was started from. Close it; the installed
+  `.exe` does not have this problem.
+- **Moving the project folder breaks the Rust build cache** (it stores absolute
+  paths): `failed to read plugin permissions … cannot find the path`. Run
+  `cargo clean` in `src-tauri` once.
 
 - **`cargo` is not on PATH on this machine.** Rust *is* installed
   (`C:\Users\willi\.cargo\bin`, stable MSVC toolchain, VS 2022 Build Tools),
@@ -336,12 +365,7 @@ straight to TDD.
 
 **Next up (from the review):**
 
-A. **Backup & export** — *start here.* Everything lives in one unencrypted
-   SQLite file, and the only backup is the old `finance.sqlite.backup-pre-v2`.
-   Wanted: a "Back up now" button in Settings, an automatic dated copy before
-   every migration and on launch (keep the last N), and a CSV/JSON export.
-   Use SQLite's online backup API (`rusqlite` `backup` feature) rather than a
-   file copy, so a backup taken mid-write is still consistent.
+A. ~~Backup & export~~ — done 2026-10-14; see "Backups" above.
 B. **CSV import de-duplication** — importing the same file twice doubles the
    holdings. Detect rows already present (same account, date, type, security,
    quantity, price) in the preview step and skip them by default.
