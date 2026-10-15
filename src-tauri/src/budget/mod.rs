@@ -2,5 +2,6 @@
 //! decides where a bank transaction belongs.
 pub mod categorize;
 pub mod mcc;
+pub mod merchants;
 pub mod seed;
 pub mod store;
