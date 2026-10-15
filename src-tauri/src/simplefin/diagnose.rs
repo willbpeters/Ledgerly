@@ -62,15 +62,61 @@ pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
         }
     }
 
-    Ok(serde_json::to_string_pretty(&json!({ "sampled": out.len(), "transactions": out }))
-        .expect("a Value tree always serializes"))
+    let (scanned, fields_seen) = field_census(&root);
+    Ok(serde_json::to_string_pretty(&json!({
+        "sampled": out.len(),
+        "scanned": scanned,
+        "fields_seen": fields_seen,
+        "transactions": out,
+    }))
+    .expect("a Value tree always serializes"))
+}
+
+/// Which fields appear across *every* transaction in the response, not only
+/// the sampled few, as `"name: k of n"` lines sorted by name. Fields inside an
+/// object such as `extra` are listed as `extra.category`.
+///
+/// The sample takes each account's first transaction, and on a real account
+/// those were all card payments and transfers — a purchase carrying a bank
+/// category further down would never have been shown. This answers "does
+/// anything carry a category?" from field names and counts alone, which are
+/// not money. The lines are text rather than numbers so `redact`, which treats
+/// every unknown number as money, leaves them readable.
+fn field_census(root: &Value) -> (usize, Vec<String>) {
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut scanned = 0usize;
+    let accounts = root.get("accounts").and_then(Value::as_array).into_iter().flatten();
+    for a in accounts {
+        let txns = a.get("transactions").and_then(Value::as_array).into_iter().flatten();
+        for t in txns {
+            let Some(obj) = t.as_object() else { continue };
+            scanned += 1;
+            for (k, v) in obj {
+                // A null field is one the bank does not fill in, which is the
+                // same answer as a missing one.
+                if v.is_null() {
+                    continue;
+                }
+                *counts.entry(k.clone()).or_default() += 1;
+                if let Some(inner) = v.as_object() {
+                    for (ik, iv) in inner {
+                        if !iv.is_null() {
+                            *counts.entry(format!("{k}.{ik}")).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let lines = counts.into_iter().map(|(k, n)| format!("{k}: {n} of {scanned}")).collect();
+    (scanned, lines)
 }
 
 /// Keys whose values must survive redaction. `mcc` and the timestamps are
 /// numeric, so a rule based on "looks like a number" would destroy exactly the
 /// fields we came for; `sampled` is this module's own row count rather than
 /// anything the bank sent.
-const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending", "sampled"];
+const KEEP: &[&str] = &["id", "posted", "transacted_at", "mcc", "pending", "sampled", "scanned"];
 
 /// Key-name fragments that mean money. They only fire on a value containing a
 /// digit, so an English word that happens to contain one of them ("coffee"
@@ -176,6 +222,53 @@ fn scrub_under(key: &str, v: &mut Value) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod census_tests {
+    use super::*;
+
+    const BODY: &str = r#"{"accounts": [
+      {"name": "Card", "org": {"name": "Bank"}, "transactions": [
+        {"id":"p1","posted":1,"amount":"-40.59","payee":"Automatic Payment","mcc":null},
+        {"id":"t1","posted":2,"amount":"-12.40","payee":"Target","mcc":null,
+         "extra":{"category":"Shopping","merchant":{"name":"Target"}}}
+      ]},
+      {"name": "Checking", "org": {"name": "Bank"}, "transactions": [
+        {"id":"p2","posted":3,"amount":"40.59","payee":"Chase Credit Card"}
+      ]}
+    ]}"#;
+
+    fn sample() -> Value {
+        serde_json::from_str(&sample_transactions(BODY, 1).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn every_transaction_is_scanned_not_just_the_sample() {
+        // The sample takes each account's first transaction, which for a real
+        // account was a card payment every time; a purchase with a category
+        // further down would never have been seen.
+        assert_eq!(sample()["scanned"], 3);
+    }
+
+    #[test]
+    fn the_census_counts_each_field_including_inside_extra() {
+        let fields: Vec<String> = serde_json::from_value(sample()["fields_seen"].clone()).unwrap();
+        assert!(fields.contains(&"amount: 3 of 3".to_string()), "{fields:?}");
+        // Present but null everywhere, as on the owner's real accounts: not listed.
+        assert!(!fields.iter().any(|f| f.starts_with("mcc")), "{fields:?}");
+        assert!(fields.contains(&"extra: 1 of 3".to_string()), "{fields:?}");
+        assert!(fields.contains(&"extra.category: 1 of 3".to_string()), "{fields:?}");
+        assert!(fields.contains(&"extra.merchant: 1 of 3".to_string()), "{fields:?}");
+    }
+
+    #[test]
+    fn the_census_survives_redaction() {
+        let raw = sample_transactions(BODY, 1).unwrap();
+        let redacted: Value = serde_json::from_str(&redact(&raw)).unwrap();
+        assert_eq!(redacted["scanned"], 3);
+        assert_eq!(redacted["fields_seen"], sample()["fields_seen"]);
     }
 }
 
