@@ -1,111 +1,126 @@
 # Ledgerly — open work
 
-Written 2026-09-11, at the end of the dashboard investment-figures cycle.
-Newest context first. `docs/HANDOFF.md` remains the reference for how things
-work; this file is only what is *not done yet*.
+Rewritten 2026-10-14 after a full review, when every branch was merged and
+`master` became the only branch. `docs/HANDOFF.md` remains the reference for how
+things work; this file is only what is *not done yet*, **in the order to do it**.
+
+**The goal driving the order:** Ledgerly should be able to replace a paid
+budgeting app (Copilot) for daily use. So the list protects your data first, then
+fixes what makes everyday use annoying, then fills the gaps a budgeting app is
+expected to have, and only then adds the bigger investment features.
+
+Each item marked **(spec)** gets its own spec → plan → implement cycle. The rest
+are small enough to go straight to test-first implementation.
 
 ---
 
-## 1. Finish the dashboard investment-figures branch
+## Phase 1 — Protect your data
 
-**Branch:** `feature/dashboard-investment-figures` — 12 commits, not merged.
-**State:** complete and fully reviewed. 251 TypeScript tests, 147 Rust tests,
-`npx tsc --noEmit` clean. Nothing is broken or half-finished.
+- [ ] **1. Backup & export.** Everything lives in one unencrypted SQLite file,
+      and the only backup is the old `finance.sqlite.backup-pre-v2`. Wanted: a
+      "Back up now" button in Settings, an automatic dated copy on launch and
+      before every migration (keep the last N), and a CSV/JSON export. Use
+      SQLite's online backup API (`rusqlite` `backup` feature), not a file copy,
+      so a backup taken mid-write is still consistent. **(spec)**
+- [ ] **2. CI on GitHub.** There is no `.github/workflows` yet. Add an Action on
+      push running `npm test`, `npx tsc --noEmit` and `cargo test` on
+      `windows-latest`, so a broken change is caught on GitHub, not in the app.
+- [ ] **3. Hardening.** `"csp": null` in `tauri.conf.json` turns off the
+      content security policy while the app shows third-party headlines; set a
+      real one. Remove Stooq's unused `parse_daily_csv` / `daily_url`, which warn
+      on every build. Two component tests time out on a busy machine (seen in
+      `Activity.test.tsx`); give them more time or make them cheaper.
 
-**What it changed:** Today and All time on the Dashboard now describe the
-investments only (a paycheck cannot move them), Invested joined Cash and Owed,
-and the value chart gained a Net worth / Investments toggle.
+## Phase 2 — Everyday annoyances
 
-- [ ] **Look at it on screen.** This is the only outstanding work. Everything
-      automated passes, but the running app was never viewed — two things need a
-      human eye:
-      1. whether six figures read well on one headline row (the CSS wraps to a
-         second line rather than overflowing, so nothing breaks, but whether the
-         wrap *looks* right is a judgement call);
-      2. whether the Investments line really is flat across real paydays. The
-         logic is pinned by tests; live data is the actual proof.
+- [ ] **4. Look at the Dashboard in the running app** *(yours to do)*. The
+      investment-figures work is merged but has never been seen on screen.
+      Check that six figures on one headline row look right, and that the
+      Investments line stays flat across real paydays. Run `npm run tauri dev`.
+- [ ] **5. Edit a transaction.** Only create and delete exist today, so a typo
+      means deleting and re-entering. Needs a `transactions_update` command and
+      an edit form in Activity.
+- [ ] **6. CSV import de-duplication.** Importing the same file twice doubles
+      the holdings. In the preview step, flag rows already present (same
+      account, date, type, security, quantity, price) and skip them by default.
+- [ ] **7. SimpleFIN auto-sync.** Sync is manual today. Add a timer beside the
+      price auto-refresh; `simplefin_sync` is already async, so it will not
+      freeze the window.
+- [ ] **8. Three small dashboard bugs found in review:**
+      - The Investments chart draws a flat zero line instead of an empty state
+        when nothing is held, because `usePriceHistoryRows` returns every
+        stored close. Put the decision in a small exported predicate and test
+        it, as `RiskCard` already does ("Nothing invested to measure yet").
+      - The headline and the chart disagree about a manual holding with no
+        price: `buildPositions` (`src/domain/positions.ts`) values it at 0,
+        `reconstructSeries` (`src/domain/history.ts`) at the last price paid.
+        Write a failing test first, and check the ripple into
+        `concentration()` and the allocation weights before choosing one.
+      - `toValueSeries` in `src/domain/series.ts` is called only by its own
+        test. Confirm it is dead (check whether Rust still writes snapshots),
+        then remove it or record why it stays.
 
-      ```bash
-      npm run tauri dev
-      ```
+## Phase 3 — What a budgeting app is expected to do
 
-- [ ] **Then decide:** merge to `master` locally, or open a PR. Four options were
-      on the table — merge locally, PR, keep as-is, discard. Keeping as-is is the
-      current state; nothing expires.
+These are the gaps a former Copilot user would notice first.
 
-**Docs:** spec `docs/superpowers/specs/2026-09-11-dashboard-investment-figures-design.md`,
-plan `docs/superpowers/plans/2026-09-11-dashboard-investment-figures.md`.
+- [ ] **9. Bank-supplied categories.** First *(yours to do)*: run the SimpleFIN
+      diagnostic in Settings against your real bank (Task 7 of
+      `docs/superpowers/plans/2026-09-12-simplefin-category-diagnostic.md`) to
+      see whether your bank sends a category. If it does, build the rest of
+      `docs/superpowers/specs/2026-09-12-bank-supplied-categories-design.md`.
+- [ ] **10. Search and filter transactions.** Spending shows one month at a
+      time with no search. Wanted: find by payee, description, amount or
+      category across all months.
+- [ ] **11. Edit a bank transaction.** Today only its category can change. Add
+      a note, a friendlier display name, and an "exclude from budget" switch
+      (for reimbursements, one-offs and the like). Needs a migration; keep the
+      sync from overwriting what you set, the way `category_source = 'manual'`
+      already protects categories. **(spec)**
+- [ ] **12. Recurring bills and subscriptions.** Detect repeating payees with a
+      steady amount and cadence, list them with the next expected date, and show
+      what is still due this month. The maths is pure and belongs in
+      `src/domain/`. **(spec)**
+- [ ] **13. Spending trends.** A month-by-month view: spending per category over
+      the last 6–12 months, and income against spending (cash flow).
+- [ ] **14. Budget rollover** (optional per category): unspent money carries
+      into next month, overspending reduces it.
+- [ ] **15. Split a transaction** across categories (one Costco trip →
+      groceries + household). **(spec)**
 
----
+## Phase 4 — Correct numbers for a real portfolio
 
-## 2. Three follow-ups found by review, deliberately not folded in
+- [ ] **16. Stock splits.** There is no `split` transaction type, so a split
+      breaks share count and average cost. Needs a v6 migration widening the
+      `transactions.type` CHECK (a table rebuild, like v3) and a branch in
+      `buildPositions`, `clampOversells` and `reconstructSeries`. **(spec)**
+- [ ] **17. Dividends and real returns.** Dividends add cash but count toward
+      no gain figure. Add XIRR / time-weighted return, with dividends, and
+      compare against a benchmark. **(spec)**
+- [ ] **18. Holding detail.** A per-holding page showing its individual lots,
+      transactions, price chart and headlines. **(spec)**
 
-Each was logged as a task chip in the session that found it. If those chips are
-gone, the full context is here. All three are real, none is urgent.
+## Phase 5 — Security
 
-- [ ] **Dead `toValueSeries` code.** `src/domain/series.ts` builds a series from
-      snapshots, but is called only by its own test — the live path is
-      `reconstructSeries`. It now sits beside the new `ValuePoint` type, so a
-      future reader could wire up the wrong one. Verify it is genuinely dead
-      first (grep Rust too — the backend may still *write* snapshots even if
-      nothing reads them; if so, record that in `HANDOFF.md` rather than ripping
-      out the backend).
+- [ ] **19. Encrypted database (SQLCipher) + app lock.** Windows Hello or a
+      master password, with an auto-lock timeout. Do backup (1) first, and
+      encrypt the backups too once this lands. All database access goes
+      through `db.rs`, so the switch is mostly configuration. **(spec)**
 
-- [ ] **The headline and the chart disagree about unpriced manual holdings.**
-      For a manual holding whose security has no row in `prices` at all,
-      `buildPositions` (`src/domain/positions.ts`, ~line 52) falls back to `0`,
-      so the **Invested** figure omits it — while `reconstructSeries`
-      (`src/domain/history.ts`, ~line 116) falls back to the last price paid, so
-      the **Investments** chart line includes it at cost. Pre-existing, but the
-      new dashboard puts both numbers on one screen and invites comparison.
-      Write a failing test proving the divergence before changing anything.
-      Before adopting the last-paid fallback everywhere, check the ripple:
-      `concentration()` in `risk.ts` filters `marketValue > 0`, and allocation
-      weights divide by invested value, so the Concentration card and the
-      allocation chart would move too.
+## Phase 6 — Bigger extras
 
-- [ ] **Investments chart draws a flat zero line instead of an empty state.**
-      The card's empty state is gated only on `series.length < 2`, but
-      `usePriceHistoryRows` fetches every stored close — not just held
-      securities — so a portfolio with no holdings can still yield enough points
-      to pass that gate. `RiskCard` already handles the same condition properly
-      ("Nothing invested to measure yet"), so the dashboard would contradict
-      itself. Fix belongs in the rendering decision, not the data layer: extract
-      a small exported predicate and test that, since `Dashboard.tsx` cannot be
-      mounted.
+- [ ] **20. Risk analytics phases 3–4:** downside (max drawdown, historical
+      VaR/CVaR) and diversification (correlation matrix, ETF overlap). Specs:
+      `2026-09-08-risk-analytics-design.md`, `2026-09-11-alpha-vs-benchmark-design.md`.
+- [ ] **21. Crypto and other assets** (real estate, private holdings).
+- [ ] **22. Local AI summaries on the Markets screen.** Optional Ollama on
+      localhost. Two hard rules: the model never states a number (every figure
+      comes from SQLite), and it describes rather than recommends.
+- [ ] **23. Multi-currency** (v1 is USD-only).
 
----
+## Housekeeping
 
-## 3. Longer-term, from `docs/HANDOFF.md`
-
-Unchanged by this cycle. Each wants its own spec → plan → implement pass rather
-than being bolted on. Suggested order:
-
-- [ ] **Local model summaries for the Markets screen** — optional Ollama on
-      localhost, reading `news_items` plus positions to write a short
-      cross-holding summary. Two hard rules: the model never restates a number
-      (every figure renders from SQLite — a fluent wrong figure in a finance app
-      is the worst available failure), and it describes rather than recommends.
-      No Ollama, no panel, everything else unaffected.
-- [ ] **SimpleFIN scheduled auto-sync** — sync is manual today; a timer beside
-      the price auto-refresh would do it.
-- [ ] **Encrypted database (SQLCipher) + app lock** — Windows Hello / passkey /
-      master password, with an auto-lock timeout.
-- [ ] **Holding detail drill-down** — per-holding view showing individual lots.
-      In the original design spec, scoped out of v1.
-- [ ] **Crypto and manual/other asset types** (real estate, private assets).
-- [ ] **Risk analytics phases 3–4** — downside (max drawdown, historical
-      VaR/CVaR) and diversification (correlation matrix, ETF-overlap). Phases
-      0–2 are done.
-- [ ] **Advanced returns** (XIRR / time-weighted, benchmarks) and **historical
-      backfill** for the value chart, which today only builds forward from daily
-      snapshots.
-- [ ] **Multi-currency** (v1 is USD-only).
-
----
-
-## Note on the Markets screen
-
-It is **already built and merged** — Rust `market/` module, `src/domain/market.ts`,
-the screen at `/markets`. If it comes up again as something to build, check the
-app first; the work was done on 2026-09-11 and verified against live feeds.
+- [ ] Optional: rename branch `master` → `main`.
+- [x] Rust crate renamed from `fintech-scaffold` to `ledgerly` (2026-10-14). The
+      app identifier `com.ledgerly.app` did not change, so the database and the
+      saved SimpleFIN connection are where they were.

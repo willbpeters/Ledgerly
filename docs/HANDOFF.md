@@ -325,6 +325,10 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Remaining work
 
+> **`docs/TODO.md` is now the working list** (rewritten 2026-10-14, numbered in
+> the order to do it). The notes below keep the detail from the 2026-09-24
+> review; where they disagree, TODO.md wins.
+
 Features below get their own **spec → plan → implement** cycle rather than
 being bolted on ad hoc. The first block came out of the 2026-09-24 review and
 is ordered by how much it protects the owner's data; smaller items can go
@@ -351,9 +355,8 @@ E. **CI** — no `.github/workflows` yet. A GitHub Action on push running
    `npm test`, `npx tsc --noEmit` and `cargo test` on `windows-latest`.
 F. **Hardening / tidy-up:** `"csp": null` in `tauri.conf.json` disables the
    content security policy while the app renders third-party headlines — set
-   a real CSP. `Cargo.toml` still says `name = "fintech-scaffold"`,
-   `authors = ["you"]` (renaming the crate also renames `fintech_scaffold_lib`
-   in `main.rs`). Two component tests time out when the machine is busy
+   a real CSP. (The crate rename from `fintech-scaffold` to `ledgerly` is done.)
+   Two component tests time out when the machine is busy
    (seen in `Activity.test.tsx`); raise their timeout or make them cheaper.
    Stooq's unused `parse_daily_csv` / `daily_url` warn on every build.
 G. **Dividends in returns** — dividends add cash but count toward no gain
