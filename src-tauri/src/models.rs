@@ -114,6 +114,8 @@ pub struct BankTransaction {
     pub category_id: Option<i64>,
     /// "auto" or "manual"
     pub category_source: String,
+    /// False until the owner has looked at it: approved it, or chosen a category.
+    pub reviewed: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

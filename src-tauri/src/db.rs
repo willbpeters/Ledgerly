@@ -26,11 +26,13 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 
 /// Version-gated migrations. v1 is the whole base schema; v2 adds SimpleFIN
 /// sync columns and the synced_holdings table; v3 adds budgeting and the
-/// `credit` account type; v4 adds the `hidden` flag on accounts. To add a
-/// change later: bump TARGET_VERSION, add another `if current < N` block, and
-/// give it a completeness check so a mis-stamped database can still repair
-/// itself. Add the new completeness check to `migration_pending` too.
-const TARGET_VERSION: i64 = 5;
+/// `credit` account type; v4 adds the `hidden` flag on accounts; v5 adds the
+/// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
+/// once. To add a change later: bump TARGET_VERSION, add another
+/// `if current < N` block, and give it a completeness check so a mis-stamped
+/// database can still repair itself. Add the new completeness check to
+/// `migration_pending` too.
+const TARGET_VERSION: i64 = 6;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -199,6 +201,26 @@ fn apply_v5(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(MIGRATION_5)
 }
 
+/// v6: bank transactions can be reviewed, as in Copilot.
+const V6_COLUMN: (&str, &str) = ("reviewed", "reviewed INTEGER NOT NULL DEFAULT 0");
+
+fn v6_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    column_exists(conn, "bank_transactions", V6_COLUMN.0)
+}
+
+/// Adds the column, re-sorts every automatic row with the new rules, then
+/// marks reviewed exactly the rows that ended up with a category — the owner
+/// chose to review only what is still uncategorised. One transaction, so an
+/// interruption leaves the old schema or the finished one, never a column with
+/// nothing marked (which would bury every transaction in the review list).
+fn apply_v6(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    add_column_if_missing(&tx, "bank_transactions", V6_COLUMN.0, V6_COLUMN.1)?;
+    crate::budget::store::recategorise_all(&tx)?;
+    tx.execute("UPDATE bank_transactions SET reviewed = (category_id IS NOT NULL)", [])?;
+    tx.commit()
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -337,6 +359,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v5_is_complete(conn)? {
         apply_v5(conn)?;
     }
+    if !v6_is_complete(conn)? {
+        apply_v6(conn)?;
+    }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
@@ -350,12 +375,49 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v2_is_complete(conn)?
         || !v3_is_complete(conn)?
         || !v4_is_complete(conn)?
-        || !v5_is_complete(conn)?)
+        || !v5_is_complete(conn)?
+        || !v6_is_complete(conn)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v6_re_sorts_existing_rows_and_reviews_only_the_categorised_ones() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        // Undo v6 to stand in for a v5 database with rows from an older build.
+        conn.execute_batch(
+            "ALTER TABLE bank_transactions DROP COLUMN reviewed;
+             INSERT INTO accounts (id,name,type,created_at) VALUES (90,'Card','credit','2026-10-01');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee)
+               VALUES (90,'shop','2026-10-01',-10,'TARGET','Target'),
+                      (90,'mystery','2026-10-02',-10,'ZQX','Zqx Holdings');",
+        ).unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+
+        let get = |ext: &str| -> (Option<String>, i64) {
+            conn.query_row(
+                "SELECT c.name, b.reviewed FROM bank_transactions b
+                 LEFT JOIN categories c ON c.id=b.category_id WHERE b.external_id=?1",
+                [ext], |r| Ok((r.get(0)?, r.get(1)?)),
+            ).unwrap()
+        };
+        assert_eq!(get("shop"), (Some("Shopping".into()), 1));
+        assert_eq!(get("mystery"), (None, 0), "only what is still uncategorised waits for review");
+        assert!(!migration_pending(&conn).unwrap());
+    }
+
+    #[test]
+    fn v6_run_twice_changes_nothing() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+        assert!(column_exists(&conn, "bank_transactions", "reviewed").unwrap());
+    }
 
     #[test]
     fn a_fully_migrated_database_has_no_migration_pending() {

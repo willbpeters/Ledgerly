@@ -78,23 +78,49 @@ pub fn categories_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
 
 // ---------- transactions ----------
 
+const TXN_COLUMNS: &str = "id,account_id,external_id,posted,amount,description,payee,memo,mcc,pending,
+                           category_id,category_source,reviewed";
+
+fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {
+    Ok(BankTransaction {
+        id: r.get(0)?, account_id: r.get(1)?, external_id: r.get(2)?, posted: r.get(3)?,
+        amount: r.get(4)?, description: r.get(5)?, payee: r.get(6)?, memo: r.get(7)?,
+        mcc: r.get(8)?, pending: r.get::<_, i64>(9)? != 0,
+        category_id: r.get(10)?, category_source: r.get(11)?,
+        reviewed: r.get::<_, i64>(12)? != 0,
+    })
+}
+
 pub fn list_transactions(conn: &Connection, from: &str, to: &str)
     -> rusqlite::Result<Vec<BankTransaction>> {
-    let mut stmt = conn.prepare(
-        "SELECT id,account_id,external_id,posted,amount,description,payee,memo,mcc,pending,
-                category_id,category_source
-         FROM bank_transactions WHERE posted >= ?1 AND posted <= ?2
-         ORDER BY posted DESC, id DESC",
-    )?;
-    let rows = stmt.query_map([from, to], |r| {
-        Ok(BankTransaction {
-            id: r.get(0)?, account_id: r.get(1)?, external_id: r.get(2)?, posted: r.get(3)?,
-            amount: r.get(4)?, description: r.get(5)?, payee: r.get(6)?, memo: r.get(7)?,
-            mcc: r.get(8)?, pending: r.get::<_, i64>(9)? != 0,
-            category_id: r.get(10)?, category_source: r.get(11)?,
-        })
-    })?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {TXN_COLUMNS} FROM bank_transactions WHERE posted >= ?1 AND posted <= ?2
+         ORDER BY posted DESC, id DESC"
+    ))?;
+    let rows = stmt.query_map([from, to], txn_from_row)?;
     rows.collect()
+}
+
+/// Every transaction the owner has not looked at yet, any month, newest first.
+pub fn list_to_review(conn: &Connection) -> rusqlite::Result<Vec<BankTransaction>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {TXN_COLUMNS} FROM bank_transactions WHERE reviewed = 0
+         ORDER BY posted DESC, id DESC"
+    ))?;
+    let rows = stmt.query_map([], txn_from_row)?;
+    rows.collect()
+}
+
+#[tauri::command]
+pub fn bank_transactions_to_review(db: tauri::State<Db>) -> Result<Vec<BankTransaction>, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    list_to_review(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn bank_transactions_approve(db: tauri::State<Db>, ids: Vec<i64>) -> Result<usize, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store::approve(&conn, &ids).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 //! Reading and writing budgeting data. The decisions live in `categorize`;
 //! this module only persists them.
 use super::categorize::{self, Candidate, Decision, Rule};
-use super::seed;
+use super::{merchants, seed, transfers};
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// A transaction as it arrives from a provider, before it has a category.
@@ -54,6 +54,11 @@ pub fn upsert_transactions(
     rules: &[Rule],
 ) -> rusqlite::Result<UpsertCounts> {
     let mut counts = UpsertCounts::default();
+    // Money in on a card is a refund or a payment, not income, so the decision
+    // needs to know what kind of account this is.
+    let account_type: String = conn.query_row(
+        "SELECT type FROM accounts WHERE id=?1", [account_id], |r| r.get(0),
+    )?;
     for t in txns {
         let existing: Option<(i64, String)> = conn
             .query_row(
@@ -72,7 +77,7 @@ pub fn upsert_transactions(
                         params![t.posted, t.amount, t.description, t.payee, t.memo, t.mcc, t.pending as i64, id],
                     )?;
                 } else {
-                    let category = resolve(conn, categorize::decide(&candidate(t), rules))?;
+                    let category = resolve(conn, categorize::decide(&candidate(t, &account_type), rules))?;
                     conn.execute(
                         "UPDATE bank_transactions SET posted=?1, amount=?2, description=?3,
                            payee=?4, memo=?5, mcc=?6, pending=?7, category_id=?8 WHERE id=?9",
@@ -82,7 +87,7 @@ pub fn upsert_transactions(
                 counts.updated += 1;
             }
             None => {
-                let category = resolve(conn, categorize::decide(&candidate(t), rules))?;
+                let category = resolve(conn, categorize::decide(&candidate(t, &account_type), rules))?;
                 conn.execute(
                     "INSERT INTO bank_transactions
                        (account_id, external_id, posted, amount, description, payee, memo, mcc, pending, category_id, category_source)
@@ -97,12 +102,13 @@ pub fn upsert_transactions(
     Ok(counts)
 }
 
-fn candidate(t: &IncomingTxn) -> Candidate {
+fn candidate(t: &IncomingTxn, account_type: &str) -> Candidate {
     Candidate {
         payee: t.payee.clone(),
         description: t.description.clone(),
         mcc: t.mcc.clone(),
         amount: t.amount,
+        account_type: account_type.to_string(),
     }
 }
 
@@ -125,7 +131,7 @@ pub fn set_category(
     apply_to_payee: bool,
 ) -> rusqlite::Result<usize> {
     conn.execute(
-        "UPDATE bank_transactions SET category_id=?1, category_source='manual' WHERE id=?2",
+        "UPDATE bank_transactions SET category_id=?1, category_source='manual', reviewed=1 WHERE id=?2",
         params![category_id, txn_id],
     )?;
     if !apply_to_payee {
@@ -149,6 +155,76 @@ pub fn set_category(
         params![category_id, payee.to_lowercase()],
     )?;
     Ok(changed + 1)
+}
+
+/// File as Transfer every automatic row, posted on or after `since`, that has
+/// an equal-and-opposite partner in another of the owner's accounts. Payments
+/// to people never pair: a friend repaying dinner is not a transfer.
+/// Returns how many rows it marked.
+pub fn mark_transfer_pairs(conn: &Connection, since: &str) -> rusqlite::Result<usize> {
+    let Some(transfer) = seed::category_id(conn, "Transfer")? else { return Ok(0) };
+    let mut stmt = conn.prepare(
+        "SELECT id, account_id, posted, amount, payee, description FROM bank_transactions
+         WHERE category_source='auto' AND posted >= ?1",
+    )?;
+    let legs: Vec<transfers::Leg> = stmt
+        .query_map([since], |r| {
+            Ok((
+                transfers::Leg { id: r.get(0)?, account_id: r.get(1)?, posted: r.get(2)?, amount: r.get(3)? },
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, payee, description)| !merchants::is_person_to_person(payee.as_deref(), description))
+        .map(|(leg, _, _)| leg)
+        .collect();
+    let ids = transfers::pair(&legs);
+    for id in &ids {
+        conn.execute("UPDATE bank_transactions SET category_id=?1 WHERE id=?2", params![transfer, id])?;
+    }
+    Ok(ids.len())
+}
+
+/// Re-decide every automatic row from what is already stored, then pair
+/// transfers across all of history. No network: payee, description, amount
+/// and account type are all on hand. Manual rows are never touched.
+pub fn recategorise_all(conn: &Connection) -> rusqlite::Result<usize> {
+    let rules = load_rules(conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.payee, b.description, b.mcc, b.amount, a.type
+         FROM bank_transactions b JOIN accounts a ON a.id = b.account_id
+         WHERE b.category_source='auto'",
+    )?;
+    let rows: Vec<(i64, Candidate)> = stmt
+        .query_map([], |r| {
+            Ok((r.get(0)?, Candidate {
+                payee: r.get(1)?, description: r.get(2)?, mcc: r.get(3)?,
+                amount: r.get(4)?, account_type: r.get(5)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, c) in &rows {
+        let category = resolve(conn, categorize::decide(c, &rules))?;
+        conn.execute("UPDATE bank_transactions SET category_id=?1 WHERE id=?2", params![category, id])?;
+    }
+    mark_transfer_pairs(conn, "0000-01-01")?;
+    Ok(rows.len())
+}
+
+/// Accept rows as they are: reviewed, and their category made manual so a
+/// later change to the merchant lists can never move something the owner
+/// already accepted. Returns how many rows changed.
+pub fn approve(conn: &Connection, ids: &[i64]) -> rusqlite::Result<usize> {
+    let mut changed = 0;
+    for id in ids {
+        changed += conn.execute(
+            "UPDATE bank_transactions SET reviewed=1, category_source='manual' WHERE id=?1",
+            [id],
+        )?;
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -185,9 +261,12 @@ mod tests {
         let counts = upsert_transactions(&conn, a, &[
             txn("t1", -85.5, "Local Grocer", Some("5411")),
             txn("t2", -55.5, "John's Fishin Shack", Some("5812")),
-            txn("t3", 2400.0, "ACME Payroll", None),
         ], &[]).unwrap();
-        assert_eq!(counts, UpsertCounts { added: 3, updated: 0 });
+        assert_eq!(counts, UpsertCounts { added: 2, updated: 0 });
+        // Pay arrives in a checking account. Money in on a card is a refund
+        // or a payment, never income, so this row lives on a cash account.
+        let checking = account(&conn, "Checking", "cash");
+        upsert_transactions(&conn, checking, &[txn("t3", 2400.0, "ACME Payroll", None)], &[]).unwrap();
         assert_eq!(category_of(&conn, "t1").as_deref(), Some("Groceries"));
         assert_eq!(category_of(&conn, "t2").as_deref(), Some("Dining"));
         assert_eq!(category_of(&conn, "t3").as_deref(), Some("Income"));
@@ -282,5 +361,122 @@ mod tests {
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
         set_category(&conn, id, None, false).unwrap();
         assert_eq!(category_of(&conn, "t1"), None);
+    }
+
+    fn category_named(conn: &Connection, id: Option<i64>) -> Option<String> {
+        id.and_then(|id| conn.query_row("SELECT name FROM categories WHERE id=?1", [id], |r| r.get(0)).ok())
+    }
+
+    fn row(conn: &Connection, ext: &str) -> (Option<String>, String, bool) {
+        let (cat, source, reviewed): (Option<i64>, String, i64) = conn.query_row(
+            "SELECT category_id, category_source, reviewed FROM bank_transactions WHERE external_id=?1",
+            [ext], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        (category_named(conn, cat), source, reviewed != 0)
+    }
+
+    fn payee_txn(ext: &str, posted: &str, amount: f64, payee: &str) -> IncomingTxn {
+        IncomingTxn {
+            external_id: ext.into(), posted: posted.into(), amount,
+            description: payee.to_uppercase(), payee: Some(payee.into()),
+            memo: None, mcc: None, pending: false,
+        }
+    }
+
+    #[test]
+    fn money_in_on_a_card_is_not_income_when_synced() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("r1", "2026-10-01", 12.0, "Zqx Holdings")], &[]).unwrap();
+        assert_eq!(row(&conn, "r1").0, None);
+    }
+
+    #[test]
+    fn a_new_transaction_arrives_unreviewed() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
+        assert_eq!(row(&conn, "t1"), (Some("Shopping".into()), "auto".into(), false));
+    }
+
+    #[test]
+    fn matched_legs_across_accounts_become_transfers() {
+        let conn = db::open_in_memory().unwrap();
+        let bank = account(&conn, "Checking", "cash");
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, bank, &[payee_txn("out", "2026-10-12", -40.59, "Zqx Holdings")], &[]).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("in", "2026-10-11", 40.59, "Zqx Holdings")], &[]).unwrap();
+
+        assert_eq!(mark_transfer_pairs(&conn, "2026-01-01").unwrap(), 2);
+        assert_eq!(row(&conn, "out").0.as_deref(), Some("Transfer"));
+        assert_eq!(row(&conn, "in").0.as_deref(), Some("Transfer"));
+    }
+
+    #[test]
+    fn payments_to_people_and_manual_rows_never_pair() {
+        let conn = db::open_in_memory().unwrap();
+        let bank = account(&conn, "Checking", "cash");
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, bank, &[payee_txn("venmo", "2026-10-12", -20.0, "Transfer to Venmo")], &[]).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("refund", "2026-10-12", 20.0, "Zqx Holdings")], &[]).unwrap();
+        upsert_transactions(&conn, bank, &[payee_txn("mine", "2026-10-12", -33.0, "Zqx Holdings")], &[]).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("other", "2026-10-12", 33.0, "Zqx Holdings")], &[]).unwrap();
+        let mine: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='mine'", [], |r| r.get(0)).unwrap();
+        set_category(&conn, mine, None, false).unwrap();
+
+        assert_eq!(mark_transfer_pairs(&conn, "2026-01-01").unwrap(), 0);
+    }
+
+    #[test]
+    fn the_re_sort_updates_automatic_rows_and_leaves_manual_ones() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        // Rows written as an older build would have left them: no category.
+        for (ext, payee) in [("a", "Target"), ("m", "Costco")] {
+            conn.execute(
+                "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee)
+                 VALUES (?1,?2,'2026-10-01',-10,?3,?3)",
+                params![card, ext, payee],
+            ).unwrap();
+        }
+        let m: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='m'", [], |r| r.get(0)).unwrap();
+        set_category(&conn, m, None, false).unwrap();
+
+        recategorise_all(&conn).unwrap();
+
+        assert_eq!(row(&conn, "a").0.as_deref(), Some("Shopping"));
+        assert_eq!(row(&conn, "m").0, None, "a manual choice is never re-decided");
+    }
+
+    #[test]
+    fn choosing_a_category_marks_the_row_reviewed() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Zqx Holdings")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        let dining = seed::category_id(&conn, "Dining").unwrap();
+        set_category(&conn, id, dining, false).unwrap();
+        assert_eq!(row(&conn, "t1"), (Some("Dining".into()), "manual".into(), true));
+    }
+
+    #[test]
+    fn approving_marks_reviewed_and_locks_the_category() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
+
+        assert_eq!(approve(&conn, &[id]).unwrap(), 1);
+        assert_eq!(row(&conn, "t1"), (Some("Shopping".into()), "manual".into(), true));
+    }
+
+    #[test]
+    fn a_later_sync_does_not_unreview_a_row() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
+        conn.execute("UPDATE bank_transactions SET reviewed=1", []).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.5, "Target")], &[]).unwrap();
+        assert!(row(&conn, "t1").2);
     }
 }

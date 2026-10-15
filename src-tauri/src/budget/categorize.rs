@@ -3,7 +3,7 @@
 //! Pure: no database, no network. The caller loads the user's rules and
 //! resolves the returned category name to an id.
 
-use super::mcc;
+use super::{mcc, merchants};
 
 /// A rule the user created by correcting a category.
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +22,9 @@ pub struct Candidate {
     pub description: String,
     pub mcc: Option<String>,
     pub amount: f64,
+    /// "cash", "credit" or "brokerage". Money in on a card is a refund or a
+    /// payment, never income.
+    pub account_type: String,
 }
 
 /// What categorisation decided.
@@ -41,9 +44,10 @@ fn contains(haystack: &str, needle: &str) -> bool {
     !needle.is_empty() && haystack.to_lowercase().contains(&needle.to_lowercase())
 }
 
-/// Decide a category. Rules beat the merchant-code map, which beats the
-/// sign of the amount. Manual categories are honoured by the caller, which
-/// simply does not ask about them.
+/// Decide a category. User rules first, then payments to people (left alone),
+/// transfer wording, the merchant-code map, known merchants, and finally money
+/// in on a cash account as Income. Manual categories are honoured by the
+/// caller, which simply does not ask about them.
 pub fn decide(c: &Candidate, rules: &[Rule]) -> Decision {
     // 1. Exact MCC rules, the most specific thing a user can write.
     if let Some(code) = c.mcc.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -61,14 +65,29 @@ pub fn decide(c: &Candidate, rules: &[Rule]) -> Decision {
     if let Some(r) = rules.iter().find(|r| r.match_type == "description" && contains(&c.description, &r.pattern)) {
         return Decision::Rule(r.category_id);
     }
-    // 4. The built-in merchant-code map.
+    // 4. Money sent to a person: only the owner knows what it was for, so no
+    //    rung below may call it a transfer or a purchase.
+    if merchants::is_person_to_person(c.payee.as_deref(), &c.description) {
+        return Decision::None;
+    }
+    // 5. Money moving between the owner's own accounts.
+    if merchants::is_transfer_wording(c.payee.as_deref(), &c.description) {
+        return Decision::Builtin("Transfer");
+    }
+    // 6. The built-in merchant-code map. Most banks here send no code, so this
+    //    rarely fires, but it is right when it does.
     if let Some(code) = c.mcc.as_deref() {
         if let Some(name) = mcc::category_for(code) {
             return Decision::Builtin(name);
         }
     }
-    // 5. Money in, with nothing else to go on.
-    if c.amount > 0.0 {
+    // 7. A known merchant or keyword.
+    if let Some(name) = merchants::merchant_category(c.payee.as_deref(), &c.description) {
+        return Decision::Builtin(name);
+    }
+    // 8. Money in, with nothing else to go on — but only on a cash account:
+    //    money in on a card is a refund or a payment, never income.
+    if c.amount > 0.0 && c.account_type != "credit" {
         return Decision::Income;
     }
     Decision::None
@@ -87,7 +106,47 @@ mod tests {
             description: description.into(),
             mcc: mcc.map(str::to_string),
             amount,
+            account_type: "cash".into(),
         }
+    }
+
+    fn on(account_type: &str, payee: &str, description: &str, amount: f64) -> Candidate {
+        Candidate {
+            payee: Some(payee.into()),
+            description: description.into(),
+            mcc: None,
+            amount,
+            account_type: account_type.into(),
+        }
+    }
+
+    #[test]
+    fn a_known_merchant_is_categorised_without_a_merchant_code() {
+        assert_eq!(decide(&on("credit", "Target", "TARGET 0001", -25.0), &[]), Decision::Builtin("Shopping"));
+    }
+
+    #[test]
+    fn a_payee_rule_beats_a_known_merchant() {
+        let rules = vec![rule("payee", "costco", 9)];
+        assert_eq!(decide(&on("credit", "Costco", "", -80.0), &rules), Decision::Rule(9));
+    }
+
+    #[test]
+    fn transfer_wording_files_a_transfer() {
+        let c = on("credit", "Automatic Payment", "AUTOMATIC PAYMENT - THANK", 40.59);
+        assert_eq!(decide(&c, &[]), Decision::Builtin("Transfer"));
+    }
+
+    #[test]
+    fn money_to_a_person_is_left_for_the_owner_even_when_it_says_transfer() {
+        let c = on("cash", "Transfer to Apple Pay", "", -30.0);
+        assert_eq!(decide(&c, &[]), Decision::None);
+    }
+
+    #[test]
+    fn money_in_on_a_credit_card_is_not_income() {
+        assert_eq!(decide(&on("credit", "Zqx Holdings", "", 19.99), &[]), Decision::None);
+        assert_eq!(decide(&on("cash", "Zqx Holdings", "", 19.99), &[]), Decision::Income);
     }
 
     #[test]

@@ -86,7 +86,6 @@ const KEYWORDS: &[(&str, &[&str])] = &[
     ("Entertainment", &["golf"]),
     ("Transport", &["parking", "toll"]),
     ("Fees", &["fee", "interest charge"]),
-    ("Shopping", &["store", "shop"]),
 ];
 
 fn texts(payee: Option<&str>, description: &str) -> (String, String) {
@@ -171,8 +170,16 @@ mod tests {
 
     #[test]
     fn a_merchant_name_beats_a_keyword() {
-        // "store" is a Shopping keyword; Apple's App Store is a subscription.
-        assert_eq!(merchant_category(Some("Apple"), "APPLE.COM/BILL STORE"), Some("Subscriptions"));
+        // "cafe" is a Dining keyword; a Target with a cafe inside is still Target.
+        assert_eq!(merchant_category(Some("Target"), "TARGET CAFE 0042"), Some("Shopping"));
+    }
+
+    #[test]
+    fn generic_words_are_not_guessed_at() {
+        // "Shop" or "Store" alone says nothing about what was bought; a blank
+        // that lands in To review beats a wrong guess hiding in a budget.
+        assert_eq!(merchant_category(Some("Shop"), "Thing"), None);
+        assert_eq!(merchant_category(Some("Corner Store"), ""), None);
     }
 
     #[test]
