@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose } from "../../data/queries";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose, useBackupNow } from "../../data/queries";
+import { AddBankSection, SIMPLEFIN_MY_ACCOUNT_URL } from "./AddBankSection";
 import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
 import { askToConfirm } from "../../ui/confirm";
@@ -36,6 +38,7 @@ export function SimplefinCard() {
   const disconnect = useSimplefinDisconnect();
   const backfill = useSimplefinBackfill();
   const diagnose = useSimplefinDiagnose();
+  const backUp = useBackupNow();
   const [sample, setSample] = useState<SimplefinSample | null>(null);
   const [copied, setCopied] = useState("");
   const [token, setToken] = useState("");
@@ -52,6 +55,21 @@ export function SimplefinCard() {
   function doSync() {
     setError(""); setReport(null);
     sync.mutate(undefined, { onSuccess: setReport, onError: (e) => setError(String(e)) });
+  }
+  function openSimplefin() {
+    openUrl(SIMPLEFIN_MY_ACCOUNT_URL).catch((e) => setError(`Couldn't open your browser: ${String(e)}`));
+  }
+  /** A sync drops any account the new token no longer shares, along with its
+   *  transactions, so back up first: a wrong token is then one restore away. */
+  async function doUpdateConnection(newToken: string) {
+    setError(""); setReport(null);
+    try {
+      await backUp.mutateAsync();
+    } catch (e) {
+      setError(`Didn't update the connection, because the backup before it failed: ${String(e)}`);
+      return;
+    }
+    connect.mutate(newToken, { onSuccess: setReport, onError: (e) => setError(String(e)) });
   }
   async function doDisconnect() {
     const removeAccounts = await askToConfirm(
@@ -95,6 +113,12 @@ export function SimplefinCard() {
             <Button variant="danger" onClick={doDisconnect} loading={disconnect.isPending}>Disconnect</Button>
           </div>
           {report && <Report r={report} />}
+
+          <AddBankSection
+            onOpenSimplefin={openSimplefin}
+            onUpdateConnection={doUpdateConnection}
+            updating={backUp.isPending || connect.isPending}
+          />
 
           <details onToggle={(e) => { if (!(e.currentTarget as HTMLDetailsElement).open) setSample(null); }}>
             <summary className="muted" style={{ cursor: "pointer" }}>
@@ -170,7 +194,7 @@ export function SimplefinCard() {
       actions={<Badge>Not connected</Badge>}>
       <div className="grid" style={{ gap: 14 }}>
         <ol className="steps">
-          <li>Sign up at <a href="https://bridge.simplefin.org" target="_blank" rel="noreferrer">bridge.simplefin.org</a> (about $1.50/month).</li>
+          <li>Sign up at <a href={SIMPLEFIN_MY_ACCOUNT_URL} onClick={(e) => { e.preventDefault(); openSimplefin(); }}>SimpleFIN Bridge</a> (about $1.50/month).</li>
           <li>Connect each bank or brokerage you want in Ledgerly.</li>
           <li>Click <strong>New Setup Token</strong>, copy it, and paste it below. Tokens work once, so make a new one if this fails.</li>
         </ol>
