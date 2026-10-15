@@ -9,11 +9,13 @@ import type { Account, BankTransaction, Category } from "../../domain/types";
  * marks that row as chosen by hand, and can teach Ledgerly to do the same for
  * everything else from that payee.
  */
-export function TransactionList({ transactions, categories, accounts, colourOf }: {
+export function TransactionList({ transactions, categories, accounts, colourOf, onApprove }: {
   transactions: BankTransaction[];
   categories: Category[];
   accounts: Account[];
   colourOf: (token: string) => string;
+  /** Offered on the To review list: accept a row as it is. */
+  onApprove?: (id: number) => void;
 }) {
   const setCategory = useSetTransactionCategory();
   const [teaching, setTeaching] = useState<number | null>(null);
@@ -40,6 +42,7 @@ export function TransactionList({ transactions, categories, accounts, colourOf }
             <th className="left">Account</th>
             <th className="left">Category</th>
             <th>Amount</th>
+            {onApprove && <th />}
           </tr>
         </thead>
         <tbody>
@@ -79,6 +82,11 @@ export function TransactionList({ transactions, categories, accounts, colourOf }
                     {t.category_source === "manual" && (
                       <span className="muted" style={{ fontSize: 10 }} title="You chose this category">·</span>
                     )}
+                    {!t.reviewed && (
+                      <span title="To review" aria-label="To review" style={{
+                        width: 6, height: 6, borderRadius: 3, background: "var(--accent)", flexShrink: 0,
+                      }} />
+                    )}
                   </div>
                   {teaching === t.id && t.payee && (
                     <div className="row center" style={{ gap: 8, marginTop: 6 }}>
@@ -95,6 +103,12 @@ export function TransactionList({ transactions, categories, accounts, colourOf }
                 <td className={incoming ? "pos" : undefined} style={{ fontWeight: 600 }}>
                   {incoming ? "+" : ""}{money(t.amount)}
                 </td>
+                {onApprove && (
+                  <td>
+                    <button className="btn btn-ghost btn-sm" aria-label={`Approve ${t.payee ?? t.description}`}
+                      title="Looks right" onClick={() => onApprove(t.id)}>✓</button>
+                  </td>
+                )}
               </tr>
             );
           })}
