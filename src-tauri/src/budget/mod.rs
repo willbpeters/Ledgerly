@@ -5,3 +5,4 @@ pub mod mcc;
 pub mod merchants;
 pub mod seed;
 pub mod store;
+pub mod transfers;
