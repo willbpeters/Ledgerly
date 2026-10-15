@@ -37,7 +37,7 @@ const PERSON_TO_PERSON: &[&str] = &["apple pay", "apple cash", "venmo", "zelle",
 const TRANSFER_PHRASES: &[&str] = &[
     "credit card payment", "card payment", "automatic payment", "autopay",
     "payment thank you", "credit crd", "transfer to checking", "transfer to savings",
-    "transfer from", "online transfer",
+    "transfer from", "online transfer", "schwab brokerage", "moneylink", "to bank of america",
 ];
 
 /// Payees that are a transfer only when they are the *whole* payee. "Payment"
@@ -61,9 +61,11 @@ const MERCHANTS: &[(&str, &[&str])] = &[
         "raising canes", "starbucks", "mcdonalds", "chipotle", "menchies",
         "menchies frozen yogurt", "doordash", "uber eats", "dutch bros", "subway",
         "wendys", "jack in the box", "dominos", "pizza hut", "panera bread", "five guys",
+        "salt straw", "yogurt mill",
     ]),
-    ("Shopping", &["target", "amazon", "walmart", "best buy", "home depot", "lowes", "ikea", "ebay", "etsy"]),
-    ("Transport", &["uber", "lyft"]),
+    ("Shopping", &["target", "amazon", "walmart", "best buy", "home depot", "lowes", "ikea", "ebay", "etsy",
+        "depop", "quince", "american tall", "us postal service", "usps"]),
+    ("Transport", &["uber", "lyft", "lime", "department of motor vehicles", "dmv"]),
     ("Fuel", &["shell", "chevron", "arco", "exxon", "valero"]),
     ("Travel", &[
         "allegiant air", "southwest", "southwest airlines", "delta", "delta air lines",
@@ -72,7 +74,7 @@ const MERCHANTS: &[(&str, &[&str])] = &[
     ]),
     ("Subscriptions", &[
         "spotify", "netflix", "hulu", "disney plus", "youtube premium", "apple", "icloud",
-        "anthropic", "openai", "chatgpt", "amazon prime", "audible",
+        "anthropic", "openai", "chatgpt", "amazon prime", "audible", "microsoft",
     ]),
     ("Utilities", &["pg e", "smud", "comcast", "xfinity", "at t", "verizon", "t mobile"]),
     ("Health", &["cvs", "walgreens", "kaiser"]),
@@ -81,11 +83,15 @@ const MERCHANTS: &[(&str, &[&str])] = &[
 
 /// Single words that point at a category when no merchant matched.
 const KEYWORDS: &[(&str, &[&str])] = &[
-    ("Dining", &["burger", "taco", "pizza", "grill", "cafe", "coffee", "restaurant"]),
+    ("Dining", &[
+        "burger", "taco", "pizza", "grill", "cafe", "coffee", "restaurant",
+        "ice cream", "yogurt", "vending", "vend",
+    ]),
     ("Travel", &["airline", "airlines", "hotel"]),
     ("Entertainment", &["golf"]),
     ("Transport", &["parking", "toll"]),
     ("Fees", &["fee", "interest charge"]),
+    ("Shopping", &["bookstore"]),
 ];
 
 fn texts(payee: Option<&str>, description: &str) -> (String, String) {
@@ -211,5 +217,35 @@ mod tests {
         assert!(!is_transfer_wording(Some("Target"), "TARGET 00012"));
         // "Payment" must be the whole payee, not any payee mentioning one.
         assert!(!is_transfer_wording(Some("Payment Processing Fees LLC"), ""));
+    }
+
+    /// The owner's own long tail, as left uncategorised by the first re-sort
+    /// on 2026-10-15.
+    #[test]
+    fn the_owners_remaining_merchants_are_known() {
+        for (payee, description, category) in [
+            ("Lime", "", "Transport"),
+            ("Depop", "DEPOP*", "Shopping"),
+            ("Quince", "ONEQUINCE", "Shopping"),
+            ("American Tall", "", "Shopping"),
+            ("Microsoft", "", "Subscriptions"),
+            ("Salt & Straw", "", "Dining"),
+            ("Yogurt Mill", "", "Dining"),
+            ("Gunther's Quality Ice Cream", "", "Dining"),
+            ("Canteen Vending Machine", "Canteen Vending Machines", "Dining"),
+            ("Jascin Vending via Cantaloupe", "", "Dining"),
+            ("365 Retail Markets", "365 Vend", "Dining"),
+            ("Hornet Bookstore", "", "Shopping"),
+            ("US Postal Service", "", "Shopping"),
+            ("California Department of Motor Vehicles", "", "Transport"),
+        ] {
+            assert_eq!(merchant_category(Some(payee), description), Some(category), "{payee}");
+        }
+    }
+
+    #[test]
+    fn moves_to_the_owners_own_bank_and_brokerage_are_transfers() {
+        assert!(is_transfer_wording(Some("Schwab Brokerage"), "SCHWAB BROKERAGE DES:MONEYLINK ID:X"));
+        assert!(is_transfer_wording(Some("To Bank of America"), ""));
     }
 }

@@ -90,7 +90,7 @@ export function Spending() {
       {view === "review" ? (
         <Card
           title="To review"
-          subtitle="Check the category on each new transaction. Changing one counts as reviewing it."
+          subtitle="New transactions, and any Ledgerly couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."
           actions={toReview.length > 0 ? (
             <Button size="sm" loading={approve.isPending}
               onClick={() => approve.mutate(toReview.map((t) => t.id))}>

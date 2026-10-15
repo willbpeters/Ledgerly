@@ -47,14 +47,15 @@ pub fn apply(conn: &mut Connection, set: &SfAccountSet) -> Result<SyncReport, St
             }
         }
     }
-    // Transfers can only be paired once every account is in: the two sides
-    // of a card payment arrive in different accounts. Only recent rows are
-    // looked at, so the cost stays flat as history grows.
-    let since = (chrono::Local::now().date_naive() - chrono::Duration::days(60))
-        .format("%Y-%m-%d")
-        .to_string();
-    if let Err(e) = crate::budget::store::mark_transfer_pairs(conn, &since) {
-        report.errors.push(format!("Matching transfers: {e}"));
+    // Re-sort every automatic row, history included, then pair transfers.
+    // Pairing has to wait until every account is in — the two sides of a card
+    // payment arrive in different accounts — and re-sorting all of history
+    // means an improvement to the merchant lists reaches old transactions on
+    // the next sync, not just the few days an incremental sync fetches. Rows
+    // the owner chose or approved are manual and never touched. A few thousand
+    // rows of string matching costs milliseconds.
+    if let Err(e) = crate::budget::store::recategorise_all(conn) {
+        report.errors.push(format!("Sorting transactions: {e}"));
     }
     report.accounts_removed = remove_unshared(conn, set).map_err(|e| e.to_string())?;
     Ok(report)
@@ -356,6 +357,27 @@ mod tests {
         assert_eq!(r.transactions_added, 0);
         let n: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1, "the stored transaction must survive");
+    }
+
+    #[test]
+    fn a_sync_re_sorts_older_rows_it_did_not_fetch() {
+        // An improvement to the merchant list must reach history, not only the
+        // few days an incremental sync fetches.
+        let mut conn = db::open_in_memory().unwrap();
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("card1", -10.0, vec![])] }).unwrap();
+        conn.execute(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee)
+             SELECT id,'old','2025-01-01',-20,'TARGET','Target' FROM accounts WHERE external_id='card1'",
+            [],
+        ).unwrap();
+
+        apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("card1", -10.0, vec![])] }).unwrap();
+
+        let name: Option<String> = conn.query_row(
+            "SELECT c.name FROM bank_transactions b LEFT JOIN categories c ON c.id=b.category_id
+             WHERE b.external_id='old'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(name.as_deref(), Some("Shopping"));
     }
 
     #[test]
