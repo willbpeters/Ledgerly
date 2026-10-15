@@ -29,7 +29,7 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// `credit` account type; v4 adds the `hidden` flag on accounts. To add a
 /// change later: bump TARGET_VERSION, add another `if current < N` block, and
 /// give it a completeness check so a mis-stamped database can still repair
-/// itself.
+/// itself. Add the new completeness check to `migration_pending` too.
 const TARGET_VERSION: i64 = 5;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
@@ -341,9 +341,47 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Would `open` change this database's structure? Asks exactly the questions
+/// `apply_migrations` asks, without acting on the answers, so the backup taken
+/// at launch can be labelled `pre-migration`. A new migration must be added
+/// here as well as there.
+pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
+    Ok(user_version(conn)? < 1
+        || !v2_is_complete(conn)?
+        || !v3_is_complete(conn)?
+        || !v4_is_complete(conn)?
+        || !v5_is_complete(conn)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fully_migrated_database_has_no_migration_pending() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        assert!(!migration_pending(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_v1_database_has_a_migration_pending() {
+        assert!(migration_pending(&v1_database()).unwrap());
+    }
+
+    #[test]
+    fn an_empty_database_has_a_migration_pending() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(migration_pending(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_database_missing_a_market_table_has_a_migration_pending() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("DROP TABLE index_quotes;").unwrap();
+        assert!(migration_pending(&conn).unwrap());
+    }
 
     #[test]
     fn migrations_create_all_tables_and_set_version() {
