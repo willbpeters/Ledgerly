@@ -7,6 +7,7 @@ mod secrets;
 mod simplefin;
 mod budget;
 mod market;
+mod backup;
 
 use tauri::Manager;
 
