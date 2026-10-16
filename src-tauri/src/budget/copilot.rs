@@ -233,7 +233,12 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     }
     let existing: HashSet<&str> = snap.rule_patterns.iter().map(String::as_str).collect();
     for (name, used_cats) in by_name {
-        if name.is_empty() || used_cats.len() < 2 || existing.contains(name.as_str()) { continue; }
+        // Payments to people stay the owner's call each time, as in the ladder.
+        if name.is_empty() || used_cats.len() < 2 || existing.contains(name.as_str())
+            || super::merchants::is_person_to_person(Some(&name), "")
+        {
+            continue;
+        }
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for c in &used_cats { *counts.entry(c.as_str()).or_default() += 1; }
         let (top, n) = counts.into_iter().max_by_key(|(_, n)| *n).expect("at least two categories");
@@ -380,6 +385,17 @@ mod tests {
         ])).unwrap();
         let p = plan(&rows, &snap());
         assert_eq!(p.rules, vec![LearnedRule { pattern: "haggin oaks".into(), category: "Golf".into() }]);
+    }
+
+    #[test]
+    fn no_rule_is_learned_for_payments_to_people() {
+        // The owner decides each Apple Pay, Venmo or Zelle payment; a rule
+        // learned from Copilot would quietly decide them instead.
+        let rows = parse_csv(&csv(&[
+            &row("2026-01-02", "Transfer to Apple Pay", "20", "Other", "regular", ""),
+            &row("2026-01-09", "Transfer to Apple Pay", "25", "Other", "regular", ""),
+        ])).unwrap();
+        assert!(plan(&rows, &snap()).rules.is_empty());
     }
 
     #[test]

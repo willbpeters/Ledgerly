@@ -7,6 +7,7 @@ pub mod simplefin;
 pub mod budget;
 pub mod market;
 pub mod backup;
+pub mod copilot;
 
 /// Run slow work — anything that touches the network — on a worker thread.
 ///
