@@ -162,6 +162,13 @@ fn parse_account(a: &Value, connections: &HashMap<String, String>) -> Option<SfA
     Some(SfAccount { id, name, institution, currency, balance, balance_date, holdings, transactions })
 }
 
+/// The posting date, or — while a transaction is still pending and SimpleFIN
+/// sends `posted: 0` — the date it happened. An epoch of 0 is not a date.
+fn posted_date(t: &Value) -> String {
+    let real = |k: &str| t.get(k).filter(|v| !v.is_null() && v.as_i64().map_or(true, |n| n > 0));
+    real("posted").or_else(|| real("transacted_at")).map(epoch_to_date).unwrap_or_else(today)
+}
+
 fn parse_transaction(t: &Value) -> Option<SfTransaction> {
     // Without an id we cannot deduplicate, so such a row is dropped rather than
     // risking a duplicate on every sync.
@@ -171,7 +178,7 @@ fn parse_transaction(t: &Value) -> Option<SfTransaction> {
         .filter(|s| !s.is_empty()).map(str::to_string);
     Some(SfTransaction {
         id,
-        posted: t.get("posted").map(epoch_to_date).unwrap_or_else(today),
+        posted: posted_date(t),
         amount: t.get("amount").map(money).unwrap_or(0.0),
         description: text("description").unwrap_or_else(|| "Transaction".to_string()),
         payee: text("payee"),
@@ -259,6 +266,18 @@ mod tests {
         assert!((a.balance - 114405.51).abs() < 1e-9);
         assert_eq!(a.balance_date, "2026-09-09"); // 1788912000 = 2026-09-09T00:00:00Z
         assert!(a.holdings.is_empty());
+    }
+
+    #[test]
+    fn a_pending_transaction_with_no_posted_date_uses_when_it_happened() {
+        // SimpleFIN sends posted = 0 while a transaction is pending; reading
+        // that as an epoch filed six of the owner's rows under 1970-01-01.
+        const JSON: &str = r#"{"errors":[],"accounts":[{"id":"A1","name":"Card","currency":"USD",
+          "balance":"-4.00","balance-date":1788912000,"transactions":[
+            {"id":"p","posted":0,"transacted_at":1783768170,"amount":"-4.00","description":"Coffee","pending":true}
+          ],"org":{"name":"Demo Bank"}}]}"#;
+        let set = parse_accounts_json(JSON).unwrap();
+        assert_eq!(set.accounts[0].transactions[0].posted, "2026-07-11");
     }
 
     #[test]
