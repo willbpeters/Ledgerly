@@ -116,6 +116,8 @@ pub struct BankTransaction {
     pub category_source: String,
     /// False until the owner has looked at it: approved it, or chosen a category.
     pub reviewed: bool,
+    /// The owner's note; Copilot's notes arrive with the import.
+    pub note: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

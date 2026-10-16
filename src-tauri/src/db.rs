@@ -28,11 +28,11 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// sync columns and the synced_holdings table; v3 adds budgeting and the
 /// `credit` account type; v4 adds the `hidden` flag on accounts; v5 adds the
 /// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
-/// once. To add a change later: bump TARGET_VERSION, add another
-/// `if current < N` block, and give it a completeness check so a mis-stamped
-/// database can still repair itself. Add the new completeness check to
-/// `migration_pending` too.
-const TARGET_VERSION: i64 = 6;
+/// once; v7 adds a `note` to bank transactions. To add a change later: bump
+/// TARGET_VERSION, add another `if current < N` block, and give it a
+/// completeness check so a mis-stamped database can still repair itself. Add
+/// the new completeness check to `migration_pending` too.
+const TARGET_VERSION: i64 = 7;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -221,6 +221,23 @@ fn apply_v6(conn: &Connection) -> rusqlite::Result<()> {
     tx.commit()
 }
 
+/// v7: a note on each bank transaction (Copilot's notes arrive with the import).
+const V7_COLUMN: (&str, &str) = ("note", "note TEXT");
+
+fn v7_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    column_exists(conn, "bank_transactions", V7_COLUMN.0)
+}
+
+/// Also drops pending rows dated 1970: SimpleFIN sent `posted: 0` for them and
+/// an older parser read it as an epoch. They are pending copies — the next sync
+/// brings them back with the date they happened.
+fn apply_v7(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    add_column_if_missing(&tx, "bank_transactions", V7_COLUMN.0, V7_COLUMN.1)?;
+    tx.execute("DELETE FROM bank_transactions WHERE pending = 1 AND posted < '2000-01-01'", [])?;
+    tx.commit()
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -362,6 +379,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v6_is_complete(conn)? {
         apply_v6(conn)?;
     }
+    if !v7_is_complete(conn)? {
+        apply_v7(conn)?;
+    }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
@@ -376,12 +396,33 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v3_is_complete(conn)?
         || !v4_is_complete(conn)?
         || !v5_is_complete(conn)?
-        || !v6_is_complete(conn)?)
+        || !v6_is_complete(conn)?
+        || !v7_is_complete(conn)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v7_adds_notes_and_drops_pending_rows_dated_1970() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE bank_transactions DROP COLUMN note;
+             INSERT INTO accounts (id,name,type,created_at) VALUES (91,'Card','credit','2026-10-01');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,pending)
+               VALUES (91,'stale','1970-01-01',-4,'Coffee',1), (91,'real','2026-10-01',-4,'Coffee',0);",
+        ).unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+
+        assert!(column_exists(&conn, "bank_transactions", "note").unwrap());
+        let left: Vec<String> = conn.prepare("SELECT external_id FROM bank_transactions WHERE account_id=91")
+            .unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(left, vec!["real".to_string()]);
+    }
 
     #[test]
     fn v6_re_sorts_existing_rows_and_reviews_only_the_categorised_ones() {

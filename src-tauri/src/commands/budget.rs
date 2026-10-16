@@ -79,7 +79,7 @@ pub fn categories_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
 // ---------- transactions ----------
 
 const TXN_COLUMNS: &str = "id,account_id,external_id,posted,amount,description,payee,memo,mcc,pending,
-                           category_id,category_source,reviewed";
+                           category_id,category_source,reviewed,note";
 
 fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {
     Ok(BankTransaction {
@@ -88,6 +88,7 @@ fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {
         mcc: r.get(8)?, pending: r.get::<_, i64>(9)? != 0,
         category_id: r.get(10)?, category_source: r.get(11)?,
         reviewed: r.get::<_, i64>(12)? != 0,
+        note: r.get(13)?,
     })
 }
 
