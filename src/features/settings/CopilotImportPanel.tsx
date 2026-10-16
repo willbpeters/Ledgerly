@@ -9,11 +9,17 @@ export interface CopilotImportPanelProps {
   busy: boolean;
   onChoose: () => void;
   onImport: () => void;
+  /** Rows Copilot does not have that will be removed: the ticked ones. */
+  removeIds: Set<number>;
+  onToggleRemove: (id: number) => void;
+  onSetAllRemove: (all: boolean) => void;
 }
 
 /** The "Import from Copilot" card's markup. Props only, so it can be tested
  *  without Tauri; `CopilotImportCard` wires it to the real calls. */
-export function CopilotImportPanel({ plan, result, busy, onChoose, onImport }: CopilotImportPanelProps) {
+export function CopilotImportPanel({
+  plan, result, busy, onChoose, onImport, removeIds, onToggleRemove, onSetAllRemove,
+}: CopilotImportPanelProps) {
   return (
     <Card title="Import from Copilot"
       subtitle="Bring your Copilot categories, notes and history into Ledgerly, once, so you can stop using Copilot.">
@@ -21,7 +27,8 @@ export function CopilotImportPanel({ plan, result, busy, onChoose, onImport }: C
         {result ? (
           <div className="notice pos">
             {result.matched} matched, {result.added} added, {result.categories} categories created,{" "}
-            {result.rules} rules learned. A backup was taken first, so this can be undone from Backups.
+            {result.rules} rules learned, {result.removed} removed. A backup was taken first, so this can be
+            undone from Backups, and any removed transaction can be restored from Spending.
           </div>
         ) : (
           <p className="muted" style={{ margin: 0 }}>
@@ -49,6 +56,27 @@ export function CopilotImportPanel({ plan, result, busy, onChoose, onImport }: C
                 <div className="grid" style={{ gap: 2, paddingTop: 6 }}>
                   {plan.skipped.map((s, i) => (
                     <div key={i} className="muted">{fmtDate(s.date)} · {s.name} · {money(s.amount)} · {s.account}</div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {plan.not_in_copilot.length > 0 && (
+              <details open>
+                <summary style={{ cursor: "pointer" }}>
+                  <strong>{plan.not_in_copilot.length} not in Copilot</strong>: probably deleted there after
+                  you were paid back. The {removeIds.size} ticked will be removed from Spending (you can
+                  restore any of them later).
+                </summary>
+                <div className="row center" style={{ gap: 8, padding: "6px 0" }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => onSetAllRemove(true)}>Tick all</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => onSetAllRemove(false)}>Tick none</button>
+                </div>
+                <div className="grid" style={{ gap: 2, maxHeight: 260, overflow: "auto" }}>
+                  {plan.not_in_copilot.map((n) => (
+                    <label key={n.txn_id} className="row center" style={{ gap: 8, fontSize: 12 }}>
+                      <input type="checkbox" checked={removeIds.has(n.txn_id)} onChange={() => onToggleRemove(n.txn_id)} />
+                      <span>{fmtDate(n.date)} · {n.name} · {money(n.amount)} · <span className="muted">{n.account}</span></span>
+                    </label>
                   ))}
                 </div>
               </details>

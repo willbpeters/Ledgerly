@@ -1,7 +1,7 @@
 import type { Account, BankTransaction, Budget, Category } from "./types";
 
 /**
- * Transactions that count toward spending: not in a hidden account, and not in
+ * Transactions that count toward spending: not removed, not in a hidden account, and not in
  * an investment account.
  *
  * Hiding an account takes it out of every total, and spending is a total.
@@ -12,7 +12,8 @@ import type { Account, BankTransaction, Budget, Category } from "./types";
  */
 export function fromVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
   const excluded = new Set(accounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
-  return txns.filter((t) => !excluded.has(t.account_id));
+  // A removed transaction was paid back: it is not spending the owner made.
+  return txns.filter((t) => !t.removed && !excluded.has(t.account_id));
 }
 
 /** First and last day of a `YYYY-MM` month, inclusive. */

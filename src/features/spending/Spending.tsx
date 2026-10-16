@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   useBankTransactions, useCategories, useBudgets, useAccounts, useBankTransactionRange,
-  useBankTransactionsToReview, useApproveTransactions,
+  useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
 } from "../../data/queries";
 import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
 import { money } from "../../ui/format";
@@ -11,6 +11,7 @@ import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
 import { Icons } from "../../app/icons";
+import { askToConfirm } from "../../ui/confirm";
 
 type View = "month" | "review";
 
@@ -35,6 +36,19 @@ export function Spending() {
   const { data: allToReview = [] } = useBankTransactionsToReview();
   const toReview = fromVisibleAccounts(allToReview, allAccounts);
   const approve = useApproveTransactions();
+
+  // Removing is for being paid back: out of Spending, restorable, never deleted.
+  const setRemoved = useSetRemoved();
+  const [showRemoved, setShowRemoved] = useState(false);
+  const hiddenAccounts = new Set(allAccounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
+  const removedThisMonth = allTxns.filter((t) => t.removed && !hiddenAccounts.has(t.account_id));
+  async function removeOne(id: number) {
+    const ok = await askToConfirm(
+      "Remove this transaction from spending? Use this when you were paid back. It won't come back on sync, and you can restore it from Show removed.",
+      { okLabel: "Remove", cancelLabel: "Keep" },
+    );
+    if (ok) setRemoved.mutate({ ids: [id], removed: true });
+  }
 
   const summary = useMemo(
     () => summariseMonth(txns, categories, budgets, month),
@@ -160,7 +174,16 @@ export function Spending() {
 
           <Card
             title="Transactions"
-            actions={<span className="muted" style={{ fontSize: 11 }}>{shown.length} in {monthLabel(month)}</span>}
+            actions={
+              <div className="row center" style={{ gap: 10 }}>
+                <span className="muted" style={{ fontSize: 11 }}>{shown.length} in {monthLabel(month)}</span>
+                {removedThisMonth.length > 0 && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowRemoved(!showRemoved)}>
+                    {showRemoved ? "Hide removed" : `Show removed (${removedThisMonth.length})`}
+                  </button>
+                )}
+              </div>
+            }
           >
             {isLoading ? <p className="muted">Loading…</p> : shown.length === 0 ? (
               <EmptyState title="Nothing here"
@@ -171,7 +194,22 @@ export function Spending() {
                 categories={categories}
                 accounts={accounts}
                 colourOf={colourOf}
+                onRemove={removeOne}
               />
+            )}
+            {showRemoved && removedThisMonth.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                  Removed: left out of spending and budgets. Restore puts one back.
+                </div>
+                <TransactionList
+                  transactions={removedThisMonth}
+                  categories={categories}
+                  accounts={accounts}
+                  colourOf={colourOf}
+                  onRestore={(id) => setRemoved.mutate({ ids: [id], removed: false })}
+                />
+              </div>
             )}
           </Card>
 

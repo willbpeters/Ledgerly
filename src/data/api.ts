@@ -69,7 +69,7 @@ export const api = {
     /** A dry run: what importing this Copilot export would do. */
     preview: (path: string) => invoke<CopilotPlan>("copilot_preview", { path }),
     /** Backs up, then imports in one transaction. */
-    import: (path: string) => invoke<CopilotCounts>("copilot_import", { path }),
+    import: (path: string, removeIds: number[]) => invoke<CopilotCounts>("copilot_import", { path, removeIds }),
   },
   backup: {
     status: () => invoke<BackupStatus>("backup_status"),
@@ -97,6 +97,8 @@ export const api = {
       invoke<number>("bank_transaction_set_category", { id, categoryId, applyToPayee }),
     toReview: () => invoke<BankTransaction[]>("bank_transactions_to_review"),
     approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
+    /** Remove from Spending (paid back), or restore. Never deletes. */
+    setRemoved: (ids: number[], removed: boolean) => invoke<number>("bank_transactions_set_removed", { ids, removed }),
   },
   rules: {
     list: () => invoke<CategoryRule[]>("rules_list"),

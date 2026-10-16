@@ -80,6 +80,8 @@ export interface BankTransaction {
   reviewed: boolean;
   /** The owner's note; Copilot's notes arrive with the import. */
   note: string | null;
+  /** Left out of Spending and budgets (paid back); restorable. */
+  removed: boolean;
 }
 
 /** What an import from Copilot would do. See `budget/copilot.rs`. */
@@ -87,13 +89,15 @@ export interface CopilotPlan {
   matches: { txn_id: number; category: string | null; note: string | null }[];
   additions: { external_id: string; posted: string; amount: number; name: string; category: string | null }[];
   skipped: { date: string; name: string; amount: number; account: string }[];
+  /** Ledgerly rows Copilot does not have: usually deleted there after being paid back. */
+  not_in_copilot: { txn_id: number; date: string; name: string; amount: number; account: string }[];
   pending_or_excluded: number;
   new_categories: { name: string; kind: string }[];
   rules: { pattern: string; category: string }[];
   /** Copilot account → the Ledgerly account it maps to. */
   accounts: [string, string][];
 }
-export interface CopilotCounts { matched: number; added: number; categories: number; rules: number }
+export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }
 export interface CategoryRule {
   id: number; match_type: "payee" | "description" | "mcc";
   pattern: string; category_id: number; created_at: string;

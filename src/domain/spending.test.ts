@@ -13,7 +13,7 @@ let n = 0;
 const txn = (amount: number, category_id: number | null, posted = "2026-09-10"): BankTransaction => ({
   id: ++n, account_id: 1, external_id: `e${n}`, posted, amount,
   description: "x", payee: null, memo: null, mcc: null, pending: false,
-  category_id, category_source: "auto", reviewed: true, note: null,
+  category_id, category_source: "auto", reviewed: true, note: null, removed: false,
 });
 
 describe("month helpers", () => {
@@ -143,6 +143,12 @@ describe("fromVisibleAccounts", () => {
 
   it("keeps a transaction whose account is not in the list rather than losing it silently", () => {
     expect(fromVisibleAccounts(rows, [accounts[0]]).map((t) => t.id)).toEqual([1, 2]);
+  });
+
+  it("leaves removed transactions out", () => {
+    // The owner removes a transaction when they are paid back for it.
+    const removedRow = { ...rows[0], id: 9, removed: true };
+    expect(fromVisibleAccounts([rows[0], removedRow], [accounts[0]]).map((t) => t.id)).toEqual([1]);
   });
 
   it("leaves investment accounts out, as Copilot does", () => {

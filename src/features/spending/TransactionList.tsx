@@ -9,13 +9,17 @@ import type { Account, BankTransaction, Category } from "../../domain/types";
  * marks that row as chosen by hand, and can teach Ledgerly to do the same for
  * everything else from that payee.
  */
-export function TransactionList({ transactions, categories, accounts, colourOf, onApprove }: {
+export function TransactionList({ transactions, categories, accounts, colourOf, onApprove, onRemove, onRestore }: {
   transactions: BankTransaction[];
   categories: Category[];
   accounts: Account[];
   colourOf: (token: string) => string;
   /** Offered on the To review list: accept a row as it is. */
   onApprove?: (id: number) => void;
+  /** Take a row out of Spending — the owner was paid back. Restorable. */
+  onRemove?: (id: number) => void;
+  /** Put a removed row back. */
+  onRestore?: (id: number) => void;
 }) {
   const setCategory = useSetTransactionCategory();
   const [teaching, setTeaching] = useState<number | null>(null);
@@ -43,6 +47,7 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
             <th className="left">Category</th>
             <th>Amount</th>
             {onApprove && <th />}
+            {(onRemove || onRestore) && <th />}
           </tr>
         </thead>
         <tbody>
@@ -108,6 +113,21 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                   <td>
                     <button className="btn btn-ghost btn-sm" aria-label={`Approve ${t.payee ?? t.description}`}
                       title="Looks right" onClick={() => onApprove(t.id)}>✓</button>
+                  </td>
+                )}
+                {(onRemove || onRestore) && (
+                  <td>
+                    {t.removed ? (
+                      onRestore && (
+                        <button className="btn btn-ghost btn-sm" aria-label={`Restore ${t.payee ?? t.description}`}
+                          onClick={() => onRestore(t.id)}>Restore</button>
+                      )
+                    ) : (
+                      onRemove && (
+                        <button className="btn btn-ghost btn-sm" aria-label={`Remove ${t.payee ?? t.description}`}
+                          title="Remove from spending (paid back)" onClick={() => onRemove(t.id)}>×</button>
+                      )
+                    )}
                   </td>
                 )}
               </tr>

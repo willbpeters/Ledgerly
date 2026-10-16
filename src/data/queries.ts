@@ -322,12 +322,21 @@ export function useCopilotPreview() {
 export function useCopilotImport() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (path: string) => api.copilot.import(path),
+    mutationFn: (v: { path: string; removeIds: number[] }) => api.copilot.import(v.path, v.removeIds),
     onSuccess: () => {
       invalidateSpending(qc);
       qc.invalidateQueries({ queryKey: budgetKeys.budgets });
       qc.invalidateQueries({ queryKey: keys.accounts });
       qc.invalidateQueries({ queryKey: ["backup"] });
     },
+  });
+}
+
+/** Remove (paid back) or restore: changes what the month and review lists hold. */
+export function useSetRemoved() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { ids: number[]; removed: boolean }) => api.bankTransactions.setRemoved(v.ids, v.removed),
+    onSuccess: () => invalidateSpending(qc),
   });
 }
