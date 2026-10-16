@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useRefreshPrices } from "../../data/useRefresh";
+import { askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
 import { Card, Button } from "../../ui/components";
 import { ThemeToggle } from "../../ui/ThemeToggle";
 import { SimplefinCard } from "./SimplefinCard";
@@ -8,6 +10,7 @@ import { CopilotImportCard } from "./CopilotImportCard";
 
 export function Settings() {
   const refresh = useRefreshPrices();
+  const [askRemove, setAskRemove] = useState(askBeforeRemove);
   return (
     <>
       <Card title="Appearance" subtitle="Light, dark, or follow Windows.">
@@ -28,6 +31,14 @@ export function Settings() {
       <SimplefinCard />
 
       <CopilotImportCard />
+
+      <Card title="Spending" subtitle="Removing a transaction (when you were paid back) always offers Undo.">
+        <label className="row center" style={{ gap: 8 }}>
+          <input type="checkbox" checked={askRemove}
+            onChange={(e) => { setAskBeforeRemove(e.target.checked); setAskRemove(e.target.checked); }} />
+          Ask before removing a transaction
+        </label>
+      </Card>
 
       <CategoriesCard />
 

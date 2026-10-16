@@ -11,7 +11,8 @@ import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
 import { Icons } from "../../app/icons";
-import { askToConfirm } from "../../ui/confirm";
+import { askToRemove } from "../../ui/confirm";
+import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
 
 type View = "month" | "review";
 
@@ -42,12 +43,29 @@ export function Spending() {
   const [showRemoved, setShowRemoved] = useState(false);
   const hiddenAccounts = new Set(allAccounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
   const removedThisMonth = allTxns.filter((t) => t.removed && !hiddenAccounts.has(t.account_id));
+  const offerUndo = useOfferUndo();
+  const byId = (id: number) => [...allTxns, ...allToReview].filter((t) => t.id === id).slice(0, 1);
+
   async function removeOne(id: number) {
-    const ok = await askToConfirm(
-      "Remove this transaction from spending? Use this when you were paid back. It won't come back on sync, and you can restore it from Show removed.",
-      { okLabel: "Remove", cancelLabel: "Keep" },
-    );
-    if (ok) setRemoved.mutate({ ids: [id], removed: true });
+    if (askBeforeRemove()) {
+      const answer = await askToRemove();
+      if (answer === "cancel") return;
+      if (answer === "remove-always") setAskBeforeRemove(false);
+    }
+    const before = byId(id);
+    setRemoved.mutate({ ids: [id], removed: true }, { onSuccess: () => offerUndo("Removed from spending", before) });
+  }
+
+  function restoreOne(id: number) {
+    const before = byId(id);
+    setRemoved.mutate({ ids: [id], removed: false }, { onSuccess: () => offerUndo("Restored", before) });
+  }
+
+  function approveSome(ids: number[]) {
+    const before = toReview.filter((t) => ids.includes(t.id));
+    approve.mutate(ids, {
+      onSuccess: () => offerUndo(ids.length === 1 ? "Marked reviewed" : `Marked ${ids.length} reviewed`, before),
+    });
   }
 
   const summary = useMemo(
@@ -107,7 +125,7 @@ export function Spending() {
           subtitle="New transactions, and any Ledgerly couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."
           actions={toReview.length > 0 ? (
             <Button size="sm" loading={approve.isPending}
-              onClick={() => approve.mutate(toReview.map((t) => t.id))}>
+              onClick={() => approveSome(toReview.map((t) => t.id))}>
               Mark all reviewed
             </Button>
           ) : undefined}
@@ -120,7 +138,7 @@ export function Spending() {
               categories={categories}
               accounts={accounts}
               colourOf={colourOf}
-              onApprove={(id) => approve.mutate([id])}
+              onApprove={(id) => approveSome([id])}
             />
           )}
         </Card>
@@ -207,7 +225,7 @@ export function Spending() {
                   categories={categories}
                   accounts={accounts}
                   colourOf={colourOf}
-                  onRestore={(id) => setRemoved.mutate({ ids: [id], removed: false })}
+                  onRestore={restoreOne}
                 />
               </div>
             )}

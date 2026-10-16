@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi } from "vitest";
 import { TransactionList } from "./TransactionList";
+import { ToastProvider } from "../../ui/toast";
 import type { Account, BankTransaction, Category } from "../../domain/types";
 
 const category: Category = { id: 1, name: "Shopping", kind: "spending", colour: "chart-2", sort: 70, is_builtin: true };
@@ -14,10 +15,10 @@ const txn = (over: Partial<BankTransaction> = {}): BankTransaction => ({
 
 function renderList(props: Partial<Parameters<typeof TransactionList>[0]> = {}) {
   return render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={new QueryClient()}><ToastProvider>
       <TransactionList transactions={[txn()]} categories={[category]} accounts={[account]}
         colourOf={() => "#000"} {...props} />
-    </QueryClientProvider>,
+    </ToastProvider></QueryClientProvider>,
   );
 }
 

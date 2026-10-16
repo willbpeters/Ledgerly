@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSetTransactionCategory } from "../../data/queries";
+import { useOfferUndo } from "../../data/undo";
 import { money, fmtDate } from "../../ui/format";
 import { Badge } from "../../ui/components";
 import type { Account, BankTransaction, Category } from "../../domain/types";
@@ -22,6 +23,7 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
   onRestore?: (id: number) => void;
 }) {
   const setCategory = useSetTransactionCategory();
+  const offerUndo = useOfferUndo();
   const [teaching, setTeaching] = useState<number | null>(null);
   const byId = new Map(categories.map((c) => [c.id, c]));
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? "—";
@@ -33,7 +35,11 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
     if (categoryId != null && payee) {
       setTeaching(t.id);
     }
-    setCategory.mutate({ id: t.id, categoryId, applyToPayee: false });
+    // t is the row as it was before the change: exactly what Undo puts back.
+    setCategory.mutate(
+      { id: t.id, categoryId, applyToPayee: false },
+      { onSuccess: () => offerUndo("Category changed", [t]) },
+    );
   }
 
   return (

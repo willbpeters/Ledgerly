@@ -9,6 +9,7 @@ import type {
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
+import type { RowState } from "./undo";
 
 export const api = {
   accounts: {
@@ -99,6 +100,8 @@ export const api = {
     approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
     /** Remove from Spending (paid back), or restore. Never deletes. */
     setRemoved: (ids: number[], removed: boolean) => invoke<number>("bank_transactions_set_removed", { ids, removed }),
+    /** Undo: put rows back as they were before an action. */
+    restore: (states: RowState[]) => invoke<number>("bank_transactions_restore", { states }),
   },
   rules: {
     list: () => invoke<CategoryRule[]>("rules_list"),
