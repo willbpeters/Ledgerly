@@ -47,6 +47,15 @@ budgeting and spending module.
   progress bar and remainder; and the month's transactions with an inline
   category picker. Changing a category can write a payee rule that later syncs
   obey. Categories and the learned rules are managed in Settings.
+  **Copilot-style sorting (2026-10-15):** SimpleFIN sends no category and, for
+  the owner's banks, no merchant code, so `budget/merchants.rs` recognises
+  merchants from SimpleFIN's clean `payee`, `budget/transfers.rs` pairs equal
+  and opposite amounts between the owner's accounts as Transfer, and payments
+  to people (Apple Pay, Venmo, Zelle) are left for the owner. A **Month / To
+  review** switch lists unreviewed rows with ✓ and "Mark all reviewed".
+  Investment accounts are left out of Spending. Every sync re-sorts all
+  automatic rows, so a list change reaches history. Spec:
+  `docs/superpowers/specs/2026-10-14-copilot-style-categories-design.md`
 - **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
   the type editable because SimpleFIN never says which accounts are cards.
   Each account can be **hidden**: a hidden account keeps syncing and keeps its
@@ -178,6 +187,15 @@ a hidden manual account's transactions still counting toward cash, because
 pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 
 ## Gotchas worth knowing
+
+- **Categorising order lives in `budget/categorize.rs::decide()`**: user rules →
+  payment to a person (left uncategorised) → transfer wording → merchant code →
+  known merchant / keyword (`budget/merchants.rs`) → money in on a *cash*
+  account is Income (on a card it is a refund or payment, never income). A new
+  merchant is one line in `merchants.rs`. Generic words ("shop", "store") are
+  deliberately not keywords: a blank in To review beats a wrong guess.
+- **Approving a transaction makes its category `manual`**, so later list
+  changes and re-sorts never move it. Only `auto` rows are ever re-decided.
 
 - **Never call the browser's `confirm()`; `await askToConfirm()` from
   `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an

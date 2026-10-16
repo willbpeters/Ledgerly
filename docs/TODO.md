@@ -62,11 +62,13 @@ are small enough to go straight to test-first implementation.
 
 These are the gaps a former Copilot user would notice first.
 
-- [ ] **9. Bank-supplied categories.** First *(yours to do)*: run the SimpleFIN
-      diagnostic in Settings against your real bank (Task 7 of
-      `docs/superpowers/plans/2026-09-12-simplefin-category-diagnostic.md`) to
-      see whether your bank sends a category. If it does, build the rest of
-      `docs/superpowers/specs/2026-09-12-bank-supplied-categories-design.md`.
+- [x] **9. Bank-supplied categories.** Done differently, 2026-10-15: the
+      diagnostic showed SimpleFIN sends no category for the owner's banks, so
+      Ledgerly sorts by merchant name and transfer pairing instead, with a
+      Copilot-style To review list. See HANDOFF "Copilot-style sorting".
+- [ ] **9b. Import from Copilot.** Bring Copilot's categories onto matching
+      transactions, file its internal transfers as Transfer, and learn payee
+      rules from the owner's habits, so Copilot can be retired. **(spec)**
 - [ ] **10. Search and filter transactions.** Spending shows one month at a
       time with no search. Wanted: find by payee, description, amount or
       category across all months.
