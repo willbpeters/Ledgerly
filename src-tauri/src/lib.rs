@@ -66,6 +66,7 @@ pub fn run() {
             commands::budget::bank_transactions_to_review,
             commands::budget::bank_transactions_approve,
             commands::budget::bank_transactions_set_removed,
+            commands::budget::bank_transactions_restore,
             commands::budget::rules_list,
             commands::budget::rules_delete,
             commands::budget::budgets_list,

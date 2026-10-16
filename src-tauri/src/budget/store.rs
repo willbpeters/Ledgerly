@@ -262,6 +262,35 @@ pub fn set_removed(conn: &Connection, ids: &[i64], removed: bool) -> rusqlite::R
     Ok(changed)
 }
 
+/// The parts of a row an action in Spending can change. The frontend keeps a
+/// copy from before the action; handing it back here is Undo.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct RowState {
+    pub id: i64,
+    pub category_id: Option<i64>,
+    pub category_source: String,
+    pub reviewed: bool,
+    pub removed: bool,
+}
+
+/// Undo: put rows back exactly as they were, in one transaction.
+pub fn restore_rows(conn: &Connection, states: &[RowState]) -> rusqlite::Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    let mut changed = 0;
+    for s in states {
+        // The column has a CHECK, but a clear error beats a constraint failure.
+        if s.category_source != "auto" && s.category_source != "manual" {
+            return Err(rusqlite::Error::InvalidParameterName(format!("category_source {}", s.category_source)));
+        }
+        changed += tx.execute(
+            "UPDATE bank_transactions SET category_id=?1, category_source=?2, reviewed=?3, removed=?4 WHERE id=?5",
+            params![s.category_id, s.category_source, s.reviewed as i64, s.removed as i64, s.id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize)]
 pub struct CopilotCounts { pub matched: usize, pub added: usize, pub categories: usize, pub rules: usize, pub removed: usize }
 
@@ -656,6 +685,32 @@ mod tests {
 
         set_removed(&conn, &[id], false).unwrap();
         assert!(!removed(&conn, "t1"));
+    }
+
+    #[test]
+    fn undo_puts_a_row_back_exactly_as_it_was() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        let shopping = seed::category_id(&conn, "Shopping").unwrap();
+        let before = RowState { id, category_id: shopping, category_source: "auto".into(), reviewed: false, removed: false };
+
+        // Approve, change the category and remove it — then undo all of that.
+        approve(&conn, &[id]).unwrap();
+        set_category(&conn, id, seed::category_id(&conn, "Dining").unwrap(), false).unwrap();
+        set_removed(&conn, &[id], true).unwrap();
+        assert_eq!(restore_rows(&conn, &[before]).unwrap(), 1);
+
+        assert_eq!(row(&conn, "t1"), (Some("Shopping".into()), "auto".into(), false));
+        assert!(!removed(&conn, "t1"));
+    }
+
+    #[test]
+    fn undo_refuses_a_source_that_is_not_auto_or_manual() {
+        let conn = db::open_in_memory().unwrap();
+        let bad = RowState { id: 1, category_id: None, category_source: "bogus".into(), reviewed: false, removed: false };
+        assert!(restore_rows(&conn, &[bad]).is_err());
     }
 
     #[test]

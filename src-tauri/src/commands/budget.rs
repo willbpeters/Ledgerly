@@ -132,6 +132,13 @@ pub fn bank_transactions_set_removed(db: tauri::State<Db>, ids: Vec<i64>, remove
     store::set_removed(&conn, &ids, removed).map_err(|e| e.to_string())
 }
 
+/// Undo: put rows back as they were before an action in Spending.
+#[tauri::command]
+pub fn bank_transactions_restore(db: tauri::State<Db>, states: Vec<store::RowState>) -> Result<usize, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store::restore_rows(&conn, &states).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn bank_transactions_list(db: tauri::State<Db>, from: String, to: String)
     -> Result<Vec<BankTransaction>, String> {
