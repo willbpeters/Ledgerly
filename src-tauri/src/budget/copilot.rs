@@ -228,14 +228,16 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         });
     }
 
-    // Ledgerly rows Copilot does not have, inside the dates Copilot covers for
-    // that account. The last few days are left alone: Copilot can lag
-    // SimpleFIN, and a row too new for it to have seen was not deleted there.
+    // Ledgerly rows Copilot does not have, from the first date Copilot covers
+    // for that account. Only the export's own newest day is left alone: Copilot
+    // runs a few hours behind the bank, so a row from that day may simply not
+    // have reached it yet. The newest day of the whole file, not the account's —
+    // an account with nothing on that day would otherwise push its cutoff back.
+    let newest = rows.iter().filter(|r| !r.pending && !r.excluded).map(|r| r.date.as_str()).max().unwrap_or("");
     for t in &snap.txns {
         if t.from_copilot || t.pending || t.removed || used.contains(&t.id) { continue; }
-        let Some((first, last)) = covers.get(&t.account_id) else { continue };
-        let (Some(td), Some(ld)) = (day(&t.posted), day(last)) else { continue };
-        if t.posted < *first || td > ld - MATCH_DAYS { continue; }
+        let Some((first, _)) = covers.get(&t.account_id) else { continue };
+        if t.posted < *first || t.posted.as_str() >= newest { continue; }
         p.not_in_copilot.push(NotInCopilot {
             txn_id: t.id, date: t.posted.clone(), name: t.label.clone(), amount: t.amount,
             account: snap.accounts.iter().find(|a| a.id == t.account_id).map_or(String::new(), |a| a.name.clone()),
@@ -329,10 +331,24 @@ mod tests {
     }
 
     #[test]
-    fn rows_too_new_for_copilot_to_have_seen_are_not_offered() {
-        // Copilot's last row is 07-20; it may simply not have caught up.
-        let (rows, s) = covered(vec![existing(21, "2026-07-18", 45.0)]);
-        assert!(plan(&rows, &s).not_in_copilot.is_empty());
+    fn only_the_exports_last_day_is_too_new_to_offer() {
+        // Copilot runs a few hours behind the bank: on the export's newest day
+        // it may not have everything yet, but the day before it has.
+        let (rows, s) = covered(vec![existing(21, "2026-07-19", 45.0), existing(22, "2026-07-20", 46.0)]);
+        let ids: Vec<i64> = plan(&rows, &s).not_in_copilot.iter().map(|n| n.txn_id).collect();
+        assert_eq!(ids, vec![21]);
+    }
+
+    #[test]
+    fn the_cutoff_is_the_whole_exports_newest_day_not_the_accounts() {
+        // The owner's export ended 10-15, but their Bank of America account's
+        // last Copilot row was 10-14; a 10-13 row there must still be offered.
+        let mut rows = covered(vec![]).0;
+        rows.push(parse_csv(&csv(&[&row("2026-07-30", "Elsewhere", "1.00", "Other", "regular", "")])).unwrap().remove(0));
+        let mut s = snap();
+        s.txns.push(existing(23, "2026-07-25", 45.0));
+        let ids: Vec<i64> = plan(&rows, &s).not_in_copilot.iter().map(|n| n.txn_id).collect();
+        assert_eq!(ids, vec![23]);
     }
 
     #[test]
