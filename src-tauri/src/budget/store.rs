@@ -263,17 +263,23 @@ pub fn set_removed(conn: &Connection, ids: &[i64], removed: bool) -> rusqlite::R
 }
 
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize)]
-pub struct CopilotCounts { pub matched: usize, pub added: usize, pub categories: usize, pub rules: usize }
+pub struct CopilotCounts { pub matched: usize, pub added: usize, pub categories: usize, pub rules: usize, pub removed: usize }
 
 /// What the Copilot planner needs to know about the database.
 pub fn copilot_snapshot(conn: &Connection) -> rusqlite::Result<copilot::Snapshot> {
     let accounts = conn.prepare("SELECT id, name FROM accounts")?
         .query_map([], |r| Ok(copilot::AccountRef { id: r.get(0)?, name: r.get(1)? }))?
         .collect::<rusqlite::Result<_>>()?;
-    let txns = conn.prepare("SELECT id, account_id, posted, amount, external_id FROM bank_transactions")?
+    let txns = conn.prepare(
+        "SELECT id, account_id, posted, amount, external_id, COALESCE(payee, description), pending, removed
+         FROM bank_transactions",
+    )?
         .query_map([], |r| Ok(copilot::ExistingTxn {
             id: r.get(0)?, account_id: r.get(1)?, posted: r.get(2)?, amount: r.get(3)?,
             from_copilot: r.get::<_, String>(4)?.starts_with("copilot:"),
+            label: r.get(5)?,
+            pending: r.get::<_, i64>(6)? != 0,
+            removed: r.get::<_, i64>(7)? != 0,
         }))?
         .collect::<rusqlite::Result<_>>()?;
     let category_names = conn.prepare("SELECT name FROM categories")?
@@ -308,8 +314,10 @@ fn history_account(conn: &Connection) -> rusqlite::Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
-/// Write a Copilot plan: all of it or none of it.
-pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan) -> rusqlite::Result<CopilotCounts> {
+/// Write a Copilot plan: all of it or none of it. `remove` holds the ids the
+/// owner left ticked among the rows Copilot does not have; an id the plan did
+/// not offer is ignored, so a stale or mistaken id can never remove anything.
+pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan, remove: &[i64]) -> rusqlite::Result<CopilotCounts> {
     let tx = conn.unchecked_transaction()?;
     let mut counts = CopilotCounts::default();
 
@@ -367,6 +375,10 @@ pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan) -> rusqlite::
             )?;
         }
     }
+
+    let offered: std::collections::HashSet<i64> = plan.not_in_copilot.iter().map(|n| n.txn_id).collect();
+    let chosen: Vec<i64> = remove.iter().copied().filter(|id| offered.contains(id)).collect();
+    counts.removed = set_removed(&tx, &chosen, true)?;
 
     // The learned rules apply at once to every automatic row.
     recategorise_all(&tx)?;
@@ -678,7 +690,7 @@ mod tests {
             \"2026-01-12\",\"Haggin Oaks\",\"25\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
         let plan = copilot_plan(&conn, &csv);
 
-        let counts = apply_copilot_plan(&conn, &plan).unwrap();
+        let counts = apply_copilot_plan(&conn, &plan, &[]).unwrap();
 
         assert_eq!((counts.matched, counts.added), (1, 2));
         assert_eq!(row(&conn, "sf1"), (Some("Dining".into()), "manual".into(), true));
@@ -692,7 +704,7 @@ mod tests {
 
         // Running it again changes nothing.
         let again = copilot_plan(&conn, &csv);
-        apply_copilot_plan(&conn, &again).unwrap();
+        apply_copilot_plan(&conn, &again, &[]).unwrap();
         let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 3);
     }
@@ -706,11 +718,37 @@ mod tests {
         set_category(&conn, id, seed::category_id(&conn, "Groceries").unwrap(), false).unwrap();
         let csv = format!("{COPILOT_HEADER}\n\"2026-07-03\",\"Zqx Diner\",\"12.50\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
 
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[]).unwrap();
 
         assert_eq!(row(&conn, "sf1").0.as_deref(), Some("Groceries"));
         let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 1, "matched, not added");
+    }
+
+    #[test]
+    fn the_import_removes_only_rows_it_offered_and_the_owner_ticked() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card (9849)", "credit");
+        upsert_transactions(&conn, card, &[
+            payee_txn("kept", "2026-07-01", -12.5, "Zqx Diner"),
+            payee_txn("paidback", "2026-07-04", 40.0, "Transfer from Apple Pay"),
+            payee_txn("other", "2026-07-05", 7.0, "Zqx Refund"),
+        ], &[]).unwrap();
+        let csv = format!("{COPILOT_HEADER}\n\
+            \"2026-07-01\",\"Zqx Diner\",\"12.50\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n\
+            \"2026-07-20\",\"Later\",\"3\",\"posted\",\"Other\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
+        let plan = copilot_plan(&conn, &csv);
+        let offered: Vec<i64> = plan.not_in_copilot.iter().map(|n| n.txn_id).collect();
+        assert_eq!(offered.len(), 2);
+        let paidback: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='paidback'", [], |r| r.get(0)).unwrap();
+        let kept: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='kept'", [], |r| r.get(0)).unwrap();
+
+        // The owner untick "other"; "kept" was never offered and must be ignored.
+        apply_copilot_plan(&conn, &plan, &[paidback, kept]).unwrap();
+
+        assert!(removed(&conn, "paidback"));
+        assert!(!removed(&conn, "other"));
+        assert!(!removed(&conn, "kept"));
     }
 
     #[test]
@@ -719,7 +757,7 @@ mod tests {
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[payee_txn("sf-new", "2026-07-02", -1.0, "Zqx")], &[]).unwrap();
         let csv = format!("{COPILOT_HEADER}\n\"2026-01-05\",\"Old Diner\",\"8\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[]).unwrap();
 
         // "Import 2 years" later brings SimpleFIN's own copy of that purchase.
         upsert_transactions(&conn, card, &[payee_txn("sf-old", "2026-01-06", -8.0, "Old Diner Inc")], &[]).unwrap();

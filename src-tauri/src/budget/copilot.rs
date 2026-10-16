@@ -32,7 +32,13 @@ pub struct CopilotRow {
 }
 
 pub struct AccountRef { pub id: i64, pub name: String }
-pub struct ExistingTxn { pub id: i64, pub account_id: i64, pub posted: String, pub amount: f64, pub from_copilot: bool }
+pub struct ExistingTxn {
+    pub id: i64, pub account_id: i64, pub posted: String, pub amount: f64, pub from_copilot: bool,
+    /// Payee, or the description when there is none: what the preview shows.
+    pub label: String,
+    pub pending: bool,
+    pub removed: bool,
+}
 pub struct Snapshot {
     pub accounts: Vec<AccountRef>,
     pub txns: Vec<ExistingTxn>,
@@ -54,6 +60,10 @@ pub struct Addition {
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Skipped { pub date: String, pub name: String, pub amount: f64, pub account: String }
+/// A Ledgerly transaction Copilot does not have — usually one the owner deleted
+/// there after being paid back. Offered for removal, never removed unasked.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NotInCopilot { pub txn_id: i64, pub date: String, pub name: String, pub amount: f64, pub account: String }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NewCategory { pub name: String, pub kind: String }
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -65,6 +75,7 @@ pub struct Plan {
     pub additions: Vec<Addition>,
     /// Inside a SimpleFIN span with no same-amount match: listed, not added.
     pub skipped: Vec<Skipped>,
+    pub not_in_copilot: Vec<NotInCopilot>,
     pub pending_or_excluded: usize,
     pub new_categories: Vec<NewCategory>,
     pub rules: Vec<LearnedRule>,
@@ -168,11 +179,18 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut used: HashSet<i64> = HashSet::new();
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     let mut labels: BTreeMap<String, String> = BTreeMap::new();
+    // The dates Copilot covers for each Ledgerly account, first to last.
+    let mut covers: BTreeMap<i64, (String, String)> = BTreeMap::new();
 
     for r in rows {
         if r.pending || r.excluded { p.pending_or_excluded += 1; continue; }
         let category = category_for(r);
         let target = account_for(r);
+        if let Target::Account(id) = target {
+            let c = covers.entry(id).or_insert_with(|| (r.date.clone(), r.date.clone()));
+            if r.date < c.0 { c.0 = r.date.clone(); }
+            if r.date > c.1 { c.1 = r.date.clone(); }
+        }
         let label = if r.account.is_empty() { "(no account)".to_string() } else { r.account.clone() };
         labels.entry(label.clone()).or_insert_with(|| match &target {
             Target::Account(id) => snap.accounts.iter().find(|a| a.id == *id).map_or(String::new(), |a| a.name.clone()),
@@ -209,6 +227,21 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
             name: r.name.clone(), category, note: r.note.clone(),
         });
     }
+
+    // Ledgerly rows Copilot does not have, inside the dates Copilot covers for
+    // that account. The last few days are left alone: Copilot can lag
+    // SimpleFIN, and a row too new for it to have seen was not deleted there.
+    for t in &snap.txns {
+        if t.from_copilot || t.pending || t.removed || used.contains(&t.id) { continue; }
+        let Some((first, last)) = covers.get(&t.account_id) else { continue };
+        let (Some(td), Some(ld)) = (day(&t.posted), day(last)) else { continue };
+        if t.posted < *first || td > ld - MATCH_DAYS { continue; }
+        p.not_in_copilot.push(NotInCopilot {
+            txn_id: t.id, date: t.posted.clone(), name: t.label.clone(), amount: t.amount,
+            account: snap.accounts.iter().find(|a| a.id == t.account_id).map_or(String::new(), |a| a.name.clone()),
+        });
+    }
+    p.not_in_copilot.sort_by(|a, b| b.date.cmp(&a.date));
 
     // Categories the owner used that Ledgerly does not have yet.
     let have: HashSet<String> = snap.category_names.iter().map(|c| c.to_lowercase()).collect();
@@ -265,12 +298,70 @@ mod tests {
         format!("\"{date}\",\"{name}\",\"{amount}\",\"posted\",\"{category}\",\"\",\"false\",\"\",\"{kind}\",\"Acct\",\"{mask}\",\"\",\"\"")
     }
 
+    fn existing(id: i64, posted: &str, amount: f64) -> ExistingTxn {
+        ExistingTxn {
+            id, account_id: 1, posted: posted.into(), amount, from_copilot: false,
+            label: format!("Payee {id}"), pending: false, removed: false,
+        }
+    }
+
+    /// Copilot covers account 1 from 07-01 to 07-20; Ledgerly holds 10 and 11
+    /// (matched by the two rows below) plus whatever a test adds.
+    fn covered(extra: Vec<ExistingTxn>) -> (Vec<CopilotRow>, Snapshot) {
+        let rows = parse_csv(&csv(&[
+            &row("2026-07-01", "Diner", "12.50", "Eating Out", "regular", "9849"),
+            &row("2026-07-05", "Diner", "12.50", "Eating Out", "regular", "9849"),
+            &row("2026-07-20", "Later", "3.00", "Other", "regular", "9849"),
+        ])).unwrap();
+        let mut s = snap();
+        s.txns.extend(extra);
+        (rows, s)
+    }
+
+    #[test]
+    fn a_ledgerly_row_copilot_does_not_have_is_offered_for_removal() {
+        // The owner deletes a transaction in Copilot when they are paid back.
+        let (rows, s) = covered(vec![existing(20, "2026-07-10", 45.0)]);
+        let p = plan(&rows, &s);
+        let ids: Vec<i64> = p.not_in_copilot.iter().map(|n| n.txn_id).collect();
+        assert_eq!(ids, vec![20]);
+        assert_eq!(p.not_in_copilot[0].name, "Payee 20");
+    }
+
+    #[test]
+    fn rows_too_new_for_copilot_to_have_seen_are_not_offered() {
+        // Copilot's last row is 07-20; it may simply not have caught up.
+        let (rows, s) = covered(vec![existing(21, "2026-07-18", 45.0)]);
+        assert!(plan(&rows, &s).not_in_copilot.is_empty());
+    }
+
+    #[test]
+    fn pending_removed_and_imported_rows_are_not_offered() {
+        let mut pending = existing(22, "2026-07-10", 1.0);
+        pending.pending = true;
+        let mut removed = existing(23, "2026-07-10", 2.0);
+        removed.removed = true;
+        let mut imported = existing(24, "2026-07-10", 3.0);
+        imported.from_copilot = true;
+        let (rows, s) = covered(vec![pending, removed, imported]);
+        assert!(plan(&rows, &s).not_in_copilot.is_empty());
+    }
+
+    #[test]
+    fn an_account_copilot_does_not_cover_is_not_looked_at() {
+        let mut other = existing(25, "2026-07-10", 9.0);
+        other.account_id = 2;
+        let (rows, mut s) = covered(vec![other]);
+        s.accounts.push(AccountRef { id: 2, name: "Brokerage (1111)".into() });
+        assert!(plan(&rows, &s).not_in_copilot.is_empty());
+    }
+
     fn snap() -> Snapshot {
         Snapshot {
             accounts: vec![AccountRef { id: 1, name: "Card (9849)".into() }],
             txns: vec![
-                ExistingTxn { id: 10, account_id: 1, posted: "2026-07-01".into(), amount: -12.5, from_copilot: false },
-                ExistingTxn { id: 11, account_id: 1, posted: "2026-07-05".into(), amount: -12.5, from_copilot: false },
+                existing(10, "2026-07-01", -12.5),
+                existing(11, "2026-07-05", -12.5),
             ],
             category_names: vec!["Dining".into(), "Shopping".into(), "Groceries".into(), "Transfer".into(), "Income".into(), "Other".into()],
             rule_patterns: vec![],

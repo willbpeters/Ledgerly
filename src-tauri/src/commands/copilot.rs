@@ -24,9 +24,14 @@ pub async fn copilot_preview(app: tauri::AppHandle, path: String) -> Result<copi
 
 /// Backs up first, then writes the whole import in one transaction. The plan
 /// is made again here rather than trusted from the preview, so it reflects the
-/// database as it is at the moment of writing.
+/// database as it is at the moment of writing. `remove_ids` are the rows
+/// Copilot does not have that the owner left ticked.
 #[tauri::command]
-pub async fn copilot_import(app: tauri::AppHandle, path: String) -> Result<store::CopilotCounts, String> {
+pub async fn copilot_import(
+    app: tauri::AppHandle,
+    path: String,
+    remove_ids: Vec<i64>,
+) -> Result<store::CopilotCounts, String> {
     super::off_main_thread(move || {
         let state = app.state::<BackupState>();
         let db = app.state::<Db>();
@@ -37,7 +42,7 @@ pub async fn copilot_import(app: tauri::AppHandle, path: String) -> Result<store
         if let Some(e) = safety.error {
             return Err(format!("Didn't import, because the backup before it failed: {e}"));
         }
-        store::apply_copilot_plan(&conn, &plan).map_err(|e| e.to_string())
+        store::apply_copilot_plan(&conn, &plan, &remove_ids).map_err(|e| e.to_string())
     })
     .await
 }
@@ -55,8 +60,8 @@ mod tests {
         let conn = rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         let plan = super::plan_from(&conn, &csv).unwrap();
         println!(
-            "matched {} | added {} | skipped {} | pending/excluded {} | new categories {:?} | rules {}",
-            plan.matches.len(), plan.additions.len(), plan.skipped.len(), plan.pending_or_excluded,
+            "matched {} | added {} | skipped {} | not in copilot {} | pending/excluded {} | new categories {:?} | rules {}",
+            plan.matches.len(), plan.additions.len(), plan.skipped.len(), plan.not_in_copilot.len(), plan.pending_or_excluded,
             plan.new_categories.iter().map(|c| &c.name).collect::<Vec<_>>(), plan.rules.len(),
         );
         println!("accounts {:?}", plan.accounts);
