@@ -118,6 +118,8 @@ pub struct BankTransaction {
     pub reviewed: bool,
     /// The owner's note; Copilot's notes arrive with the import.
     pub note: Option<String>,
+    /// Left out of Spending and budgets (the owner was paid back); restorable.
+    pub removed: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

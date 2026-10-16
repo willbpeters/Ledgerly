@@ -186,7 +186,7 @@ pub fn mark_transfer_pairs(conn: &Connection, since: &str) -> rusqlite::Result<u
     let Some(transfer) = seed::category_id(conn, "Transfer")? else { return Ok(0) };
     let mut stmt = conn.prepare(
         "SELECT id, account_id, posted, amount, payee, description FROM bank_transactions
-         WHERE category_source='auto' AND posted >= ?1",
+         WHERE category_source='auto' AND removed=0 AND posted >= ?1",
     )?;
     let legs: Vec<transfers::Leg> = stmt
         .query_map([since], |r| {
@@ -243,6 +243,20 @@ pub fn approve(conn: &Connection, ids: &[i64]) -> rusqlite::Result<usize> {
         changed += conn.execute(
             "UPDATE bank_transactions SET reviewed=1, category_source='manual' WHERE id=?1",
             [id],
+        )?;
+    }
+    Ok(changed)
+}
+
+/// Remove rows from Spending and budgets (the owner was paid back), or restore
+/// them. A flag, not a delete: a sync updates a removed row but never clears
+/// the flag, so it does not come back. Returns how many rows changed.
+pub fn set_removed(conn: &Connection, ids: &[i64], removed: bool) -> rusqlite::Result<usize> {
+    let mut changed = 0;
+    for id in ids {
+        changed += conn.execute(
+            "UPDATE bank_transactions SET removed=?1 WHERE id=?2",
+            params![removed as i64, id],
         )?;
     }
     Ok(changed)
@@ -611,6 +625,38 @@ mod tests {
         conn.execute("UPDATE bank_transactions SET reviewed=1", []).unwrap();
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.5, "Target")], &[]).unwrap();
         assert!(row(&conn, "t1").2);
+    }
+
+    fn removed(conn: &Connection, ext: &str) -> bool {
+        conn.query_row("SELECT removed FROM bank_transactions WHERE external_id=?1", [ext], |r| r.get::<_, i64>(0)).unwrap() != 0
+    }
+
+    #[test]
+    fn a_removed_transaction_stays_removed_through_a_sync_until_restored() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -30.0, "Target")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
+
+        assert_eq!(set_removed(&conn, &[id], true).unwrap(), 1);
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -30.0, "Target")], &[]).unwrap();
+        assert!(removed(&conn, "t1"), "a sync must not bring it back");
+
+        set_removed(&conn, &[id], false).unwrap();
+        assert!(!removed(&conn, "t1"));
+    }
+
+    #[test]
+    fn removed_rows_never_pair_as_transfers() {
+        let conn = db::open_in_memory().unwrap();
+        let bank = account(&conn, "Checking", "cash");
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, bank, &[payee_txn("out", "2026-10-12", -40.0, "Zqx Holdings")], &[]).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("in", "2026-10-12", 40.0, "Zqx Holdings")], &[]).unwrap();
+        let out: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='out'", [], |r| r.get(0)).unwrap();
+        set_removed(&conn, &[out], true).unwrap();
+
+        assert_eq!(mark_transfer_pairs(&conn, "2026-01-01").unwrap(), 0);
     }
 
     use crate::budget::copilot;

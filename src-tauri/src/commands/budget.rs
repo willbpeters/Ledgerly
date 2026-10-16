@@ -79,7 +79,7 @@ pub fn categories_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
 // ---------- transactions ----------
 
 const TXN_COLUMNS: &str = "id,account_id,external_id,posted,amount,description,payee,memo,mcc,pending,
-                           category_id,category_source,reviewed,note";
+                           category_id,category_source,reviewed,note,removed";
 
 fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {
     Ok(BankTransaction {
@@ -89,6 +89,7 @@ fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {
         category_id: r.get(10)?, category_source: r.get(11)?,
         reviewed: r.get::<_, i64>(12)? != 0,
         note: r.get(13)?,
+        removed: r.get::<_, i64>(14)? != 0,
     })
 }
 
@@ -105,7 +106,7 @@ pub fn list_transactions(conn: &Connection, from: &str, to: &str)
 /// Every transaction the owner has not looked at yet, any month, newest first.
 pub fn list_to_review(conn: &Connection) -> rusqlite::Result<Vec<BankTransaction>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {TXN_COLUMNS} FROM bank_transactions WHERE reviewed = 0
+        "SELECT {TXN_COLUMNS} FROM bank_transactions WHERE reviewed = 0 AND removed = 0
          ORDER BY posted DESC, id DESC"
     ))?;
     let rows = stmt.query_map([], txn_from_row)?;
@@ -122,6 +123,13 @@ pub fn bank_transactions_to_review(db: tauri::State<Db>) -> Result<Vec<BankTrans
 pub fn bank_transactions_approve(db: tauri::State<Db>, ids: Vec<i64>) -> Result<usize, String> {
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     store::approve(&conn, &ids).map_err(|e| e.to_string())
+}
+
+/// Remove transactions from Spending and budgets, or restore them.
+#[tauri::command]
+pub fn bank_transactions_set_removed(db: tauri::State<Db>, ids: Vec<i64>, removed: bool) -> Result<usize, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store::set_removed(&conn, &ids, removed).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
