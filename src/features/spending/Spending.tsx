@@ -139,6 +139,7 @@ export function Spending() {
               accounts={accounts}
               colourOf={colourOf}
               onApprove={(id) => approveSome([id])}
+              onRemove={removeOne}
             />
           )}
         </Card>
