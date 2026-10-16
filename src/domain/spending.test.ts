@@ -13,7 +13,7 @@ let n = 0;
 const txn = (amount: number, category_id: number | null, posted = "2026-09-10"): BankTransaction => ({
   id: ++n, account_id: 1, external_id: `e${n}`, posted, amount,
   description: "x", payee: null, memo: null, mcc: null, pending: false,
-  category_id, category_source: "auto", reviewed: true,
+  category_id, category_source: "auto", reviewed: true, note: null,
 });
 
 describe("month helpers", () => {

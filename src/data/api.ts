@@ -5,7 +5,7 @@ import type {
   Category, BankTransaction, CategoryRule, Budget,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
-  BackupEntry, BackupAttempt, BackupStatus,
+  BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
@@ -64,6 +64,12 @@ export const api = {
     backfill: (days: number) => invoke<SyncReport>("simplefin_backfill", { days }),
     diagnose: () => invoke<SimplefinSample>("simplefin_diagnose"),
     disconnect: (deleteAccounts: boolean) => invoke<void>("simplefin_disconnect", { deleteAccounts }),
+  },
+  copilot: {
+    /** A dry run: what importing this Copilot export would do. */
+    preview: (path: string) => invoke<CopilotPlan>("copilot_preview", { path }),
+    /** Backs up, then imports in one transaction. */
+    import: (path: string) => invoke<CopilotCounts>("copilot_import", { path }),
   },
   backup: {
     status: () => invoke<BackupStatus>("backup_status"),

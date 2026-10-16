@@ -57,6 +57,7 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                   {t.payee && t.description !== t.payee && (
                     <div className="cell-secondary">{t.description}</div>
                   )}
+                  {t.note && <div className="cell-secondary" style={{ fontStyle: "italic" }}>{t.note}</div>}
                   {t.pending && <Badge tone="warn">Pending</Badge>}
                 </td>
                 <td className="left cell-secondary">{accountName(t.account_id)}</td>

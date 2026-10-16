@@ -312,3 +312,22 @@ export function useRestoreBackup() {
 export function useExportCsv() {
   return useMutation({ mutationFn: (folder: string) => api.backup.exportCsv(folder) });
 }
+
+/** A dry run: changes nothing, so nothing to invalidate. */
+export function useCopilotPreview() {
+  return useMutation({ mutationFn: (path: string) => api.copilot.preview(path) });
+}
+
+/** An import touches transactions, categories, rules, accounts and backups. */
+export function useCopilotImport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => api.copilot.import(path),
+    onSuccess: () => {
+      invalidateSpending(qc);
+      qc.invalidateQueries({ queryKey: budgetKeys.budgets });
+      qc.invalidateQueries({ queryKey: keys.accounts });
+      qc.invalidateQueries({ queryKey: ["backup"] });
+    },
+  });
+}

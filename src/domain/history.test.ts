@@ -16,7 +16,7 @@ function price(security_id: number, date: string, close: number): PriceRow {
 function bank(id: number, account_id: number, posted: string, amount: number): BankTransaction {
   return {
     id, account_id, external_id: `e${id}`, posted, amount, description: "x",
-    payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto", reviewed: true,
+    payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto", reviewed: true, note: null,
   };
 }
 

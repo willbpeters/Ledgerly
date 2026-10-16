@@ -1,0 +1,76 @@
+import { Card, Button } from "../../ui/components";
+import { money, fmtDate } from "../../ui/format";
+import type { CopilotCounts, CopilotPlan } from "../../domain/types";
+
+export interface CopilotImportPanelProps {
+  /** The dry run for the chosen file, once there is one. */
+  plan: CopilotPlan | null;
+  result: CopilotCounts | null;
+  busy: boolean;
+  onChoose: () => void;
+  onImport: () => void;
+}
+
+/** The "Import from Copilot" card's markup. Props only, so it can be tested
+ *  without Tauri; `CopilotImportCard` wires it to the real calls. */
+export function CopilotImportPanel({ plan, result, busy, onChoose, onImport }: CopilotImportPanelProps) {
+  return (
+    <Card title="Import from Copilot"
+      subtitle="Bring your Copilot categories, notes and history into Ledgerly, once, so you can stop using Copilot.">
+      <div className="grid" style={{ gap: 12 }}>
+        {result ? (
+          <div className="notice pos">
+            {result.matched} matched, {result.added} added, {result.categories} categories created,{" "}
+            {result.rules} rules learned. A backup was taken first, so this can be undone from Backups.
+          </div>
+        ) : (
+          <p className="muted" style={{ margin: 0 }}>
+            In Copilot, go to Settings → Account → <strong>Export your transactions</strong>, save the
+            file, then choose it here. Nothing changes until you press Import.
+          </p>
+        )}
+
+        <div className="row center" style={{ gap: 8 }}>
+          <Button variant={plan ? "secondary" : "primary"} onClick={onChoose} disabled={busy}>
+            Choose Copilot export…
+          </Button>
+          {plan && !result && <Button onClick={onImport} loading={busy}>Import</Button>}
+        </div>
+
+        {plan && !result && (
+          <div className="grid" style={{ gap: 6, fontSize: 13 }}>
+            <div><strong>{plan.matches.length} matched</strong> to transactions Ledgerly already has, which get your Copilot category</div>
+            <div><strong>{plan.additions.length} added as history</strong> from before Ledgerly's own records</div>
+            {plan.skipped.length > 0 && (
+              <details>
+                <summary style={{ cursor: "pointer" }}>
+                  {plan.skipped.length} not matched (Ledgerly's own record differs), skipped
+                </summary>
+                <div className="grid" style={{ gap: 2, paddingTop: 6 }}>
+                  {plan.skipped.map((s, i) => (
+                    <div key={i} className="muted">{fmtDate(s.date)} · {s.name} · {money(s.amount)} · {s.account}</div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {plan.pending_or_excluded > 0 && (
+              <div className="muted">{plan.pending_or_excluded} pending or excluded in Copilot, skipped</div>
+            )}
+            {plan.new_categories.length > 0 && (
+              <div>New categories: {plan.new_categories.map((c) => c.name).join(", ")}</div>
+            )}
+            <div>{plan.rules.length} payee rules learned from how you categorised in Copilot</div>
+            <details>
+              <summary style={{ cursor: "pointer" }}>Accounts</summary>
+              <div className="grid" style={{ gap: 2, paddingTop: 6 }}>
+                {plan.accounts.map(([from, to]) => (
+                  <div key={from} className="muted">{from} → {to}</div>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}

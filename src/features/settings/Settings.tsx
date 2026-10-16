@@ -4,6 +4,7 @@ import { ThemeToggle } from "../../ui/ThemeToggle";
 import { SimplefinCard } from "./SimplefinCard";
 import { CategoriesCard } from "./CategoriesCard";
 import { BackupCard } from "./BackupCard";
+import { CopilotImportCard } from "./CopilotImportCard";
 
 export function Settings() {
   const refresh = useRefreshPrices();
@@ -25,6 +26,8 @@ export function Settings() {
       </Card>
 
       <SimplefinCard />
+
+      <CopilotImportCard />
 
       <CategoriesCard />
 
