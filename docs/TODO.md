@@ -66,17 +66,16 @@ These are the gaps a former Copilot user would notice first.
       diagnostic showed SimpleFIN sends no category for the owner's banks, so
       Ledgerly sorts by merchant name and transfer pairing instead, with a
       Copilot-style To review list. See HANDOFF "Copilot-style sorting".
-- [ ] **9b. Import from Copilot.** Bring Copilot's categories onto matching
-      transactions, file its internal transfers as Transfer, and learn payee
-      rules from the owner's habits, so Copilot can be retired. **(spec)**
+- [x] **9b. Import from Copilot.** Done 2026-10-15, with Remove and Undo in
+      Spending. See HANDOFF "Import from Copilot" and "Remove and Undo".
 - [ ] **10. Search and filter transactions.** Spending shows one month at a
       time with no search. Wanted: find by payee, description, amount or
       category across all months.
-- [ ] **11. Edit a bank transaction.** Today only its category can change. Add
-      a note, a friendlier display name, and an "exclude from budget" switch
-      (for reimbursements, one-offs and the like). Needs a migration; keep the
-      sync from overwriting what you set, the way `category_source = 'manual'`
-      already protects categories. **(spec)**
+- [ ] **11. Edit a bank transaction.** Partly done 2026-10-15: notes are stored
+      and shown (Copilot's arrive with the import), and **Remove** covers
+      "exclude from budget". Still to do: editing a note in Ledgerly, and a
+      friendlier display name. Keep the sync from overwriting what you set,
+      the way `category_source = 'manual'` already protects categories.
 - [ ] **12. Recurring bills and subscriptions.** Detect repeating payees with a
       steady amount and cadence, list them with the next expected date, and show
       what is still due this month. The maths is pure and belongs in

@@ -20,9 +20,9 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 270 TypeScript (Vitest) + 212 Rust (`cargo test`), plus 9 tests marked
-  `#[ignore]` that touch the network or the OS credential store — all passing
-  as of 2026-10-14. Run the live ones with `cargo test --lib live_ -- --ignored`.
+- **Tests:** 296 TypeScript (Vitest) + 284 Rust (`cargo test`), plus 10 tests marked
+  `#[ignore]` that touch the network, the OS credential store or the owner's
+  real files — all passing as of 2026-10-15. Run the live ones with `cargo test --lib live_ -- --ignored`.
 - **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
   under `src-tauri/target/release/bundle/`.
 
@@ -56,6 +56,24 @@ budgeting and spending module.
   Investment accounts are left out of Spending. Every sync re-sorts all
   automatic rows, so a list change reaches history. Spec:
   `docs/superpowers/specs/2026-10-14-copilot-style-categories-design.md`
+- **Import from Copilot** (Settings): reads Copilot's CSV export, matches
+  rows to transactions SimpleFIN already has (same account by mask, same
+  amount, within 3 days) and gives them the owner's Copilot category and note;
+  adds older rows as history — to their own account, or to a manual
+  **"Copilot history"** account for accounts Copilot no longer has; creates
+  the owner's Copilot categories (Golf, Car, Date night…; Investments as a
+  transfer kind); learns payee rules (2+ uses, 90% one category, never for
+  Apple Pay / Venmo / Zelle). It also lists Ledgerly rows Copilot does not have
+  (deleted there after being paid back) with checkboxes to remove them. A
+  backup is taken first; it all lands in one transaction; re-running is safe.
+  Pure planner in `budget/copilot.rs`. Spec:
+  `docs/superpowers/specs/2026-10-15-copilot-import-design.md`
+- **Remove and Undo** (Spending): × removes a transaction from spending and
+  budgets (paid back) — a `removed` flag, so a sync never brings it back, and
+  **Show removed** → Restore undoes it. Remove, Restore, ✓, Mark all reviewed
+  and a category change each show a toast with **Undo**, which puts the rows
+  back exactly as they were (`bank_transactions_restore`). The remove question
+  has "Remove, don't ask again"; Settings → Spending turns it back on.
 - **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
   the type editable because SimpleFIN never says which accounts are cards.
   Each account can be **hidden**: a hidden account keeps syncing and keeps its
@@ -196,6 +214,19 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   deliberately not keywords: a blank in To review beats a wrong guess.
 - **Approving a transaction makes its category `manual`**, so later list
   changes and re-sorts never move it. Only `auto` rows are ever re-decided.
+- **A migration that runs today's code must make sure the columns that code
+  reads exist.** v6 re-sorts with `recategorise_all`, which now reads v8's
+  `removed`; an upgrade from v5 failed with "no such column" until v6 added
+  that column first (`add_column_if_missing` makes it harmless for v8). The
+  existing migration tests caught it — keep them.
+- **Imported Copilot rows have `external_id` starting `copilot:`.** A later
+  SimpleFIN sync *adopts* one (same account, amount, within 3 days) instead of
+  inserting a duplicate, keeping the owner's category.
+- **Removing never changes balances.** `removed` rows are left out of
+  Spending, To review and transfer pairing, but the net-worth chart still
+  walks back through them — the money really moved.
+- **A pending SimpleFIN transaction arrives with `posted: 0`**; it is dated
+  from `transacted_at` (it used to land on 1970-01-01).
 
 - **Never call the browser's `confirm()`; `await askToConfirm()` from
   `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an
