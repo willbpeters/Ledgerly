@@ -2,7 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCopilotPreview, useCopilotImport } from "../../data/queries";
 import { useToast } from "../../ui/toast";
-import { CopilotImportPanel } from "./CopilotImportPanel";
+import { CopilotImportPanel, type NotInCopilotMode } from "./CopilotImportPanel";
 
 export function CopilotImportCard() {
   const preview = useCopilotPreview();
@@ -12,6 +12,7 @@ export function CopilotImportCard() {
   // Rows Copilot does not have start ticked: the owner deletes a transaction in
   // Copilot when they are paid back, and removing here is restorable.
   const [removeIds, setRemoveIds] = useState<Set<number>>(new Set());
+  const [mode, setMode] = useState<NotInCopilotMode>("remove");
 
   const failed = (title: string) => (e: unknown) => toast.push({ tone: "neg", title, body: String(e) });
   const offered = preview.data?.not_in_copilot.map((n) => n.txn_id) ?? [];
@@ -22,6 +23,8 @@ export function CopilotImportCard() {
       result={importer.data ?? null}
       busy={preview.isPending || importer.isPending}
       removeIds={removeIds}
+      mode={mode}
+      onModeChange={setMode}
       onToggleRemove={(id) => setRemoveIds((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id); else next.add(id);
@@ -42,7 +45,7 @@ export function CopilotImportCard() {
         });
       }}
       onImport={() => {
-        if (path) importer.mutate({ path, removeIds: [...removeIds] }, { onError: failed("Import didn't happen") });
+        if (path) importer.mutate({ path, removeIds: mode === "remove" ? [...removeIds] : [] }, { onError: failed("Import didn't happen") });
       }}
     />
   );

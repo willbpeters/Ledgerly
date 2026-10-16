@@ -1,4 +1,4 @@
-import { Card, Button } from "../../ui/components";
+import { Card, Button, Segmented } from "../../ui/components";
 import { money, fmtDate } from "../../ui/format";
 import type { CopilotCounts, CopilotPlan } from "../../domain/types";
 
@@ -13,12 +13,17 @@ export interface CopilotImportPanelProps {
   removeIds: Set<number>;
   onToggleRemove: (id: number) => void;
   onSetAllRemove: (all: boolean) => void;
+  /** What to do with transactions Ledgerly has and Copilot doesn't. */
+  mode: NotInCopilotMode;
+  onModeChange: (mode: NotInCopilotMode) => void;
 }
+
+export type NotInCopilotMode = "remove" | "keep";
 
 /** The "Import from Copilot" card's markup. Props only, so it can be tested
  *  without Tauri; `CopilotImportCard` wires it to the real calls. */
 export function CopilotImportPanel({
-  plan, result, busy, onChoose, onImport, removeIds, onToggleRemove, onSetAllRemove,
+  plan, result, busy, onChoose, onImport, removeIds, onToggleRemove, onSetAllRemove, mode, onModeChange,
 }: CopilotImportPanelProps) {
   return (
     <Card title="Import from Copilot"
@@ -61,25 +66,34 @@ export function CopilotImportPanel({
               </details>
             )}
             {plan.not_in_copilot.length > 0 && (
-              <details open>
-                <summary style={{ cursor: "pointer" }}>
-                  <strong>{plan.not_in_copilot.length} not in Copilot</strong>: probably deleted there after
-                  you were paid back. The {removeIds.size} ticked will be removed from Spending (you can
-                  restore any of them later).
-                </summary>
-                <div className="row center" style={{ gap: 8, padding: "6px 0" }}>
-                  <button className="btn btn-ghost btn-sm" onClick={() => onSetAllRemove(true)}>Tick all</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => onSetAllRemove(false)}>Tick none</button>
+              <div className="grid" style={{ gap: 6, paddingTop: 4 }}>
+                <div className="row center" style={{ gap: 10 }}>
+                  <strong>{plan.not_in_copilot.length} not in Copilot</strong>
+                  <Segmented<NotInCopilotMode> value={mode} onChange={onModeChange} items={[
+                    { value: "remove", label: "Remove them" },
+                    { value: "keep", label: "Keep them" },
+                  ]} />
                 </div>
-                <div className="grid" style={{ gap: 2, maxHeight: 260, overflow: "auto" }}>
-                  {plan.not_in_copilot.map((n) => (
-                    <label key={n.txn_id} className="row center" style={{ gap: 8, fontSize: 12 }}>
-                      <input type="checkbox" checked={removeIds.has(n.txn_id)} onChange={() => onToggleRemove(n.txn_id)} />
-                      <span>{fmtDate(n.date)} · {n.name} · {money(n.amount)} · <span className="muted">{n.account}</span></span>
-                    </label>
-                  ))}
-                </div>
-              </details>
+                {mode === "keep" ? (
+                  <div className="muted">They stay in your transactions.</div>
+                ) : (
+                  <>
+                    <div className="muted">
+                      Like deleting in Copilot: {removeIds.size} ticked leave Spending. Restore any later.
+                      <button className="btn btn-ghost btn-sm" onClick={() => onSetAllRemove(true)}>Tick all</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => onSetAllRemove(false)}>Tick none</button>
+                    </div>
+                    <div className="grid" style={{ gap: 2, maxHeight: 260, overflow: "auto" }}>
+                      {plan.not_in_copilot.map((n) => (
+                        <label key={n.txn_id} className="row center" style={{ gap: 8, fontSize: 12 }}>
+                          <input type="checkbox" checked={removeIds.has(n.txn_id)} onChange={() => onToggleRemove(n.txn_id)} />
+                          <span>{fmtDate(n.date)} · {n.name} · {money(n.amount)} · <span className="muted">{n.account}</span></span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             )}
             {plan.pending_or_excluded > 0 && (
               <div className="muted">{plan.pending_or_excluded} pending or excluded in Copilot, skipped</div>

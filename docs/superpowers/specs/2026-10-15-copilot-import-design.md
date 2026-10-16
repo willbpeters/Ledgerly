@@ -244,3 +244,9 @@ ids and removes them in the same transaction, accepting only ids the plan
 offered. On the owner's data this is 97 rows (17 incoming Apple Pay, 12 Target,
 10 outgoing Apple Pay, 6 Costco, …); some may be amount differences rather than
 deletions, which is why each can be unticked and every removal restored.
+
+**Revised the same day, at the owner's word that Copilot runs hours, not days,
+behind:** only rows from the export's own newest day (the newest date in the
+whole file, not per account) are left out of `not_in_copilot`. The preview
+also asks plainly what to do with them — **Remove them** (the default, like
+deleting in Copilot, with the per-row ticks) or **Keep them**.

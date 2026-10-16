@@ -17,7 +17,7 @@ const plan: CopilotPlan = {
   accounts: [["Adv SafeBalance Banking", "Card (9849)"], ["(no account)", "Copilot history"]],
 };
 const base = {
-  plan: null, result: null, busy: false, removeIds: new Set<number>(),
+  plan: null, result: null, busy: false, removeIds: new Set<number>(), mode: "remove" as const, onModeChange: vi.fn(),
   onChoose: vi.fn(), onImport: vi.fn(), onToggleRemove: vi.fn(), onSetAllRemove: vi.fn(),
 };
 
@@ -55,6 +55,17 @@ describe("CopilotImportPanel", () => {
     expect(screen.getByText(/2 not in Copilot/)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Transfer from Apple Pay/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Target/ })).not.toBeChecked();
+  });
+
+  it("offers to remove or keep what Copilot doesn't have, and keeping hides the list", () => {
+    const onModeChange = vi.fn();
+    const { rerender } = render(<CopilotImportPanel {...base} plan={plan} onModeChange={onModeChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Keep them" }));
+    expect(onModeChange).toHaveBeenCalledWith("keep");
+
+    rerender(<CopilotImportPanel {...base} plan={plan} mode="keep" />);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText(/stay in your transactions/)).toBeInTheDocument();
   });
 
   it("ticks and unticks one row, or all of them", () => {
