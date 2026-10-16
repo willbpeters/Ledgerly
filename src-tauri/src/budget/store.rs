@@ -1,7 +1,7 @@
 //! Reading and writing budgeting data. The decisions live in `categorize`;
 //! this module only persists them.
 use super::categorize::{self, Candidate, Decision, Rule};
-use super::{merchants, seed, transfers};
+use super::{copilot, merchants, seed, transfers};
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// A transaction as it arrives from a provider, before it has a category.
@@ -87,6 +87,27 @@ pub fn upsert_transactions(
                 counts.updated += 1;
             }
             None => {
+                // An older purchase the Copilot import already added: take it
+                // over rather than adding a second copy, keeping the owner's
+                // category and note.
+                let adopted: Option<i64> = conn.query_row(
+                    "SELECT id FROM bank_transactions
+                     WHERE account_id=?1 AND external_id LIKE 'copilot:%'
+                       AND CAST(ROUND(amount*100) AS INTEGER) = CAST(ROUND(?2*100) AS INTEGER)
+                       AND ABS(julianday(posted) - julianday(?3)) <= 3
+                     ORDER BY ABS(julianday(posted) - julianday(?3)) LIMIT 1",
+                    params![account_id, t.amount, t.posted],
+                    |r| r.get(0),
+                ).optional()?;
+                if let Some(id) = adopted {
+                    conn.execute(
+                        "UPDATE bank_transactions SET external_id=?1, posted=?2, amount=?3, description=?4,
+                           payee=?5, memo=?6, mcc=?7, pending=?8 WHERE id=?9",
+                        params![t.external_id, t.posted, t.amount, t.description, t.payee, t.memo, t.mcc, t.pending as i64, id],
+                    )?;
+                    counts.updated += 1;
+                    continue;
+                }
                 let category = resolve(conn, categorize::decide(&candidate(t, &account_type), rules))?;
                 conn.execute(
                     "INSERT INTO bank_transactions
@@ -225,6 +246,118 @@ pub fn approve(conn: &Connection, ids: &[i64]) -> rusqlite::Result<usize> {
         )?;
     }
     Ok(changed)
+}
+
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize)]
+pub struct CopilotCounts { pub matched: usize, pub added: usize, pub categories: usize, pub rules: usize }
+
+/// What the Copilot planner needs to know about the database.
+pub fn copilot_snapshot(conn: &Connection) -> rusqlite::Result<copilot::Snapshot> {
+    let accounts = conn.prepare("SELECT id, name FROM accounts")?
+        .query_map([], |r| Ok(copilot::AccountRef { id: r.get(0)?, name: r.get(1)? }))?
+        .collect::<rusqlite::Result<_>>()?;
+    let txns = conn.prepare("SELECT id, account_id, posted, amount, external_id FROM bank_transactions")?
+        .query_map([], |r| Ok(copilot::ExistingTxn {
+            id: r.get(0)?, account_id: r.get(1)?, posted: r.get(2)?, amount: r.get(3)?,
+            from_copilot: r.get::<_, String>(4)?.starts_with("copilot:"),
+        }))?
+        .collect::<rusqlite::Result<_>>()?;
+    let category_names = conn.prepare("SELECT name FROM categories")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let rule_patterns = conn.prepare("SELECT pattern FROM category_rules WHERE match_type='payee'")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(copilot::Snapshot { accounts, txns, category_names, rule_patterns })
+}
+
+fn category_named(conn: &Connection, name: &str) -> rusqlite::Result<Option<i64>> {
+    conn.query_row("SELECT id FROM categories WHERE lower(name)=lower(?1)", [name], |r| r.get(0))
+        .optional()
+}
+
+/// The manual account that holds rows whose Copilot account no longer exists.
+/// It carries bank transactions only, so its balance stays zero.
+fn history_account(conn: &Connection) -> rusqlite::Result<i64> {
+    let found: Option<i64> = conn.query_row(
+        "SELECT id FROM accounts WHERE name=?1 AND source='manual'",
+        [copilot::HISTORY_ACCOUNT],
+        |r| r.get(0),
+    ).optional()?;
+    if let Some(id) = found {
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO accounts (name,type,currency,created_at,source) VALUES (?1,'cash','USD',?2,'manual')",
+        params![copilot::HISTORY_ACCOUNT, chrono::Utc::now().to_rfc3339()],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Write a Copilot plan: all of it or none of it.
+pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan) -> rusqlite::Result<CopilotCounts> {
+    let tx = conn.unchecked_transaction()?;
+    let mut counts = CopilotCounts::default();
+
+    for (i, c) in plan.new_categories.iter().enumerate() {
+        let sort: i64 = tx.query_row("SELECT COALESCE(MAX(sort),0)+10 FROM categories", [], |r| r.get(0))?;
+        counts.categories += tx.execute(
+            "INSERT OR IGNORE INTO categories (name,kind,colour,sort,is_builtin) VALUES (?1,?2,?3,?4,0)",
+            params![c.name, c.kind, format!("chart-{}", i % 6 + 1), sort],
+        )?;
+    }
+
+    let mut history: Option<i64> = None;
+    for a in &plan.additions {
+        let account_id = match a.account {
+            copilot::Target::Account(id) => id,
+            copilot::Target::History => match history {
+                Some(id) => id,
+                None => {
+                    let id = history_account(&tx)?;
+                    history = Some(id);
+                    id
+                }
+            },
+        };
+        let category = match &a.category { Some(n) => category_named(&tx, n)?, None => None };
+        tx.execute(
+            "INSERT INTO bank_transactions
+               (account_id,external_id,posted,amount,description,payee,category_id,category_source,reviewed,note)
+             VALUES (?1,?2,?3,?4,?5,?5,?6,'manual',1,?7)
+             ON CONFLICT(account_id,external_id) DO UPDATE SET
+               category_id=excluded.category_id, note=excluded.note",
+            params![account_id, a.external_id, a.posted, a.amount, a.name, category, a.note],
+        )?;
+        counts.added += 1;
+    }
+
+    for m in &plan.matches {
+        let category = match &m.category { Some(n) => category_named(&tx, n)?, None => None };
+        // A category the owner already chose in Ledgerly wins.
+        tx.execute(
+            "UPDATE bank_transactions SET category_id=?1, category_source='manual', reviewed=1
+             WHERE id=?2 AND category_source='auto'",
+            params![category, m.txn_id],
+        )?;
+        tx.execute("UPDATE bank_transactions SET note=COALESCE(note, ?1) WHERE id=?2", params![m.note, m.txn_id])?;
+        counts.matched += 1;
+    }
+
+    for r in &plan.rules {
+        if let Some(id) = category_named(&tx, &r.category)? {
+            counts.rules += tx.execute(
+                "INSERT OR IGNORE INTO category_rules (match_type,pattern,category_id,created_at)
+                 VALUES ('payee',?1,?2,?3)",
+                params![r.pattern, id, chrono::Utc::now().to_rfc3339()],
+            )?;
+        }
+    }
+
+    // The learned rules apply at once to every automatic row.
+    recategorise_all(&tx)?;
+    tx.commit()?;
+    Ok(counts)
 }
 
 #[cfg(test)]
@@ -478,5 +611,75 @@ mod tests {
         conn.execute("UPDATE bank_transactions SET reviewed=1", []).unwrap();
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.5, "Target")], &[]).unwrap();
         assert!(row(&conn, "t1").2);
+    }
+
+    use crate::budget::copilot;
+
+    fn copilot_plan(conn: &Connection, csv: &str) -> copilot::Plan {
+        copilot::plan(&copilot::parse_csv(csv).unwrap(), &copilot_snapshot(conn).unwrap())
+    }
+
+    const COPILOT_HEADER: &str = "\"date\",\"name\",\"amount\",\"status\",\"category\",\"parent category\",\"excluded\",\"tags\",\"type\",\"account\",\"account mask\",\"note\",\"recurring\"";
+
+    #[test]
+    fn applying_a_plan_matches_adds_creates_and_learns() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card (9849)", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("sf1", "2026-07-02", -12.5, "Zqx Diner")], &[]).unwrap();
+        let csv = format!("{COPILOT_HEADER}\n\
+            \"2026-07-03\",\"Zqx Diner\",\"12.50\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"lunch\",\"\"\n\
+            \"2026-01-05\",\"Haggin Oaks\",\"20\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n\
+            \"2026-01-12\",\"Haggin Oaks\",\"25\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
+        let plan = copilot_plan(&conn, &csv);
+
+        let counts = apply_copilot_plan(&conn, &plan).unwrap();
+
+        assert_eq!((counts.matched, counts.added), (1, 2));
+        assert_eq!(row(&conn, "sf1"), (Some("Dining".into()), "manual".into(), true));
+        let note: Option<String> = conn.query_row("SELECT note FROM bank_transactions WHERE external_id='sf1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(note.as_deref(), Some("lunch"));
+        assert!(seed::category_id(&conn, "Golf").unwrap().is_some());
+        let history: i64 = conn.query_row("SELECT count(*) FROM accounts WHERE name='Copilot history'", [], |r| r.get(0)).unwrap();
+        assert_eq!(history, 1);
+        let rules: i64 = conn.query_row("SELECT count(*) FROM category_rules WHERE pattern='haggin oaks'", [], |r| r.get(0)).unwrap();
+        assert_eq!(rules, 1);
+
+        // Running it again changes nothing.
+        let again = copilot_plan(&conn, &csv);
+        apply_copilot_plan(&conn, &again).unwrap();
+        let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn an_import_never_overrides_a_category_chosen_in_ledgerly() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card (9849)", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("sf1", "2026-07-02", -12.5, "Zqx Diner")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        set_category(&conn, id, seed::category_id(&conn, "Groceries").unwrap(), false).unwrap();
+        let csv = format!("{COPILOT_HEADER}\n\"2026-07-03\",\"Zqx Diner\",\"12.50\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
+
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+
+        assert_eq!(row(&conn, "sf1").0.as_deref(), Some("Groceries"));
+        let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(total, 1, "matched, not added");
+    }
+
+    #[test]
+    fn a_sync_adopts_an_imported_row_instead_of_duplicating_it() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card (9849)", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("sf-new", "2026-07-02", -1.0, "Zqx")], &[]).unwrap();
+        let csv = format!("{COPILOT_HEADER}\n\"2026-01-05\",\"Old Diner\",\"8\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+
+        // "Import 2 years" later brings SimpleFIN's own copy of that purchase.
+        upsert_transactions(&conn, card, &[payee_txn("sf-old", "2026-01-06", -8.0, "Old Diner Inc")], &[]).unwrap();
+
+        let rows: i64 = conn.query_row("SELECT count(*) FROM bank_transactions WHERE amount=-8", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(row(&conn, "sf-old").0.as_deref(), Some("Dining"), "the owner's category survives");
     }
 }
