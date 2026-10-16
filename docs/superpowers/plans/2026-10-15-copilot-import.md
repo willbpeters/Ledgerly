@@ -923,3 +923,20 @@ describe("CopilotImportPanel", () => {
 - [ ] Settings → **Import from Copilot** → choose `Downloads\transactions (2).csv` → check the preview against the dry run (~250 matched, ~1,795 added, ~29 skipped) → **Import**.
 - [ ] Check Spending: old months (2024–2025) show spending; Golf, Car, Date night exist as categories; To review is smaller.
 - [ ] Docs: HANDOFF (feature + gotcha "Copilot rows have `external_id` starting `copilot:`; a sync adopts them"), TODO 9b ticked. Merge, push, delete the branch.
+
+---
+
+## Addendum: Remove and "deleted in Copilot" (spec addendum, 2026-10-15)
+
+### Task 8: `removed` flag (v8) and remove/restore — `db.rs`, `models.rs`, `store.rs`, `commands/budget.rs`, `lib.rs`
+- Tests first: v8 adds `removed` (default 0, idempotent, in `migration_pending`); `set_removed(&[id], true)` then a sync of the same row leaves it removed; `set_removed(.., false)` restores; `mark_transfer_pairs` ignores removed rows; `list_to_review` leaves removed rows out.
+- Implement: `V8_COLUMN = ("removed", "removed INTEGER NOT NULL DEFAULT 0")`, `apply_v8` via `add_column_if_missing`; `BankTransaction.removed`, `TXN_COLUMNS` gains `removed` (index 14); `store::set_removed(conn, ids, removed) -> usize`; `AND removed=0` in `mark_transfer_pairs` and `list_to_review`; command `bank_transactions_set_removed(ids, removed)`.
+
+### Task 9: the plan finds rows deleted in Copilot — `budget/copilot.rs`, `store.rs`, `commands/copilot.rs`
+- `ExistingTxn` gains `label`, `pending`, `removed`; `Plan` gains `not_in_copilot: Vec<NotInCopilot { txn_id, date, name, amount, account }>`.
+- Tests first: an unmatched Ledgerly row inside its account's Copilot dates is listed; one in the last three days of that range is not; pending, removed and imported rows are not; an account no Copilot row maps to is not looked at.
+- `apply_copilot_plan(conn, plan, remove: &[i64])` sets `removed=1` for ids that are in `plan.not_in_copilot`, inside the same transaction; test that an id not offered is ignored. `copilot_import(path, remove_ids)`.
+
+### Task 10: UI — `types.ts`, `api.ts`, `queries.ts`, `spending.ts`, `TransactionList.tsx`, `Spending.tsx`, `CopilotImportPanel.tsx`, `CopilotImportCard.tsx`
+- Tests first: `fromVisibleAccounts` leaves removed rows out; `TransactionList` shows Remove when `onRemove` is given and Restore when `onRestore` is; the import panel lists `not_in_copilot` rows checked by default, unticking one drops it from what `onImport` receives.
+- Spending: Remove asks with `askToConfirm`; "Show removed (n)" lists the month's removed rows with Restore.

@@ -216,3 +216,31 @@ it is handed.
 - Tags and Copilot's "recurring" links (recurring detection is TODO item 12).
 - Editing notes (item 11).
 - Splitting Copilot rows across accounts beyond the mask rule.
+
+## Addendum (2026-10-15): removing transactions, and ones deleted in Copilot
+
+The owner deletes a transaction in Copilot when they are paid back for it, and
+wants the same in Ledgerly, plus the import to carry those deletions over.
+
+**Remove, not delete.** A deleted SimpleFIN row would come straight back on the
+next sync (same `external_id`), so removing is a flag: schema **v8** adds
+`bank_transactions.removed INTEGER NOT NULL DEFAULT 0`. A removed row is left
+out of Spending, budgets, the To review list and transfer pairing; a sync
+updates it but never clears the flag; **Restore** clears it. It still counts in
+the net-worth chart's walk back from today's balance, because the money really
+moved — removing is about budgeting, not about the account.
+
+**In the Spending list**, each row gets a Remove button (confirmed with
+`askToConfirm`). The Transactions card gets **Show removed (n)**, listing the
+month's removed rows with **Restore**.
+
+**In the import**, the plan gains `not_in_copilot`: Ledgerly rows (not
+imported, not pending, not already removed, not matched) in an account some
+Copilot row maps to, dated from that account's first Copilot row up to three
+days before its last — Copilot can lag SimpleFIN by a day or two, and a row
+too new for Copilot to have seen is not one the owner deleted. The preview
+lists them with a checkbox each, all ticked; `copilot_import` takes the ticked
+ids and removes them in the same transaction, accepting only ids the plan
+offered. On the owner's data this is 97 rows (17 incoming Apple Pay, 12 Target,
+10 outgoing Apple Pay, 6 Costco, …); some may be amount differences rather than
+deletions, which is why each can be unticked and every removal restored.
