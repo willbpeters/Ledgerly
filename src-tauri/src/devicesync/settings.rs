@@ -27,13 +27,11 @@ pub fn save(path: &Path, settings: &DeviceSyncSettings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     // Write a temp file and swap it in, so a crash mid-write can't leave a torn
     // file that `load` would read as "not syncing" and forget the device id.
-    // The target is removed first because rename won't overwrite on every platform.
+    // rename replaces an existing file in one step (on Windows too), so there is
+    // no moment when the settings file is missing.
     let tmp = path.with_extension("json.tmp");
     let err = |e: std::io::Error| format!("Couldn't save the sync settings: {e}");
     std::fs::write(&tmp, json).map_err(err)?;
-    if path.exists() {
-        std::fs::remove_file(path).map_err(err)?;
-    }
     std::fs::rename(&tmp, path).map_err(err)
 }
 
