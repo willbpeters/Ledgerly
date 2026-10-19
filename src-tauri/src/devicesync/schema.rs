@@ -60,6 +60,197 @@ CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_sync_key ON bank_transaction
 CREATE UNIQUE INDEX IF NOT EXISTS transactions_sync_key ON transactions(sync_key);
 ";
 
+/// Now in milliseconds since 1970, inside SQL.
+const NOW: &str = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000.0) AS INTEGER)";
+
+const TRIGGER_NAMES: &[&str] = &[
+    "accounts_sync_insert", "accounts_sync_update", "accounts_sync_delete",
+    "categories_sync_insert", "categories_sync_update", "categories_sync_delete",
+    "bank_transactions_sync_insert", "bank_transactions_sync_update",
+    "category_rules_sync_insert", "category_rules_sync_update", "category_rules_sync_delete",
+    "budgets_sync_insert", "budgets_sync_update", "budgets_sync_delete",
+    "transactions_sync_insert", "transactions_sync_delete",
+];
+
+/// Every insert trigger first gives the new row its key (always, so keys
+/// exist before sync is ever turned on), then records it if it is the
+/// owner's. Update triggers are `UPDATE OF` the owner's columns only, so the
+/// key-filling UPDATE and SimpleFIN's balance updates never fire them.
+/// `{NOW}` is replaced with the millisecond clock at install.
+const TRIGGERS: &str = "
+CREATE TRIGGER accounts_sync_insert AFTER INSERT ON accounts BEGIN
+  UPDATE accounts SET sync_key = CASE
+      WHEN NEW.source = 'simplefin' AND NEW.external_id IS NOT NULL THEN 'sf:' || NEW.external_id
+      ELSE 'acct:' || lower(hex(randomblob(16))) END
+    WHERE id = NEW.id AND sync_key IS NULL;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'accounts', a.sync_key, '_row',
+      json_object('name', a.name, 'type', a.type, 'institution', a.institution,
+                  'currency', a.currency, 'created_at', a.created_at, 'hidden', a.hidden), {NOW}
+    FROM accounts a WHERE a.id = NEW.id AND a.source = 'manual' AND (SELECT yes FROM sync_on);
+END;
+
+CREATE TRIGGER accounts_sync_update AFTER UPDATE OF type, hidden, name, institution, currency ON accounts
+WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'accounts', NEW.sync_key, 'type', json_quote(NEW.type), {NOW} WHERE OLD.type IS NOT NEW.type;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'accounts', NEW.sync_key, 'hidden', json_quote(NEW.hidden), {NOW} WHERE OLD.hidden IS NOT NEW.hidden;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'accounts', NEW.sync_key, 'name', json_quote(NEW.name), {NOW}
+    WHERE NEW.source = 'manual' AND OLD.name IS NOT NEW.name;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'accounts', NEW.sync_key, 'institution', json_quote(NEW.institution), {NOW}
+    WHERE NEW.source = 'manual' AND OLD.institution IS NOT NEW.institution;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'accounts', NEW.sync_key, 'currency', json_quote(NEW.currency), {NOW}
+    WHERE NEW.source = 'manual' AND OLD.currency IS NOT NEW.currency;
+END;
+
+CREATE TRIGGER accounts_sync_delete AFTER DELETE ON accounts
+WHEN OLD.source = 'manual' AND OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('accounts', OLD.sync_key, '_row', NULL, {NOW});
+END;
+
+CREATE TRIGGER categories_sync_insert AFTER INSERT ON categories BEGIN
+  UPDATE categories SET sync_key = CASE
+      WHEN EXISTS (SELECT 1 FROM categories WHERE sync_key = 'cat:' || NEW.name)
+        THEN 'cat:' || NEW.name || ':' || lower(hex(randomblob(4)))
+      ELSE 'cat:' || NEW.name END
+    WHERE id = NEW.id AND sync_key IS NULL;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'categories', c.sync_key, '_row',
+      json_object('name', c.name, 'kind', c.kind, 'colour', c.colour, 'sort', c.sort,
+                  'is_builtin', c.is_builtin), {NOW}
+    FROM categories c WHERE c.id = NEW.id AND (SELECT yes FROM sync_on);
+END;
+
+CREATE TRIGGER categories_sync_update AFTER UPDATE OF name, colour, sort ON categories
+WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'categories', NEW.sync_key, 'name', json_quote(NEW.name), {NOW} WHERE OLD.name IS NOT NEW.name;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'categories', NEW.sync_key, 'colour', json_quote(NEW.colour), {NOW} WHERE OLD.colour IS NOT NEW.colour;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'categories', NEW.sync_key, 'sort', json_quote(NEW.sort), {NOW} WHERE OLD.sort IS NOT NEW.sort;
+END;
+
+CREATE TRIGGER categories_sync_delete AFTER DELETE ON categories
+WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('categories', OLD.sync_key, '_row', NULL, {NOW});
+END;
+
+CREATE TRIGGER bank_transactions_sync_insert AFTER INSERT ON bank_transactions BEGIN
+  UPDATE bank_transactions SET sync_key =
+      (SELECT a.sync_key FROM accounts a WHERE a.id = NEW.account_id) || '|' || NEW.external_id
+    WHERE id = NEW.id AND sync_key IS NULL;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', b.sync_key, '_row',
+      json_object('account', a.sync_key, 'external_id', b.external_id, 'posted', b.posted,
+        'amount', b.amount, 'description', b.description, 'payee', b.payee, 'memo', b.memo,
+        'category', (SELECT c.sync_key FROM categories c WHERE c.id = b.category_id),
+        'category_source', b.category_source, 'reviewed', b.reviewed, 'note', b.note,
+        'removed', b.removed), {NOW}
+    FROM bank_transactions b JOIN accounts a ON a.id = b.account_id
+    WHERE b.id = NEW.id AND (a.source = 'manual' OR b.external_id LIKE 'copilot:%')
+      AND (SELECT yes FROM sync_on);
+END;
+
+CREATE TRIGGER bank_transactions_sync_update
+AFTER UPDATE OF category_id, category_source, note, reviewed, removed ON bank_transactions
+WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', NEW.sync_key, 'category',
+      json_array((SELECT c.sync_key FROM categories c WHERE c.id = NEW.category_id), NEW.category_source), {NOW}
+    WHERE (NEW.category_source = 'manual'
+             AND (OLD.category_source <> 'manual' OR OLD.category_id IS NOT NEW.category_id))
+       OR (NEW.category_source = 'auto' AND OLD.category_source = 'manual');
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', NEW.sync_key, 'note', json_quote(NEW.note), {NOW} WHERE OLD.note IS NOT NEW.note;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', NEW.sync_key, 'reviewed', json_quote(NEW.reviewed), {NOW}
+    WHERE OLD.reviewed IS NOT NEW.reviewed;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', NEW.sync_key, 'removed', json_quote(NEW.removed), {NOW}
+    WHERE OLD.removed IS NOT NEW.removed;
+END;
+
+CREATE TRIGGER category_rules_sync_insert AFTER INSERT ON category_rules
+WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    VALUES ('category_rules', NEW.match_type || ':' || NEW.pattern, '_row',
+      json_object('match_type', NEW.match_type, 'pattern', NEW.pattern,
+        'category', (SELECT sync_key FROM categories WHERE id = NEW.category_id),
+        'created_at', NEW.created_at), {NOW});
+END;
+
+CREATE TRIGGER category_rules_sync_update AFTER UPDATE OF category_id ON category_rules
+WHEN (SELECT yes FROM sync_on) AND OLD.category_id IS NOT NEW.category_id BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    VALUES ('category_rules', NEW.match_type || ':' || NEW.pattern, 'category',
+      json_quote((SELECT sync_key FROM categories WHERE id = NEW.category_id)), {NOW});
+END;
+
+CREATE TRIGGER category_rules_sync_delete AFTER DELETE ON category_rules
+WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    VALUES ('category_rules', OLD.match_type || ':' || OLD.pattern, '_row', NULL, {NOW});
+END;
+
+-- Budget keys need the category's key. When a category delete cascades to
+-- its budgets the category row is already gone, the SELECT finds nothing and
+-- nothing is recorded: the category's own deletion carries the news.
+CREATE TRIGGER budgets_sync_insert AFTER INSERT ON budgets WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'budgets', c.sync_key || '|' || coalesce(NEW.month, '*'), '_row',
+      json_object('limit_amount', NEW.limit_amount), {NOW}
+    FROM categories c WHERE c.id = NEW.category_id AND c.sync_key IS NOT NULL;
+END;
+
+CREATE TRIGGER budgets_sync_update AFTER UPDATE OF limit_amount ON budgets
+WHEN (SELECT yes FROM sync_on) AND OLD.limit_amount IS NOT NEW.limit_amount BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'budgets', c.sync_key || '|' || coalesce(NEW.month, '*'), 'limit_amount',
+      json_quote(NEW.limit_amount), {NOW}
+    FROM categories c WHERE c.id = NEW.category_id AND c.sync_key IS NOT NULL;
+END;
+
+CREATE TRIGGER budgets_sync_delete AFTER DELETE ON budgets WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'budgets', c.sync_key || '|' || coalesce(OLD.month, '*'), '_row', NULL, {NOW}
+    FROM categories c WHERE c.id = OLD.category_id AND c.sync_key IS NOT NULL;
+END;
+
+CREATE TRIGGER transactions_sync_insert AFTER INSERT ON transactions BEGIN
+  UPDATE transactions SET sync_key = 'txn:' || lower(hex(randomblob(16)))
+    WHERE id = NEW.id AND sync_key IS NULL;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'transactions', t.sync_key, '_row',
+      json_object('account', a.sync_key,
+        'security', json(CASE WHEN s.id IS NULL THEN 'null'
+          ELSE json_object('ticker', s.ticker, 'name', s.name, 'type', s.type, 'currency', s.currency) END),
+        'type', t.type, 'date', t.date, 'quantity', t.quantity, 'price', t.price,
+        'amount', t.amount, 'fees', t.fees, 'note', t.note), {NOW}
+    FROM transactions t JOIN accounts a ON a.id = t.account_id
+    LEFT JOIN securities s ON s.id = t.security_id
+    WHERE t.id = NEW.id AND (SELECT yes FROM sync_on);
+END;
+
+CREATE TRIGGER transactions_sync_delete AFTER DELETE ON transactions
+WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('transactions', OLD.sync_key, '_row', NULL, {NOW});
+END;
+";
+
+fn trigger_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?1",
+        [name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 /// Whether every v9 object is really present, whatever the version stamp says.
 pub fn is_complete(conn: &Connection) -> rusqlite::Result<bool> {
     for table in KEYED_TABLES {
@@ -78,7 +269,15 @@ pub fn is_complete(conn: &Connection) -> rusqlite::Result<bool> {
         [],
         |r| r.get(0),
     )?;
-    Ok(view == 1)
+    if view != 1 {
+        return Ok(false);
+    }
+    for name in TRIGGER_NAMES {
+        if !trigger_exists(conn, name)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Safe to re-run: every step is conditional. One transaction, so an
@@ -90,6 +289,12 @@ pub fn install(conn: &Connection) -> rusqlite::Result<()> {
     }
     tx.execute_batch(TABLES)?;
     tx.execute_batch(BACKFILL)?;
+    // Dropped and recreated rather than IF NOT EXISTS, so a later build that
+    // changes a trigger body can simply re-run this.
+    for name in TRIGGER_NAMES {
+        tx.execute_batch(&format!("DROP TRIGGER IF EXISTS {name};"))?;
+    }
+    tx.execute_batch(&TRIGGERS.replace("{NOW}", NOW))?;
     tx.commit()
 }
 
@@ -180,5 +385,188 @@ mod tests {
         assert!(!is_complete(&conn).unwrap());
         install(&conn).unwrap();
         assert!(is_complete(&conn).unwrap());
+    }
+
+    fn enabled() -> Connection {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute_batch("INSERT OR REPLACE INTO sync_meta VALUES ('enabled','1');").unwrap();
+        conn
+    }
+
+    /// (tbl, key, field, value) for everything recorded, oldest first.
+    fn outbox(conn: &Connection) -> Vec<(String, String, String, Option<String>)> {
+        let mut stmt = conn.prepare("SELECT tbl, key, field, value FROM sync_outbox ORDER BY seq").unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    }
+
+    fn simplefin_txn(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
+               VALUES ('Card','credit','USD','2026-01-01','simplefin','ACT-1');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES (1,'TRN-1','2026-10-01',-5,'Coffee');",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn new_rows_get_their_key_from_the_insert_trigger() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        assert_eq!(text(&conn, "SELECT sync_key FROM accounts WHERE id=1").as_deref(), Some("sf:ACT-1"));
+        assert_eq!(text(&conn, "SELECT sync_key FROM bank_transactions WHERE id=1").as_deref(), Some("sf:ACT-1|TRN-1"));
+    }
+
+    #[test]
+    fn what_simplefin_delivers_is_not_recorded() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        assert!(outbox(&conn).is_empty(), "{:?}", outbox(&conn));
+    }
+
+    #[test]
+    fn choosing_a_category_is_recorded_with_the_category_key() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "UPDATE bank_transactions SET category_id=(SELECT id FROM categories WHERE name='Dining'),
+               category_source='manual', reviewed=1 WHERE id=1;",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        assert!(rows.contains(&(
+            "bank_transactions".into(), "sf:ACT-1|TRN-1".into(), "category".into(),
+            Some(r#"["cat:Dining","manual"]"#.into())
+        )), "{rows:?}");
+        assert!(rows.contains(&(
+            "bank_transactions".into(), "sf:ACT-1|TRN-1".into(), "reviewed".into(), Some("1".into())
+        )), "{rows:?}");
+    }
+
+    #[test]
+    fn automatic_sorting_is_not_recorded() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "UPDATE bank_transactions SET category_id=(SELECT id FROM categories WHERE name='Dining') WHERE id=1;",
+        )
+        .unwrap();
+        assert!(outbox(&conn).is_empty());
+    }
+
+    #[test]
+    fn nothing_is_recorded_while_sync_is_off_or_while_applying() {
+        let conn = db::open_in_memory().unwrap();
+        simplefin_txn(&conn);
+        conn.execute_batch("UPDATE bank_transactions SET note='lunch' WHERE id=1;").unwrap();
+        assert!(outbox(&conn).is_empty(), "off");
+
+        conn.execute_batch(
+            "INSERT OR REPLACE INTO sync_meta VALUES ('enabled','1');
+             INSERT OR REPLACE INTO sync_meta VALUES ('applying','1');
+             UPDATE bank_transactions SET note='dinner' WHERE id=1;",
+        )
+        .unwrap();
+        assert!(outbox(&conn).is_empty(), "applying");
+    }
+
+    #[test]
+    fn a_manual_account_is_recorded_as_a_whole_row_and_its_deletion_as_null() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Cash jar','cash','USD','2026-01-01');",
+        )
+        .unwrap();
+        let key = text(&conn, "SELECT sync_key FROM accounts WHERE id=1").unwrap();
+        conn.execute_batch("DELETE FROM accounts WHERE id=1;").unwrap();
+
+        let rows = outbox(&conn);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!((rows[0].0.as_str(), rows[0].1.as_str(), rows[0].2.as_str()), ("accounts", key.as_str(), "_row"));
+        let row: serde_json::Value = serde_json::from_str(rows[0].3.as_deref().unwrap()).unwrap();
+        assert_eq!(row["name"], "Cash jar");
+        assert_eq!(rows[1].3, None);
+    }
+
+    #[test]
+    fn hiding_a_simplefin_account_is_recorded_but_its_renaming_is_not() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch("UPDATE accounts SET hidden=1, name='Visa' WHERE id=1;").unwrap();
+        assert_eq!(outbox(&conn), vec![("accounts".into(), "sf:ACT-1".into(), "hidden".into(), Some("1".into()))]);
+    }
+
+    #[test]
+    fn a_budget_is_recorded_under_its_category_and_month() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO budgets (category_id, month, limit_amount)
+               VALUES ((SELECT id FROM categories WHERE name='Groceries'), NULL, 400);
+             UPDATE budgets SET limit_amount=450;",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        assert_eq!(rows[0].1, "cat:Groceries|*");
+        assert_eq!(rows[1], ("budgets".into(), "cat:Groceries|*".into(), "limit_amount".into(), Some("450.0".into())));
+    }
+
+    #[test]
+    fn deleting_a_category_that_has_a_budget_still_works() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO budgets (category_id, month, limit_amount)
+               VALUES ((SELECT id FROM categories WHERE name='Groceries'), '2026-10', 400);
+             DELETE FROM categories WHERE name='Groceries';",
+        )
+        .unwrap();
+        assert!(outbox(&conn).iter().any(|r| r.0 == "categories" && r.1 == "cat:Groceries" && r.3.is_none()));
+    }
+
+    #[test]
+    fn a_rule_is_recorded_by_type_and_pattern() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO category_rules (match_type, pattern, category_id, created_at)
+               VALUES ('payee', 'blue bottle', (SELECT id FROM categories WHERE name='Dining'), '2026-10-16');",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        assert_eq!(rows[0].1, "payee:blue bottle");
+        let row: serde_json::Value = serde_json::from_str(rows[0].3.as_deref().unwrap()).unwrap();
+        assert_eq!(row["category"], "cat:Dining");
+    }
+
+    #[test]
+    fn a_manual_investment_transaction_carries_its_security() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Brokerage','brokerage','USD','2026-01-01');
+             INSERT INTO securities (ticker,name,type) VALUES ('VTI','Vanguard Total','etf');
+             INSERT INTO transactions (account_id,security_id,type,date,quantity,price,amount)
+               VALUES (1,1,'buy','2026-10-01',2,250,500);",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        let txn = rows.iter().find(|r| r.0 == "transactions").unwrap();
+        assert!(txn.1.starts_with("txn:"));
+        let row: serde_json::Value = serde_json::from_str(txn.3.as_deref().unwrap()).unwrap();
+        assert_eq!(row["security"]["ticker"], "VTI");
+        assert_eq!(row["quantity"], 2.0);
+    }
+
+    #[test]
+    fn renaming_a_category_then_reusing_its_old_name_keeps_keys_unique() {
+        let conn = enabled();
+        conn.execute_batch(
+            "UPDATE categories SET name='Eating out' WHERE name='Dining';
+             INSERT INTO categories (name,kind,colour,sort) VALUES ('Dining','spending','chart-1',5);",
+        )
+        .unwrap();
+        let fresh = text(&conn, "SELECT sync_key FROM categories WHERE name='Dining'").unwrap();
+        assert!(fresh.starts_with("cat:Dining:"), "{fresh}");
+        assert_eq!(text(&conn, "SELECT sync_key FROM categories WHERE name='Eating out'").as_deref(), Some("cat:Dining"));
     }
 }
