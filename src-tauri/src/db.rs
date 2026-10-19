@@ -742,6 +742,50 @@ mod tests {
     }
 
     #[test]
+    fn a_real_v8_database_upgrades_to_v9_with_keys() {
+        let conn = db_at_v9_with_a_simplefin_row();
+        conn.execute_batch(
+            "DROP INDEX accounts_sync_key; DROP INDEX categories_sync_key;
+             DROP INDEX bank_transactions_sync_key; DROP INDEX transactions_sync_key;
+             DROP VIEW sync_on;
+             DROP TABLE sync_meta; DROP TABLE sync_outbox; DROP TABLE sync_clock;
+             DROP TABLE sync_files_applied; DROP TABLE sync_pending;
+             ALTER TABLE accounts DROP COLUMN sync_key;
+             ALTER TABLE categories DROP COLUMN sync_key;
+             ALTER TABLE bank_transactions DROP COLUMN sync_key;
+             ALTER TABLE transactions DROP COLUMN sync_key;
+             PRAGMA user_version = 8;",
+        )
+        .unwrap();
+        assert!(!crate::devicesync::schema::is_complete(&conn).unwrap());
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, TARGET_VERSION);
+        assert!(crate::devicesync::schema::is_complete(&conn).unwrap());
+        let key: String = conn
+            .query_row("SELECT sync_key FROM bank_transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(key, "sf:ACT-1|TRN-1");
+        assert!(!migration_pending(&conn).unwrap());
+    }
+
+    fn db_at_v9_with_a_simplefin_row() -> Connection {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
+               VALUES ('Card','credit','USD','2026-01-01','simplefin','ACT-1');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES ((SELECT id FROM accounts WHERE external_id='ACT-1'),'TRN-1','2026-10-01',-5,'Coffee');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
     fn a_v1_database_migrated_forward_ends_at_the_target_version() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();

@@ -43,7 +43,13 @@ UPDATE accounts SET sync_key = CASE
     WHEN source = 'simplefin' AND external_id IS NOT NULL THEN 'sf:' || external_id
     ELSE 'acct:' || lower(hex(randomblob(16))) END
   WHERE sync_key IS NULL;
-UPDATE categories SET sync_key = 'cat:' || name WHERE sync_key IS NULL;
+-- A renamed category keeps its old key, so a new one reusing the name gets a
+-- suffix rather than colliding with it.
+UPDATE categories SET sync_key = CASE
+    WHEN EXISTS (SELECT 1 FROM categories c2 WHERE c2.sync_key = 'cat:' || categories.name)
+      THEN 'cat:' || name || ':' || lower(hex(randomblob(4)))
+    ELSE 'cat:' || name END
+  WHERE sync_key IS NULL;
 UPDATE bank_transactions SET sync_key =
     (SELECT a.sync_key FROM accounts a WHERE a.id = bank_transactions.account_id) || '|' || external_id
   WHERE sync_key IS NULL;
@@ -66,7 +72,13 @@ pub fn is_complete(conn: &Connection) -> rusqlite::Result<bool> {
             return Ok(false);
         }
     }
-    Ok(true)
+    // Task-2 triggers read this view, so a missing one would break every insert.
+    let view: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='view' AND name='sync_on'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(view == 1)
 }
 
 /// Safe to re-run: every step is conditional. One transaction, so an
@@ -140,6 +152,32 @@ mod tests {
     fn installing_twice_is_harmless() {
         let conn = db::open_in_memory().unwrap();
         install(&conn).unwrap();
+        install(&conn).unwrap();
+        assert!(is_complete(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_reinstall_does_not_collide_with_a_renamed_category_key() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute_batch(
+            "UPDATE categories SET name='Eating out' WHERE name='Dining';
+             INSERT INTO categories (name,kind) VALUES ('Dining','spending');
+             UPDATE categories SET sync_key=NULL WHERE name='Dining';",
+        )
+        .unwrap();
+        assert_eq!(text(&conn, "SELECT sync_key FROM categories WHERE name='Eating out'").as_deref(), Some("cat:Dining"));
+
+        install(&conn).unwrap();
+
+        let key = text(&conn, "SELECT sync_key FROM categories WHERE name='Dining'").unwrap();
+        assert!(key.starts_with("cat:Dining:"), "{key}");
+    }
+
+    #[test]
+    fn a_missing_sync_on_view_makes_it_incomplete() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute_batch("DROP VIEW sync_on;").unwrap();
+        assert!(!is_complete(&conn).unwrap());
         install(&conn).unwrap();
         assert!(is_complete(&conn).unwrap());
     }
