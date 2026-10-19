@@ -8,6 +8,7 @@ mod simplefin;
 mod budget;
 mod market;
 mod backup;
+mod devicesync;
 
 use tauri::Manager;
 

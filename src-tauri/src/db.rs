@@ -31,8 +31,9 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// once; v7 adds a `note` and v8 a `removed` flag to bank transactions. To add a change later: bump
 /// TARGET_VERSION, add another `if current < N` block, and give it a
 /// completeness check so a mis-stamped database can still repair itself. Add
-/// the new completeness check to `migration_pending` too.
-const TARGET_VERSION: i64 = 8;
+/// the new completeness check to `migration_pending` too. v9 adds device sync
+/// (sync keys, the outbox and its triggers).
+pub(crate) const TARGET_VERSION: i64 = 9;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -267,7 +268,7 @@ fn set_user_version(conn: &Connection, version: i64) -> rusqlite::Result<()> {
     conn.execute_batch(&format!("PRAGMA user_version = {};", version))
 }
 
-fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+pub(crate) fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     let n: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
         [name],
@@ -276,7 +277,7 @@ fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     Ok(n > 0)
 }
 
-fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+pub(crate) fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
     let n: i64 = conn.query_row(
         "SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2",
         [table, column],
@@ -288,7 +289,7 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 /// Add a column only if it is not already there. SQLite has no
 /// `ADD COLUMN IF NOT EXISTS`, and re-adding one is a hard error that would
 /// panic the app on startup.
-fn add_column_if_missing(conn: &Connection, table: &str, column: &str, definition: &str)
+pub(crate) fn add_column_if_missing(conn: &Connection, table: &str, column: &str, definition: &str)
     -> rusqlite::Result<()> {
     if column_exists(conn, table, column)? {
         return Ok(());
@@ -402,6 +403,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v8_is_complete(conn)? {
         apply_v8(conn)?;
     }
+    if !crate::devicesync::schema::is_complete(conn)? {
+        crate::devicesync::schema::install(conn)?;
+    }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
@@ -418,7 +422,8 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v5_is_complete(conn)?
         || !v6_is_complete(conn)?
         || !v7_is_complete(conn)?
-        || !v8_is_complete(conn)?)
+        || !v8_is_complete(conn)?
+        || !crate::devicesync::schema::is_complete(conn)?)
 }
 
 #[cfg(test)]
