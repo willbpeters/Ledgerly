@@ -25,7 +25,16 @@ pub fn load(path: &Path) -> DeviceSyncSettings {
 
 pub fn save(path: &Path, settings: &DeviceSyncSettings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("Couldn't save the sync settings: {e}"))
+    // Write a temp file and swap it in, so a crash mid-write can't leave a torn
+    // file that `load` would read as "not syncing" and forget the device id.
+    // The target is removed first because rename won't overwrite on every platform.
+    let tmp = path.with_extension("json.tmp");
+    let err = |e: std::io::Error| format!("Couldn't save the sync settings: {e}");
+    std::fs::write(&tmp, json).map_err(err)?;
+    if path.exists() {
+        std::fs::remove_file(path).map_err(err)?;
+    }
+    std::fs::rename(&tmp, path).map_err(err)
 }
 
 #[cfg(test)]
@@ -36,6 +45,24 @@ mod tests {
     fn a_missing_file_means_not_syncing() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(load(&path(dir.path())), DeviceSyncSettings::default());
+    }
+
+    #[test]
+    fn a_torn_file_loads_as_not_syncing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(path(dir.path()), "{").unwrap();
+        assert_eq!(load(&path(dir.path())), DeviceSyncSettings::default());
+    }
+
+    #[test]
+    fn saving_over_an_existing_file_replaces_it_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = DeviceSyncSettings { folder: Some("a".into()), device_id: Some("1".into()) };
+        let second = DeviceSyncSettings { folder: Some("b".into()), device_id: Some("2".into()) };
+        save(&path(dir.path()), &first).unwrap();
+        save(&path(dir.path()), &second).unwrap();
+        assert_eq!(load(&path(dir.path())), second);
+        assert!(!dir.path().join("device-sync.json.tmp").exists());
     }
 
     #[test]

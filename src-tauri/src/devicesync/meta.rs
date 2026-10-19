@@ -30,8 +30,11 @@ pub fn disable(conn: &Connection) -> rusqlite::Result<()> {
 /// database, says who this computer is. A database whose device id differs
 /// is a copy from the other computer (just joined), so its outbox holds the
 /// other computer's edits, which that computer sends itself, and is emptied.
+/// A folder without a device id (or a blank folder) deliberately means
+/// recording is off: without an id this computer can't tell its edits apart.
 pub fn adopt(conn: &Connection, settings: &DeviceSyncSettings) -> rusqlite::Result<()> {
-    match (&settings.folder, &settings.device_id) {
+    let folder = settings.folder.as_deref().filter(|f| !f.trim().is_empty());
+    match (folder, &settings.device_id) {
         (Some(_), Some(id)) => {
             if get(conn, "device")?.as_deref() != Some(id.as_str()) {
                 conn.execute("DELETE FROM sync_outbox", [])?;
@@ -62,7 +65,7 @@ mod tests {
         let a = new_device_id(&conn).unwrap();
         let b = new_device_id(&conn).unwrap();
         assert_eq!(a.len(), 16);
-        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(a.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
         assert_ne!(a, b);
     }
 
@@ -93,6 +96,37 @@ mod tests {
         adopt(&conn, &syncing("pc")).unwrap();
         conn.execute_batch("UPDATE categories SET colour='chart-9' WHERE name='Dining';").unwrap();
         adopt(&conn, &syncing("pc")).unwrap();
+        assert_eq!(outbox_len(&conn), 1);
+    }
+
+    #[test]
+    fn a_folder_without_a_device_id_means_recording_is_off() {
+        let conn = db::open_in_memory().unwrap();
+        enable(&conn, "pc").unwrap();
+        let s = DeviceSyncSettings { folder: Some(r"G:\Sync".into()), device_id: None };
+        adopt(&conn, &s).unwrap();
+        assert_eq!(get(&conn, "enabled").unwrap().as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn an_empty_folder_means_recording_is_off() {
+        let conn = db::open_in_memory().unwrap();
+        enable(&conn, "pc").unwrap();
+        for folder in ["", "   "] {
+            let s = DeviceSyncSettings { folder: Some(folder.into()), device_id: Some("pc".into()) };
+            adopt(&conn, &s).unwrap();
+            assert_eq!(get(&conn, "enabled").unwrap().as_deref(), Some("0"));
+            enable(&conn, "pc").unwrap();
+        }
+    }
+
+    #[test]
+    fn adopting_clears_a_stuck_applying_flag() {
+        let conn = db::open_in_memory().unwrap();
+        set(&conn, "applying", "1").unwrap();
+        adopt(&conn, &syncing("pc")).unwrap();
+        assert_eq!(get(&conn, "applying").unwrap().as_deref(), Some("0"));
+        conn.execute_batch("UPDATE categories SET colour='chart-9' WHERE name='Dining';").unwrap();
         assert_eq!(outbox_len(&conn), 1);
     }
 
