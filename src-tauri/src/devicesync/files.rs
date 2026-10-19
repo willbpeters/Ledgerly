@@ -3,6 +3,7 @@
 //! to merge two computers' edits to one file.
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Bumped only if the file layout itself changes. Schema changes are carried
@@ -56,10 +57,32 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, contents).map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
+    let write = || -> std::io::Result<()> {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(contents)?;
+        // Flush to disk before the rename, so a power cut can't keep the
+        // rename but lose the data.
+        f.sync_all()
+    };
+    write().map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
     // No remove first: Rust's rename already replaces an existing file on
     // Windows in one step, and removing would leave a moment with no file.
-    fs::rename(&tmp, path).map_err(|e| format!("Couldn't finish writing {}: {e}", path.display()))
+    // Google Drive's uploader can hold the target open for a moment, which
+    // makes the rename fail with PermissionDenied, so try a few times.
+    let mut tries = 0;
+    loop {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && tries < 4 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                return Err(format!("Couldn't finish writing {}: {e}", path.display()));
+            }
+        }
+    }
 }
 
 /// `<device>/<written at, ms>-<last outbox seq>.json`: the path below
@@ -74,19 +97,20 @@ pub fn write_change_file(folder: &Path, name: &str, file: &ChangeFile) -> Result
 }
 
 /// Every change file written by a computer other than `me`, by recorded
-/// name, oldest first. Half-written `.tmp` files are skipped.
+/// name, grouped by device and oldest first within each. Half-written
+/// `.tmp` files are skipped.
 pub fn list_others(folder: &Path, me: &str) -> Vec<String> {
     let mut names = Vec::new();
     let Ok(devices) = fs::read_dir(changes_dir(folder)) else { return names };
     for device in devices.filter_map(|d| d.ok()) {
         let Ok(device_name) = device.file_name().into_string() else { continue };
-        if device_name == me || !device.path().is_dir() {
+        if device_name == me || device_name.starts_with('.') || !device.path().is_dir() {
             continue;
         }
         let Ok(files) = fs::read_dir(device.path()) else { continue };
         for f in files.filter_map(|f| f.ok()) {
             if let Ok(n) = f.file_name().into_string() {
-                if n.ends_with(".json") {
+                if n.ends_with(".json") && !n.starts_with('.') {
                     names.push(format!("{device_name}/{n}"));
                 }
             }
@@ -111,7 +135,10 @@ pub fn list_devices(folder: &Path, me: &str) -> Vec<DeviceInfo> {
     let Ok(rd) = fs::read_dir(devices_dir(folder)) else { return vec![] };
     let mut found: Vec<DeviceInfo> = rd
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.ends_with(".json") && !n.starts_with('.')
+        })
         .filter_map(|e| fs::read(e.path()).ok())
         .filter_map(|b| serde_json::from_slice::<DeviceInfo>(&b).ok())
         .filter(|d| d.id != me)
@@ -176,5 +203,16 @@ mod tests {
         write_device(dir.path(), &pc).unwrap();
         write_device(dir.path(), &me).unwrap();
         assert_eq!(list_devices(dir.path(), "laptop"), vec![pc]);
+    }
+
+    #[test]
+    fn hidden_drive_folders_and_stray_files_are_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        write_change_file(dir.path(), &file_name("pc", 1, 1), &sample("pc")).unwrap();
+        let hidden = dir.path().join("changes/.tmp.drivedownload");
+        fs::create_dir_all(&hidden).unwrap();
+        fs::write(hidden.join("0000000000009-1.json"), "{}").unwrap();
+        fs::write(dir.path().join("changes/stray.json"), "{}").unwrap();
+        assert_eq!(list_others(dir.path(), "laptop"), vec!["pc/0000000000001-1.json".to_string()]);
     }
 }

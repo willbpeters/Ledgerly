@@ -14,16 +14,21 @@ pub struct Taken {
 pub fn take(conn: &Connection) -> rusqlite::Result<Option<Taken>> {
     let mut stmt = conn.prepare("SELECT seq, tbl, key, field, value, at FROM sync_outbox ORDER BY seq")?;
     let rows = stmt.query_map([], |r| {
-        let value: Option<String> = r.get(4)?;
+        // Only SQL NULL means "deleted". Text that won't parse is damage, and
+        // sending it as a delete would remove the row on the other computer.
+        let value = match r.get::<_, Option<String>>(4)? {
+            None => serde_json::Value::Null,
+            Some(v) => serde_json::from_str(&v).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+            })?,
+        };
         Ok((
             r.get::<_, i64>(0)?,
             Change {
                 tbl: r.get(1)?,
                 key: r.get(2)?,
                 field: r.get(3)?,
-                value: value
-                    .and_then(|v| serde_json::from_str(&v).ok())
-                    .unwrap_or(serde_json::Value::Null),
+                value,
                 at: r.get(5)?,
             },
         ))
@@ -102,5 +107,25 @@ mod tests {
         assert_eq!(applied, 1);
         let c = &taken.changes[0];
         assert!(!clock::is_newer(&conn, &c.tbl, &c.key, &c.field, c.at, "pc").unwrap());
+    }
+
+    #[test]
+    fn a_deleted_row_takes_as_null() {
+        let conn = recording();
+        conn.execute("DELETE FROM categories WHERE name='Dining'", []).unwrap();
+        let taken = take(&conn).unwrap().unwrap();
+        let del = taken.changes.iter().find(|c| c.field == "_row").unwrap();
+        assert_eq!(del.value, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_corrupt_value_is_an_error_not_a_delete() {
+        let conn = recording();
+        conn.execute(
+            "INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('categories', 'cat:X', '_row', 'not json', 1)",
+            [],
+        )
+        .unwrap();
+        assert!(take(&conn).is_err());
     }
 }
