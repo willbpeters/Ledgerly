@@ -361,7 +361,13 @@ fn apply_v3(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The sync triggers are dropped first, so migrations can drop columns or
+/// rebuild tables freely; the v9 step at the end recreates them from the
+/// current text (which also carries a changed trigger body to existing
+/// databases). A rebuild of accounts, categories, bank_transactions or
+/// transactions must carry `sync_key` across.
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    crate::devicesync::schema::drop_triggers(conn)?;
     // The base schema is CREATE TABLE IF NOT EXISTS throughout, so it is safe
     // against anything.
     if user_version(conn)? < 1 {
@@ -434,7 +440,7 @@ mod tests {
     fn v8_adds_a_removed_flag_that_starts_off() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
-        drop_sync_triggers(&conn);
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN removed;
              INSERT INTO accounts (id,name,type,created_at) VALUES (92,'Card','credit','2026-10-01');
@@ -455,7 +461,7 @@ mod tests {
     fn v7_adds_notes_and_drops_pending_rows_dated_1970() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
-        drop_sync_triggers(&conn);
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN note;
              INSERT INTO accounts (id,name,type,created_at) VALUES (91,'Card','credit','2026-10-01');
@@ -476,8 +482,8 @@ mod tests {
     fn v6_re_sorts_existing_rows_and_reviews_only_the_categorised_ones() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         // Undo v6 to stand in for a v5 database with rows from an older build.
-        drop_sync_triggers(&conn);
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN reviewed;
              INSERT INTO accounts (id,name,type,created_at) VALUES (90,'Card','credit','2026-10-01');
@@ -549,21 +555,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 5);
-    }
-
-    /// Databases from before v9 have no sync triggers, and the triggers read
-    /// columns these tests drop to imitate an older schema, so drop them first.
-    fn drop_sync_triggers(conn: &Connection) {
-        let names: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='trigger'")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
-        for name in names {
-            conn.execute_batch(&format!("DROP TRIGGER {name};")).unwrap();
-        }
     }
 
     /// A v1 database with one account and one transaction in it.
@@ -736,7 +727,7 @@ mod tests {
         // the schema. The completeness check must catch this one too.
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
-        drop_sync_triggers(&conn);
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch("ALTER TABLE accounts DROP COLUMN hidden;").unwrap();
         conn.execute_batch("PRAGMA user_version = 4;").unwrap();
 
@@ -763,7 +754,7 @@ mod tests {
     #[test]
     fn a_real_v8_database_upgrades_to_v9_with_keys() {
         let conn = db_at_v9_with_a_simplefin_row();
-        drop_sync_triggers(&conn);
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch(
             "DROP INDEX accounts_sync_key; DROP INDEX categories_sync_key;
              DROP INDEX bank_transactions_sync_key; DROP INDEX transactions_sync_key;
@@ -790,6 +781,21 @@ mod tests {
             .unwrap();
         assert_eq!(key, "sf:ACT-1|TRN-1");
         assert!(!migration_pending(&conn).unwrap());
+    }
+
+    #[test]
+    fn reopening_restores_a_changed_trigger_body() {
+        let conn = db_at_v9_with_a_simplefin_row();
+        conn.execute_batch(
+            "DROP TRIGGER accounts_sync_insert;
+             CREATE TRIGGER accounts_sync_insert AFTER INSERT ON accounts BEGIN SELECT 1; END;",
+        )
+        .unwrap();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("INSERT INTO accounts (name,type,currency,created_at) VALUES ('Jar','cash','USD','2026-01-01');")
+            .unwrap();
+        let key: String = conn.query_row("SELECT sync_key FROM accounts WHERE name='Jar'", [], |r| r.get(0)).unwrap();
+        assert!(key.starts_with("acct:"), "{key}");
     }
 
     fn db_at_v9_with_a_simplefin_row() -> Connection {

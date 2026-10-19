@@ -141,8 +141,14 @@ WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on) BEGIN
 END;
 
 CREATE TRIGGER bank_transactions_sync_insert AFTER INSERT ON bank_transactions BEGIN
-  UPDATE bank_transactions SET sync_key =
-      (SELECT a.sync_key FROM accounts a WHERE a.id = NEW.account_id) || '|' || NEW.external_id
+  -- A Copilot row SimpleFIN adopted keeps its old key while its external_id
+  -- changes, so a re-import can derive a key that is already taken.
+  UPDATE bank_transactions SET sync_key = CASE
+      WHEN EXISTS (SELECT 1 FROM bank_transactions o WHERE o.sync_key =
+          (SELECT a.sync_key FROM accounts a WHERE a.id = NEW.account_id) || '|' || NEW.external_id)
+        THEN (SELECT a.sync_key FROM accounts a WHERE a.id = NEW.account_id) || '|' || NEW.external_id
+          || ':' || lower(hex(randomblob(4)))
+      ELSE (SELECT a.sync_key FROM accounts a WHERE a.id = NEW.account_id) || '|' || NEW.external_id END
     WHERE id = NEW.id AND sync_key IS NULL;
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'bank_transactions', b.sync_key, '_row',
@@ -162,9 +168,12 @@ WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'bank_transactions', NEW.sync_key, 'category',
       json_array((SELECT c.sync_key FROM categories c WHERE c.id = NEW.category_id), NEW.category_source), {NOW}
-    WHERE (NEW.category_source = 'manual'
+    WHERE ((NEW.category_source = 'manual'
              AND (OLD.category_source <> 'manual' OR OLD.category_id IS NOT NEW.category_id))
-       OR (NEW.category_source = 'auto' AND OLD.category_source = 'manual');
+       OR (NEW.category_source = 'auto' AND OLD.category_source = 'manual'))
+      -- A category delete sets category_id NULL after the category is gone:
+      -- that is a cascade, not an edit.
+      AND (OLD.category_id IS NULL OR EXISTS (SELECT 1 FROM categories WHERE id = OLD.category_id));
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'bank_transactions', NEW.sync_key, 'note', json_quote(NEW.note), {NOW} WHERE OLD.note IS NOT NEW.note;
   INSERT INTO sync_outbox (tbl, key, field, value, at)
@@ -192,7 +201,8 @@ WHEN (SELECT yes FROM sync_on) AND OLD.category_id IS NOT NEW.category_id BEGIN
 END;
 
 CREATE TRIGGER category_rules_sync_delete AFTER DELETE ON category_rules
-WHEN (SELECT yes FROM sync_on) BEGIN
+WHEN (SELECT yes FROM sync_on)
+  AND EXISTS (SELECT 1 FROM categories WHERE id = OLD.category_id) BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     VALUES ('category_rules', OLD.match_type || ':' || OLD.pattern, '_row', NULL, {NOW});
 END;
@@ -200,6 +210,8 @@ END;
 -- Budget keys need the category's key. When a category delete cascades to
 -- its budgets the category row is already gone, the SELECT finds nothing and
 -- nothing is recorded: the category's own deletion carries the news.
+-- The key is `<category key>|<month or *>`. Category names may contain '|',
+-- so the applier must split on the LAST '|'.
 CREATE TRIGGER budgets_sync_insert AFTER INSERT ON budgets WHEN (SELECT yes FROM sync_on) BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'budgets', c.sync_key || '|' || coalesce(NEW.month, '*'), '_row',
@@ -237,7 +249,8 @@ CREATE TRIGGER transactions_sync_insert AFTER INSERT ON transactions BEGIN
 END;
 
 CREATE TRIGGER transactions_sync_delete AFTER DELETE ON transactions
-WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on) BEGIN
+WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on)
+  AND EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('transactions', OLD.sync_key, '_row', NULL, {NOW});
 END;
 ";
@@ -249,6 +262,15 @@ fn trigger_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
         |r| r.get(0),
     )?;
     Ok(n > 0)
+}
+
+/// Drop every sync trigger. Triggers block `ALTER TABLE DROP COLUMN` and table
+/// rebuilds, so migrations run without them and `install` puts them back.
+pub(crate) fn drop_triggers(conn: &Connection) -> rusqlite::Result<()> {
+    for name in TRIGGER_NAMES {
+        conn.execute_batch(&format!("DROP TRIGGER IF EXISTS {name};"))?;
+    }
+    Ok(())
 }
 
 /// Whether every v9 object is really present, whatever the version stamp says.
@@ -289,11 +311,10 @@ pub fn install(conn: &Connection) -> rusqlite::Result<()> {
     }
     tx.execute_batch(TABLES)?;
     tx.execute_batch(BACKFILL)?;
-    // Dropped and recreated rather than IF NOT EXISTS, so a later build that
-    // changes a trigger body can simply re-run this.
-    for name in TRIGGER_NAMES {
-        tx.execute_batch(&format!("DROP TRIGGER IF EXISTS {name};"))?;
-    }
+    // apply_migrations drops the triggers on every open, and this recreates
+    // them from the current text, so a changed body reaches existing
+    // databases. The drop here keeps install safe to call on its own.
+    drop_triggers(&tx)?;
     tx.execute_batch(&TRIGGERS.replace("{NOW}", NOW))?;
     tx.commit()
 }
@@ -555,6 +576,160 @@ mod tests {
         let row: serde_json::Value = serde_json::from_str(txn.3.as_deref().unwrap()).unwrap();
         assert_eq!(row["security"]["ticker"], "VTI");
         assert_eq!(row["quantity"], 2.0);
+    }
+
+    fn manual_investment_txn(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO securities (ticker,name,type) VALUES ('VTI','Vanguard Total','etf');
+             INSERT INTO transactions (account_id,security_id,type,date,quantity,price,amount)
+               VALUES (1,1,'buy','2026-10-01',2,250,500);",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn deleting_a_simplefin_account_does_not_record_its_cascaded_manual_transactions() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
+               VALUES ('Brokerage','brokerage','USD','2026-01-01','simplefin','ACT-2');",
+        )
+        .unwrap();
+        manual_investment_txn(&conn);
+        conn.execute_batch("DELETE FROM sync_outbox; DELETE FROM accounts WHERE id=1;").unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        assert!(outbox(&conn).is_empty(), "{:?}", outbox(&conn));
+    }
+
+    #[test]
+    fn deleting_a_manual_investment_transaction_directly_is_recorded() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Brokerage','brokerage','USD','2026-01-01');",
+        )
+        .unwrap();
+        manual_investment_txn(&conn);
+        conn.execute_batch("DELETE FROM sync_outbox; DELETE FROM transactions;").unwrap();
+        let rows = outbox(&conn);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(rows[0].1.starts_with("txn:") && rows[0].3.is_none());
+    }
+
+    #[test]
+    fn deleting_a_category_records_only_the_category() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "INSERT INTO category_rules (match_type, pattern, category_id, created_at)
+               VALUES ('payee', 'blue bottle', (SELECT id FROM categories WHERE name='Dining'), '2026-10-16');
+             UPDATE bank_transactions SET category_id=(SELECT id FROM categories WHERE name='Dining'),
+               category_source='manual' WHERE id=1;
+             DELETE FROM sync_outbox;
+             DELETE FROM categories WHERE name='Dining';",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        assert_eq!(rows, vec![("categories".into(), "cat:Dining".into(), "_row".into(), None)]);
+    }
+
+    #[test]
+    fn a_reimported_copilot_row_after_adoption_gets_a_suffixed_key() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES (1,'copilot:abc','2026-09-01',-3,'Tea');
+             UPDATE bank_transactions SET external_id='TRN-9' WHERE external_id='copilot:abc';
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES (1,'copilot:abc','2026-09-01',-3,'Tea');",
+        )
+        .unwrap();
+        let key = text(&conn, "SELECT sync_key FROM bank_transactions WHERE external_id='copilot:abc'").unwrap();
+        assert!(key.starts_with("sf:ACT-1|copilot:abc:"), "{key}");
+    }
+
+    #[test]
+    fn a_copilot_history_row_on_a_simplefin_account_is_recorded() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES (1,'copilot:abc','2026-09-01',-3,'Tea');",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!((rows[0].1.as_str(), rows[0].2.as_str()), ("sf:ACT-1|copilot:abc", "_row"));
+    }
+
+    #[test]
+    fn approving_a_row_records_the_category_as_manual() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        crate::budget::store::approve(&conn, &[1]).unwrap();
+        let rows = outbox(&conn);
+        assert!(rows.contains(&(
+            "bank_transactions".into(), "sf:ACT-1|TRN-1".into(), "category".into(), Some(r#"[null,"manual"]"#.into())
+        )), "{rows:?}");
+    }
+
+    #[test]
+    fn undoing_to_automatic_records_the_category_as_auto() {
+        use crate::budget::store::{restore_rows, RowState};
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "UPDATE bank_transactions SET category_id=(SELECT id FROM categories WHERE name='Dining'),
+               category_source='manual', reviewed=1 WHERE id=1; DELETE FROM sync_outbox;",
+        )
+        .unwrap();
+        restore_rows(&conn, &[RowState { id: 1, category_id: None, category_source: "auto".into(), reviewed: false, removed: false }])
+            .unwrap();
+        let rows = outbox(&conn);
+        assert!(rows.contains(&(
+            "bank_transactions".into(), "sf:ACT-1|TRN-1".into(), "category".into(), Some(r#"[null,"auto"]"#.into())
+        )), "{rows:?}");
+    }
+
+    #[test]
+    fn changing_a_rules_category_by_upsert_is_recorded() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO category_rules (match_type, pattern, category_id, created_at)
+               VALUES ('payee', 'blue bottle', (SELECT id FROM categories WHERE name='Dining'), '2026-10-16');
+             DELETE FROM sync_outbox;
+             INSERT INTO category_rules (match_type, pattern, category_id, created_at)
+               VALUES ('payee', 'blue bottle', (SELECT id FROM categories WHERE name='Groceries'), '2026-10-17')
+               ON CONFLICT(match_type, pattern) DO UPDATE SET category_id=excluded.category_id;",
+        )
+        .unwrap();
+        assert_eq!(
+            outbox(&conn),
+            vec![("category_rules".into(), "payee:blue bottle".into(), "category".into(), Some(r#""cat:Groceries""#.into()))]
+        );
+    }
+
+    #[test]
+    fn making_a_rule_records_the_row_and_the_rule_but_not_the_fanned_out_rows() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "UPDATE bank_transactions SET payee='Blue Bottle' WHERE id=1;
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee)
+               VALUES (1,'TRN-2','2026-10-02',-6,'Coffee','Blue Bottle');
+             DELETE FROM sync_outbox;",
+        )
+        .unwrap();
+        let dining: i64 = conn.query_row("SELECT id FROM categories WHERE name='Dining'", [], |r| r.get(0)).unwrap();
+        crate::budget::store::set_category(&conn, 1, Some(dining), true).unwrap();
+
+        let rows = outbox(&conn);
+        assert!(rows.iter().all(|r| r.1 != "sf:ACT-1|TRN-2"), "{rows:?}");
+        assert!(rows.iter().any(|r| r.1 == "sf:ACT-1|TRN-1" && r.2 == "category"), "{rows:?}");
+        assert!(rows.iter().any(|r| r.0 == "category_rules" && r.1 == "payee:blue bottle"), "{rows:?}");
+        let fanned: i64 = conn.query_row("SELECT category_id FROM bank_transactions WHERE id=2", [], |r| r.get(0)).unwrap();
+        assert_eq!(fanned, dining);
     }
 
     #[test]
