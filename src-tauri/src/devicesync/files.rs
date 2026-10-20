@@ -65,29 +65,40 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), String> {
         f.sync_all()
     };
     write().map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
-    // No remove first: Rust's rename already replaces an existing file on
-    // Windows in one step, and removing would leave a moment with no file.
-    // Google Drive's uploader can hold the file open for a moment, which makes
-    // the rename fail with access denied, or with a sharing or lock violation
-    // (Windows errors 32 and 33, which Rust does not map to PermissionDenied),
-    // so try a few times.
+    rename_retrying(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("Couldn't finish writing {}: {e}", path.display())
+    })
+}
+
+/// Rename `tmp` over `dest`. No remove first: Rust's rename already replaces
+/// an existing file on Windows in one step, and removing would leave a moment
+/// with no file. Google Drive's uploader can hold the file open for a moment,
+/// which makes the rename fail with access denied, or with a sharing or lock
+/// violation (Windows errors 32 and 33, which Rust does not map to
+/// PermissionDenied), so try a few times.
+pub fn rename_retrying(tmp: &Path, dest: &Path) -> std::io::Result<()> {
     let busy = |e: &std::io::Error| {
         e.kind() == std::io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(32) | Some(33))
     };
     let mut tries = 0;
     loop {
-        match fs::rename(&tmp, path) {
+        match fs::rename(tmp, dest) {
             Ok(()) => return Ok(()),
             Err(e) if busy(&e) && tries < 4 => {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
-            Err(e) => {
-                let _ = fs::remove_file(&tmp);
-                return Err(format!("Couldn't finish writing {}: {e}", path.display()));
-            }
+            Err(e) => return Err(e),
         }
     }
+}
+
+/// A folder that has been synced through before: it has a seed, or change or
+/// device files. Starting fresh in it would fork the history.
+pub fn is_used(folder: &Path) -> bool {
+    let non_empty = |dir: PathBuf| fs::read_dir(dir).map(|mut d| d.next().is_some()).unwrap_or(false);
+    seed_path(folder).exists() || non_empty(changes_dir(folder)) || non_empty(devices_dir(folder))
 }
 
 /// Only names `file_name` makes: `<13 digits>-<digits>.json`. Google Drive's
