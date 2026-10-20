@@ -57,7 +57,33 @@ fn field(v: &Value, name: &str) -> Sql {
     sql(v.get(name).unwrap_or(&Value::Null))
 }
 
-fn id_by_key(conn: &Connection, table: &str, key: &str) -> rusqlite::Result<Option<i64>> {
+/// A row changed key: its clock, unsent edits and held-back changes follow it,
+/// or they would point at a key that no longer exists. `OR REPLACE` because the
+/// new key may already have entries; either way the newest wins on the clock.
+fn rekey(conn: &Connection, tbl: &str, old: &str, new: &str) -> rusqlite::Result<()> {
+    for t in ["sync_clock", "sync_outbox", "sync_pending"] {
+        conn.execute(
+            &format!("UPDATE OR REPLACE {t} SET key=?1 WHERE tbl=?2 AND key=?3"),
+            params![new, tbl, old],
+        )?;
+    }
+    if tbl == "categories" {
+        // Budget keys start with the category key. Compared with substr, not
+        // LIKE: names can contain % and _.
+        for t in ["sync_clock", "sync_outbox", "sync_pending"] {
+            conn.execute(
+                &format!(
+                    "UPDATE OR REPLACE {t} SET key = ?1 || substr(key, length(?2) + 1)
+                     WHERE tbl='budgets' AND substr(key, 1, length(?2) + 1) = ?2 || '|'"
+                ),
+                params![new, old],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn id_by_key(conn: &Connection, table: &'static str, key: &str) -> rusqlite::Result<Option<i64>> {
     conn.query_row(&format!("SELECT id FROM {table} WHERE sync_key=?1"), [key], |r| r.get(0))
         .optional()
 }
@@ -108,10 +134,30 @@ fn categories(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
                 return Ok(true);
             }
             let v = &c.value;
-            // Both computers made a category with this name before sync: one
-            // category, under the key the other computer uses.
-            let merged = conn.execute("UPDATE categories SET sync_key=?1 WHERE name=?2", params![c.key, field(v, "name")])?;
-            if merged == 0 {
+            let Some(name) = v.get("name").and_then(Value::as_str) else { return Ok(true) };
+            let namesake: Option<(i64, String)> = conn
+                .query_row("SELECT id, sync_key FROM categories WHERE name=?1", [name], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?;
+            if let Some((id, local_key)) = namesake {
+                // Both computers made a category with this name before sync.
+                // Only a row whose key was made from this name is that twin; one
+                // renamed into the name is a different category, so wait.
+                let own = format!("cat:{name}");
+                if local_key != own && !local_key.starts_with(&format!("{own}:")) {
+                    return Ok(false);
+                }
+                // Both sides run this with the other's key, so both must pick
+                // the same winner: the smaller key. If ours is smaller, the
+                // other computer adopts it when our row reaches it.
+                // The merged row keeps its local colour and sort, which is
+                // accepted. Category references inside other tables' JSON values
+                // are not rewritten either; those only exist for edits made
+                // while a round runs, and are accepted.
+                if c.key < local_key {
+                    conn.execute("UPDATE categories SET sync_key=?1 WHERE id=?2", params![c.key, id])?;
+                    rekey(conn, "categories", &local_key, &c.key)?;
+                }
+            } else {
                 conn.execute(
                     "INSERT INTO categories (name, kind, colour, sort, is_builtin, sync_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![field(v, "name"), field(v, "kind"), field(v, "colour"), field(v, "sort"),
@@ -121,6 +167,18 @@ fn categories(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
             Ok(true)
         }
         name @ ("name" | "colour" | "sort") => {
+            if name == "name" {
+                // A different category already has this name: wait rather than
+                // fail on the UNIQUE constraint.
+                let taken: i64 = conn.query_row(
+                    "SELECT count(*) FROM categories WHERE name=?1 AND sync_key<>?2",
+                    params![sql(&c.value), c.key],
+                    |r| r.get(0),
+                )?;
+                if taken > 0 {
+                    return Ok(false);
+                }
+            }
             let n = conn.execute(&format!("UPDATE categories SET {name}=?1 WHERE sync_key=?2"), params![sql(&c.value), c.key])?;
             Ok(n > 0)
         }
@@ -131,7 +189,14 @@ fn categories(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
 fn bank_transactions(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
     match c.field.as_str() {
         "_row" if c.value.is_null() => {
-            conn.execute("DELETE FROM bank_transactions WHERE sync_key=?1", [&c.key])?;
+            // Never a SimpleFIN row: only Copilot history or a manual account's
+            // rows are ever the owner's to delete.
+            conn.execute(
+                "DELETE FROM bank_transactions WHERE sync_key=?1
+                   AND (external_id LIKE 'copilot:%'
+                        OR account_id IN (SELECT id FROM accounts WHERE source='manual'))",
+                [&c.key],
+            )?;
             Ok(true)
         }
         "_row" => insert_bank_row(conn, c),
@@ -183,6 +248,12 @@ fn insert_bank_row(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
                 "SELECT id FROM bank_transactions
                  WHERE account_id=?1 AND external_id NOT LIKE 'copilot:%'
                    AND sync_key NOT LIKE '%|copilot:%'
+                   AND pending = 0
+                   -- the other computer already shows it holds this row apart
+                   AND NOT EXISTS (SELECT 1 FROM sync_clock k
+                                   WHERE k.tbl='bank_transactions' AND k.key=bank_transactions.sync_key)
+                   AND NOT EXISTS (SELECT 1 FROM sync_pending p
+                                   WHERE p.tbl='bank_transactions' AND p.key=bank_transactions.sync_key)
                    AND CAST(ROUND(amount*100) AS INTEGER) = CAST(ROUND(?2*100) AS INTEGER)
                    AND ABS(julianday(posted) - julianday(?3)) <= 3
                  ORDER BY ABS(julianday(posted) - julianday(?3)) LIMIT 1",
@@ -191,12 +262,20 @@ fn insert_bank_row(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
             )
             .optional()?;
         if let Some(id) = twin {
+            let old_key: String = conn.query_row("SELECT sync_key FROM bank_transactions WHERE id=?1", [id], |r| r.get(0))?;
+            // The owner's own edits on the local row win, as in the Copilot import.
             conn.execute(
-                "UPDATE bank_transactions SET sync_key=?1, category_id=?2, category_source=?3,
-                   reviewed=?4, note=?5, removed=?6 WHERE id=?7",
+                "UPDATE bank_transactions SET sync_key=?1,
+                   category_id = CASE WHEN category_source='manual' THEN category_id ELSE ?2 END,
+                   category_source = CASE WHEN category_source='manual' THEN 'manual' ELSE coalesce(?3,'manual') END,
+                   reviewed = MAX(reviewed, coalesce(?4,0)),
+                   note = COALESCE(note, ?5),
+                   removed = MAX(removed, coalesce(?6,0))
+                 WHERE id=?7",
                 params![c.key, category, field(v, "category_source"), field(v, "reviewed"),
                         field(v, "note"), field(v, "removed"), id],
             )?;
+            rekey(conn, "bank_transactions", &old_key, &c.key)?;
             return Ok(true);
         }
     }
@@ -240,8 +319,12 @@ fn rules(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
 fn budgets(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
     let Some((category_key, month)) = c.key.rsplit_once('|') else { return Ok(true) };
     let month = if month == "*" { None } else { Some(month) };
-    let Some(category_id) = id_by_key(conn, "categories", category_key)? else { return Ok(false) };
-    if c.field == "_row" && c.value.is_null() {
+    let deleting = c.field == "_row" && c.value.is_null();
+    let Some(category_id) = id_by_key(conn, "categories", category_key)? else {
+        // Nothing to delete without the category; anything else waits for it.
+        return Ok(deleting);
+    };
+    if deleting {
         conn.execute("DELETE FROM budgets WHERE category_id=?1 AND month IS ?2", params![category_id, month])?;
         return Ok(true);
     }
@@ -254,6 +337,21 @@ fn budgets(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
         params![amount, category_id, month],
     )?;
     if n == 0 {
+        if c.field != "_row" {
+            // An edit to a budget that is gone: if a newer create or delete of
+            // the whole budget is on record, the edit is moot, and inserting
+            // would bring a deleted budget back.
+            let row_at: Option<i64> = conn
+                .query_row(
+                    "SELECT at FROM sync_clock WHERE tbl='budgets' AND key=?1 AND field='_row'",
+                    [&c.key],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if row_at.is_some_and(|at| at > c.at) {
+                return Ok(true);
+            }
+        }
         conn.execute(
             "INSERT INTO budgets (category_id, month, limit_amount) VALUES (?1, ?2, ?3)",
             params![category_id, month, amount],
@@ -415,7 +513,174 @@ mod tests {
         let dining = json!({"name":"Dining","kind":"spending","colour":"chart-2","sort":20,"is_builtin":1});
         apply(&conn, "pc", &change("categories", "cat:Dining:ab12cd34", "_row", dining, 11)).unwrap();
         assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM categories WHERE name='Dining'"), 1);
-        assert_eq!(one::<String>(&conn, "SELECT sync_key FROM categories WHERE name='Dining'"), "cat:Dining:ab12cd34");
+        // "cat:Dining" sorts before "cat:Dining:ab12cd34", so the key here wins.
+        assert_eq!(one::<String>(&conn, "SELECT sync_key FROM categories WHERE name='Dining'"), "cat:Dining");
+    }
+
+    fn dining_row() -> Value {
+        json!({"name":"Dining","kind":"spending","colour":"chart-2","sort":20,"is_builtin":1})
+    }
+
+    fn local_dining_key(conn: &Connection, key: &str) {
+        conn.execute("UPDATE categories SET sync_key=?1 WHERE name='Dining'", [key]).unwrap();
+    }
+
+    #[test]
+    fn a_category_namesake_merge_keeps_the_smaller_key_whichever_side_applies_it() {
+        // Larger remote key: ours stays.
+        let conn = applying();
+        local_dining_key(&conn, "cat:Dining:5555");
+        let c = change("categories", "cat:Dining:9999", "_row", dining_row(), 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        assert_eq!(one::<String>(&conn, "SELECT sync_key FROM categories WHERE name='Dining'"), "cat:Dining:5555");
+        // Smaller remote key: we adopt it.
+        let conn = applying();
+        local_dining_key(&conn, "cat:Dining:5555");
+        let c = change("categories", "cat:Dining:1111", "_row", dining_row(), 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        assert_eq!(one::<String>(&conn, "SELECT sync_key FROM categories WHERE name='Dining'"), "cat:Dining:1111");
+    }
+
+    #[test]
+    fn a_category_renamed_into_the_name_is_not_taken_over() {
+        let conn = applying();
+        conn.execute("UPDATE categories SET sync_key='cat:Sport', name='Golf' WHERE name='Dining'", []).unwrap();
+        let golf = json!({"name":"Golf","kind":"spending","colour":"chart-3","sort":200,"is_builtin":0});
+        let c = change("categories", "cat:Golf", "_row", golf, 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Waiting);
+        assert_eq!(one::<String>(&conn, "SELECT sync_key FROM categories WHERE name='Golf'"), "cat:Sport");
+    }
+
+    #[test]
+    fn a_rekeyed_category_takes_its_bookkeeping_with_it() {
+        let conn = applying();
+        local_dining_key(&conn, "cat:Dining:5555");
+        clock::record(&conn, "categories", "cat:Dining:5555", "name", 5, "pc").unwrap();
+        clock::record(&conn, "budgets", "cat:Dining:5555|2026-10", "_row", 5, "pc").unwrap();
+        conn.execute(
+            "INSERT INTO sync_outbox (tbl,key,field,value,at) VALUES ('budgets','cat:Dining:5555|*','limit_amount','1',5)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_pending (device,tbl,key,field,value,at) VALUES ('pc','categories','cat:Dining:5555','colour','\"x\"',5)",
+            [],
+        )
+        .unwrap();
+        let c = change("categories", "cat:Dining:1111", "_row", dining_row(), 10);
+        apply(&conn, "pc", &c).unwrap();
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM sync_clock WHERE tbl='categories' AND key='cat:Dining:1111' AND field='name'"), 1);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM sync_clock WHERE tbl='budgets' AND key='cat:Dining:1111|2026-10'"), 1);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM sync_clock WHERE key LIKE '%5555%'"), 0);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM sync_outbox WHERE key='cat:Dining:1111|*'"), 1);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM sync_pending WHERE key='cat:Dining:1111'"), 1);
+    }
+
+    fn copilot_row(posted: &str, category: &str, note: &str) -> Value {
+        json!({"account":"sf:ACT-1","external_id":"copilot:00ff","posted":posted,"amount":-5.0,
+            "description":"Coffee","payee":"Coffee","memo":null,"category":category,"category_source":"manual",
+            "reviewed":1,"note":note,"removed":0})
+    }
+    const COPILOT_KEY: &str = "sf:ACT-1|copilot:00ff";
+
+    #[test]
+    fn a_copilot_takeover_keeps_the_owners_own_category_and_note_here() {
+        let conn = applying();
+        conn.execute(
+            "UPDATE bank_transactions SET category_id=(SELECT id FROM categories WHERE name='Groceries'),
+               category_source='manual', note='mine'",
+            [],
+        )
+        .unwrap();
+        let c = change("bank_transactions", COPILOT_KEY, "_row", copilot_row("2026-10-02", "cat:Dining", "theirs"), 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        let (cat, note, key): (String, String, String) = conn
+            .query_row(
+                "SELECT c.name, b.note, b.sync_key FROM bank_transactions b JOIN categories c ON c.id=b.category_id",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((cat.as_str(), note.as_str(), key.as_str()), ("Groceries", "mine", COPILOT_KEY));
+    }
+
+    #[test]
+    fn a_pending_bank_row_is_not_taken_over() {
+        let conn = applying();
+        conn.execute("UPDATE bank_transactions SET pending=1", []).unwrap();
+        let c = change("bank_transactions", COPILOT_KEY, "_row", copilot_row("2026-10-02", "cat:Dining", "x"), 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM bank_transactions"), 2);
+    }
+
+    #[test]
+    fn a_bank_row_the_other_computer_holds_separately_is_not_taken_over() {
+        let conn = applying();
+        clock::record(&conn, "bank_transactions", "sf:ACT-1|TRN-1", "note", 1, "pc").unwrap();
+        let c = change("bank_transactions", COPILOT_KEY, "_row", copilot_row("2026-10-02", "cat:Dining", "x"), 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM bank_transactions"), 2);
+    }
+
+    #[test]
+    fn with_two_candidates_the_nearer_date_is_taken_over_and_its_bookkeeping_follows() {
+        let conn = applying();
+        conn.execute_batch(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES (1,'TRN-3','2026-10-02',-5,'Coffee');",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_outbox (tbl,key,field,value,at) VALUES ('bank_transactions','sf:ACT-1|TRN-3','note','\"n\"',5)",
+            [],
+        )
+        .unwrap();
+        let c = change("bank_transactions", COPILOT_KEY, "_row", copilot_row("2026-10-02", "cat:Dining", "x"), 10);
+        apply(&conn, "pc", &c).unwrap();
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM bank_transactions"), 2);
+        assert_eq!(one::<String>(&conn, "SELECT external_id FROM bank_transactions WHERE sync_key='sf:ACT-1|copilot:00ff'"), "TRN-3");
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM sync_outbox WHERE key='sf:ACT-1|copilot:00ff'"), 1);
+    }
+
+    #[test]
+    fn renaming_a_category_to_a_name_already_taken_waits() {
+        let conn = applying();
+        let golf = json!({"name":"Golf","kind":"spending","colour":"chart-3","sort":200,"is_builtin":0});
+        apply(&conn, "pc", &change("categories", "cat:Golf", "_row", golf, 10)).unwrap();
+        let c = change("categories", "cat:Golf", "name", json!("Dining"), 11);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Waiting);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM categories WHERE name='Golf'"), 1);
+    }
+
+    #[test]
+    fn a_late_budget_edit_does_not_bring_back_a_deleted_budget() {
+        let conn = applying();
+        let k = "cat:Groceries|2026-10";
+        apply(&conn, "pc", &change("budgets", k, "_row", json!({"limit_amount": 400.0}), 10)).unwrap();
+        apply(&conn, "pc", &change("budgets", k, "_row", Value::Null, 12)).unwrap();
+        let c = change("budgets", k, "limit_amount", json!(450.0), 11);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM budgets"), 0);
+        // A newer edit with no row at all still creates one.
+        let c = change("budgets", k, "limit_amount", json!(500.0), 13);
+        apply(&conn, "pc", &c).unwrap();
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM budgets"), 1);
+    }
+
+    #[test]
+    fn deleting_a_budget_of_an_unknown_category_is_done() {
+        let conn = applying();
+        let c = change("budgets", "cat:Nope|*", "_row", Value::Null, 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+    }
+
+    #[test]
+    fn deletes_never_remove_simplefin_rows() {
+        let conn = applying();
+        apply(&conn, "pc", &change("accounts", "sf:ACT-1", "_row", Value::Null, 10)).unwrap();
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM accounts WHERE sync_key='sf:ACT-1'"), 1);
+        apply(&conn, "pc", &change("bank_transactions", "sf:ACT-1|TRN-1", "_row", Value::Null, 11)).unwrap();
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM bank_transactions"), 1);
     }
 
     #[test]
