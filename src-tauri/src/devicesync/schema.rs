@@ -22,12 +22,14 @@ CREATE TABLE IF NOT EXISTS sync_clock (
   at INTEGER NOT NULL, device TEXT NOT NULL,
   PRIMARY KEY (tbl, key, field)
 );
+CREATE INDEX IF NOT EXISTS sync_outbox_field ON sync_outbox(tbl, key, field);
 CREATE TABLE IF NOT EXISTS sync_files_applied (name TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS sync_pending (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   device TEXT NOT NULL, tbl TEXT NOT NULL, key TEXT NOT NULL, field TEXT NOT NULL,
   value TEXT, at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS sync_pending_key ON sync_pending(tbl, key);
 DROP VIEW IF EXISTS sync_on;
 CREATE VIEW sync_on AS SELECT
   coalesce((SELECT value FROM sync_meta WHERE name='enabled'), '0') = '1'

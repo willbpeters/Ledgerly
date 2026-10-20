@@ -41,6 +41,8 @@ pub fn fetch(folder: &Path, me: &str, applied: &HashSet<String>) -> Vec<Fetched>
         .into_iter()
         .filter(|name| !applied.contains(name))
         .filter_map(|name| files::read(folder, &name).ok().map(|file| Fetched { name, file }))
+        // A file must sit in its own device's folder and not claim to be ours.
+        .filter(|f| f.name.starts_with(&format!("{}/", f.file.device)) && f.file.device != me)
         .collect()
 }
 
@@ -68,34 +70,44 @@ fn read_pending(conn: &Connection) -> rusqlite::Result<Vec<(i64, String, Change)
     rows.collect()
 }
 
-/// One transaction, with the triggers silenced: retry waiting changes, apply
-/// the new files' changes oldest first, record the files, and re-sort
-/// automatic rows if a rule or category changed.
+/// Apply one change inside its own savepoint. A constraint violation rolls
+/// back just this change (so a half-made security does not linger) and counts
+/// as a skip. Any other error (disk full, I/O, busy) may have rolled the
+/// whole transaction back already, so it ends the pull instead of letting the
+/// loop carry on in autocommit.
+fn apply_guarded(tx: &Connection, device: &str, c: &Change, report: &mut PullReport) -> rusqlite::Result<Option<Outcome>> {
+    tx.execute_batch("SAVEPOINT change")?;
+    match apply::apply(tx, device, c) {
+        Ok(outcome) => {
+            tx.execute_batch("RELEASE change")?;
+            Ok(Some(outcome))
+        }
+        Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
+            tx.execute_batch("ROLLBACK TO change; RELEASE change")?;
+            eprintln!("device sync: skipped {} {} {}", c.tbl, c.key, c.field);
+            report.skipped += 1;
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// One transaction, with the triggers silenced: apply the new files' changes
+/// oldest first, retry waiting changes (including ones that just began
+/// waiting, since their row may arrive later in the same round), record the
+/// files, and re-sort automatic rows if a rule or category changed.
 pub fn apply_all(conn: &Connection, fetched: &[Fetched], schema: i64, now_ms: i64) -> rusqlite::Result<PullReport> {
     let tx = conn.unchecked_transaction()?;
     meta::set(&tx, "applying", "1")?;
     let mut report = PullReport::default();
     let mut resort = false;
 
-    for (id, device, c) in read_pending(&tx)? {
-        let expired = now_ms - c.at > PENDING_DAYS * 86_400_000;
-        match apply::apply(&tx, &device, &c) {
-            Ok(Outcome::Waiting) if !expired => continue,
-            Ok(Outcome::Applied) => {
-                report.applied += 1;
-                resort |= affects_sorting(&c);
-            }
-            Ok(_) => {}
-            Err(_) => report.skipped += 1,
-        }
-        tx.execute("DELETE FROM sync_pending WHERE id=?1", [id])?;
-    }
-
+    let already = applied_names(&tx)?;
     let mut usable: Vec<&Fetched> = Vec::new();
     for f in fetched {
         if f.file.schema > schema || f.file.format > FORMAT {
             report.newer_files += 1;
-        } else {
+        } else if !already.contains(&f.name) {
             usable.push(f);
         }
     }
@@ -106,21 +118,42 @@ pub fn apply_all(conn: &Connection, fetched: &[Fetched], schema: i64, now_ms: i6
     changes.sort_by(|a, b| (a.1.at, a.0).cmp(&(b.1.at, b.0)));
 
     for (device, c) in changes {
-        match apply::apply(&tx, device, c) {
-            Ok(Outcome::Applied) => {
+        match apply_guarded(&tx, device, c, &mut report)? {
+            Some(Outcome::Applied) => {
                 report.applied += 1;
                 resort |= affects_sorting(c);
             }
-            Ok(Outcome::Waiting) => {
+            Some(Outcome::Waiting) => {
                 tx.execute(
                     "INSERT INTO sync_pending (device, tbl, key, field, value, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![device, c.tbl, c.key, c.field, c.value.to_string(), c.at],
                 )?;
             }
-            Ok(Outcome::Stale) => {}
-            Err(_) => report.skipped += 1,
+            Some(Outcome::Stale) | None => {}
         }
     }
+
+    for (id, device, c) in read_pending(&tx)? {
+        // A newer whole-row change (create or delete) has replaced this one.
+        let replaced: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sync_clock WHERE tbl=?1 AND key=?2 AND field='_row' AND at>?3)",
+            params![c.tbl, c.key, c.at],
+            |r| r.get(0),
+        )?;
+        let expired = now_ms - c.at > PENDING_DAYS * 86_400_000;
+        if !replaced {
+            match apply_guarded(&tx, &device, &c, &mut report)? {
+                Some(Outcome::Waiting) if !expired => continue,
+                Some(Outcome::Applied) => {
+                    report.applied += 1;
+                    resort |= affects_sorting(&c);
+                }
+                _ => {}
+            }
+        }
+        tx.execute("DELETE FROM sync_pending WHERE id=?1", [id])?;
+    }
+
     for f in &usable {
         tx.execute("INSERT OR IGNORE INTO sync_files_applied (name) VALUES (?1)", [&f.name])?;
     }
@@ -175,6 +208,14 @@ mod tests {
         assert!(applied_names(&conn).unwrap().contains("pc/1-1.json"));
         assert_eq!(count(&conn, "SELECT count(*) FROM sync_outbox"), 0, "nothing echoed back");
         assert_eq!(meta::get(&conn, "applying").unwrap().as_deref(), Some("0"));
+
+        // The same file again (Drive can list it twice) changes nothing.
+        let again = apply_all(&conn, std::slice::from_ref(&f), 9, 200).unwrap();
+        assert_eq!(again.applied, 0);
+        assert_eq!(
+            conn.query_row("SELECT note FROM bank_transactions WHERE external_id='TRN-1'", [], |r| r.get::<_, String>(0)).unwrap(),
+            "lunch"
+        );
     }
 
     #[test]
@@ -239,5 +280,49 @@ mod tests {
         let applied: HashSet<String> = ["pc/0000000000001-1.json".to_string()].into();
         let got = fetch(dir.path(), "laptop", &applied);
         assert_eq!(got.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), vec!["pc/0000000000002-2.json"]);
+    }
+
+    #[test]
+    fn a_constraint_failure_is_skipped_and_leaves_nothing_behind() {
+        let conn = laptop();
+        // The security is fine; the transaction's own NOT NULL type is not.
+        let row = json!({"account":"sf:ACT-1","security":{"ticker":"ZZZ","name":"Zed","type":"stock","currency":"USD"},"type":null,"date":"2026-10-01"});
+        let c = Change { tbl: "transactions".into(), key: "txn:bad".into(), field: "_row".into(), value: row, at: 10 };
+        let report = apply_all(&conn, &[file("pc/1-1.json", 9, vec![c])], 9, 100).unwrap();
+        assert_eq!(report.skipped, 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM securities WHERE ticker='ZZZ'"), 0, "the half-made security is rolled back");
+        assert_eq!(meta::get(&conn, "applying").unwrap().as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn a_waiting_change_lands_when_its_category_arrives_in_the_same_round() {
+        let conn = laptop();
+        let budget = Change { tbl: "budgets".into(), key: "cat:Golf|*".into(), field: "_row".into(), value: json!({"limit_amount": 50.0}), at: 5 };
+        let golf = Change {
+            tbl: "categories".into(), key: "cat:Golf".into(), field: "_row".into(),
+            value: json!({"name":"Golf","kind":"spending","colour":"chart-3","sort":200,"is_builtin":0}), at: 10,
+        };
+        let report = apply_all(&conn, &[file("pc/1-1.json", 9, vec![budget, golf])], 9, 100).unwrap();
+        assert_eq!(report.waiting, 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM budgets b JOIN categories c ON c.id=b.category_id WHERE c.name='Golf'"), 1);
+    }
+
+    #[test]
+    fn a_waiting_change_is_dropped_once_a_newer_whole_row_replaced_it() {
+        let conn = laptop();
+        conn.execute("INSERT INTO sync_pending (device, tbl, key, field, value, at) VALUES ('pc','budgets','cat:Ghost|*','limit_amount','40',5)", []).unwrap();
+        super::super::clock::record(&conn, "budgets", "cat:Ghost|*", "_row", 10, "pc").unwrap();
+        let report = apply_all(&conn, &[], 9, 100).unwrap();
+        assert_eq!(report.waiting, 0);
+    }
+
+    #[test]
+    fn a_file_filed_under_another_device_or_claiming_this_one_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let cf = ChangeFile { format: FORMAT, schema: 9, device: "laptop".into(), changes: vec![] };
+        files::write_change_file(dir.path(), "pc/0000000000001-1.json", &cf).unwrap();
+        let other = ChangeFile { format: FORMAT, schema: 9, device: "tablet".into(), changes: vec![] };
+        files::write_change_file(dir.path(), "pc/0000000000002-2.json", &other).unwrap();
+        assert!(fetch(dir.path(), "laptop", &HashSet::new()).is_empty());
     }
 }
