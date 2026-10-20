@@ -14,6 +14,11 @@ use std::path::Path;
 /// Writing the copy holds the database lock: it is a one-off, and Google
 /// Drive for desktop writes to a local cache.
 pub fn start_first(conn: &Connection, app_dir: &Path, folder: &Path) -> Result<DeviceSyncSettings, String> {
+    // Starting again would give this computer a new id and a new folder while
+    // the other computer still syncs with the old one.
+    if is_on(&settings::load(&settings::path(app_dir))) {
+        return Err("Sync is already on. Stop syncing first.".into());
+    }
     let seed = files::seed_path(folder);
     if files::is_used(folder) {
         return Err("That folder already has Ledgerly sync data. Join it from this computer, or choose an empty folder.".into());
@@ -83,6 +88,28 @@ pub fn join(conn: &Connection, paths: &Paths, folder: &Path, at: NaiveDateTime) 
 pub fn stop(conn: &Connection, app_dir: &Path) -> Result<(), String> {
     meta::disable(conn).map_err(|e| e.to_string())?;
     settings::save(&settings::path(app_dir), &DeviceSyncSettings::default())
+}
+
+/// The same test `meta::adopt` uses at launch: a non-blank folder and an id.
+fn is_on(s: &DeviceSyncSettings) -> bool {
+    s.folder.as_deref().is_some_and(|f| !f.trim().is_empty()) && s.device_id.is_some()
+}
+
+/// Stage a backup for restore, turning sync off if it is on. A backup's
+/// database has none of the change files recorded as applied, so if sync
+/// stayed on, every file the other computer ever wrote would be replayed onto
+/// that older data at the next round. The owner joins again afterwards.
+/// If sync can't be turned off, nothing stays staged.
+pub fn stage_restore(conn: &Connection, paths: &Paths, chosen: &Path, at: NaiveDateTime) -> Result<Attempt, String> {
+    let safety = restore::stage(conn, paths, chosen, at)?;
+    let path = settings::path(&paths.app_dir);
+    if settings::load(&path) != DeviceSyncSettings::default() {
+        if let Err(e) = stop(conn, &paths.app_dir) {
+            let _ = std::fs::remove_file(paths.pending_restore());
+            return Err(format!("Couldn't turn off sync between computers, so nothing was restored. {e}"));
+        }
+    }
+    Ok(safety)
 }
 
 #[cfg(test)]
@@ -178,6 +205,62 @@ mod tests {
         let err = join(&laptop.conn, &laptop.paths, drive.path(), test_at("2026-10-16 09:00:00"));
         assert!(err.is_err());
         assert!(!laptop.paths.pending_restore().exists(), "the next launch must not swap the data in");
+    }
+
+    #[test]
+    fn starting_again_while_syncing_is_refused() {
+        let pc = computer();
+        let drive = tempfile::tempdir().unwrap();
+        let first = start_first(&pc.conn, &pc.paths.app_dir, drive.path()).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let err = start_first(&pc.conn, &pc.paths.app_dir, other.path()).unwrap_err();
+        assert_eq!(err, "Sync is already on. Stop syncing first.");
+        assert_eq!(settings::load(&settings::path(&pc.paths.app_dir)), first, "the first start is kept");
+        assert_eq!(meta::get(&pc.conn, "device").unwrap(), first.device_id);
+        assert!(!files::seed_path(other.path()).exists());
+    }
+
+    fn a_backup_of(c: &Computer) -> std::path::PathBuf {
+        let file = c.paths.app_dir.join("old.sqlite");
+        c.conn.execute("VACUUM INTO ?1", [file.to_string_lossy().into_owned()]).unwrap();
+        file
+    }
+
+    #[test]
+    fn restoring_a_backup_while_syncing_turns_sync_off() {
+        let pc = computer();
+        let backup = a_backup_of(&pc);
+        let drive = tempfile::tempdir().unwrap();
+        start_first(&pc.conn, &pc.paths.app_dir, drive.path()).unwrap();
+
+        stage_restore(&pc.conn, &pc.paths, &backup, test_at("2026-10-16 09:00:00")).unwrap();
+        assert!(pc.paths.pending_restore().exists());
+        let s = settings::load(&settings::path(&pc.paths.app_dir));
+        assert_eq!((s.folder, s.device_id), (None, None));
+        assert_eq!(meta::get(&pc.conn, "enabled").unwrap().as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn restoring_a_backup_without_sync_leaves_no_sync_settings() {
+        let pc = computer();
+        let backup = a_backup_of(&pc);
+        stage_restore(&pc.conn, &pc.paths, &backup, test_at("2026-10-16 09:00:00")).unwrap();
+        assert!(pc.paths.pending_restore().exists());
+        assert!(!settings::path(&pc.paths.app_dir).exists());
+    }
+
+    #[test]
+    fn a_restore_that_cannot_turn_sync_off_is_not_staged() {
+        let pc = computer();
+        let backup = a_backup_of(&pc);
+        let drive = tempfile::tempdir().unwrap();
+        start_first(&pc.conn, &pc.paths.app_dir, drive.path()).unwrap();
+        // A directory where the temp file goes makes the settings save fail.
+        std::fs::create_dir(settings::path(&pc.paths.app_dir).with_extension("json.tmp")).unwrap();
+
+        let err = stage_restore(&pc.conn, &pc.paths, &backup, test_at("2026-10-16 09:00:00")).unwrap_err();
+        assert!(err.contains("nothing was restored"), "{err}");
+        assert!(!pc.paths.pending_restore().exists(), "the old backup must not be swapped in still synced");
     }
 
     #[test]

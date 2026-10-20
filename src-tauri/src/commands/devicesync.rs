@@ -107,10 +107,15 @@ pub async fn device_sync_now(app: tauri::AppHandle) -> Result<Option<RunReport>,
     .await
 }
 
+/// Send what's left, then stop. Off the main thread: the last round touches
+/// the shared folder.
 #[tauri::command]
-pub fn device_sync_stop(app: tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<DeviceSyncState>();
-    let db = app.state::<Db>();
-    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    pair::stop(&conn, &state.app_dir)
+pub async fn device_sync_stop(app: tauri::AppHandle) -> Result<(), String> {
+    super::off_main_thread(move || {
+        let state = app.state::<DeviceSyncState>();
+        // Wait for a round already running, so the last one doesn't race it.
+        let _guard = state.running.lock().unwrap_or_else(|e| e.into_inner());
+        devicesync::run::stop(&app.state::<Db>(), &state.app_dir, &devicesync::computer_name())
+    })
+    .await
 }

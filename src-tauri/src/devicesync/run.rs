@@ -3,7 +3,7 @@
 //! Drive may download a file before it can be read (the rule from commit
 //! 2fc0f46: never hold the database lock across a download).
 use super::files::{self, ChangeFile, DeviceInfo, FORMAT};
-use super::{outbox, pull};
+use super::{outbox, pair, pull, settings};
 use crate::db::{Db, TARGET_VERSION};
 use serde::Serialize;
 use std::path::Path;
@@ -54,12 +54,26 @@ pub fn round(db: &Db, folder: &Path, device: &str, device_name: &str) -> Result<
     Ok(report)
 }
 
+/// Stop syncing, after one last round so edits not yet sent reach the folder
+/// for the other computer. That round is best effort: an unreachable folder
+/// must never keep the owner from turning sync off.
+pub fn stop(db: &Db, app_dir: &Path, device_name: &str) -> Result<(), String> {
+    let s = settings::load(&settings::path(app_dir));
+    if let (Some(folder), Some(id)) = (&s.folder, &s.device_id) {
+        if let Err(e) = round(db, Path::new(folder), id, device_name) {
+            eprintln!("device sync: last round before stopping failed: {e}");
+        }
+    }
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    pair::stop(&conn, app_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backup::{self, test_at, Paths};
     use crate::db;
-    use crate::devicesync::{meta, pair, settings};
+    use crate::devicesync::meta;
     use std::sync::Mutex;
 
     struct Computer {
@@ -143,6 +157,37 @@ mod tests {
         let report = round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
         assert_eq!((report.applied, report.waiting), (1, 0));
         assert_eq!(text(&laptop, "SELECT CAST(removed AS TEXT) FROM bank_transactions WHERE external_id='TRN-2'").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn stopping_sends_the_edits_not_yet_sent_first() {
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+        exec(&pc, "UPDATE bank_transactions SET note='last one' WHERE external_id='TRN-1';");
+
+        stop(&pc.db, pc._dir.path(), "PC").unwrap();
+        assert_eq!(settings::load(&settings::path(pc._dir.path())).folder, None);
+        assert_eq!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().applied, 1);
+        assert_eq!(text(&laptop, "SELECT note FROM bank_transactions").as_deref(), Some("last one"));
+    }
+
+    #[test]
+    fn stopping_works_when_the_folder_cannot_be_reached() {
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, _laptop) = pair_up(drive.path());
+        exec(&pc, "UPDATE bank_transactions SET note='stuck' WHERE external_id='TRN-1';");
+        // A file where the folder should be: the last round can't write there.
+        let blocker = drive.path().join("blocker");
+        std::fs::write(&blocker, "x").unwrap();
+        let unreachable = settings::DeviceSyncSettings {
+            folder: Some(blocker.join("Sync").to_string_lossy().into_owned()),
+            device_id: Some(pc.id.clone()),
+        };
+        settings::save(&settings::path(pc._dir.path()), &unreachable).unwrap();
+
+        stop(&pc.db, pc._dir.path(), "PC").unwrap();
+        assert_eq!(settings::load(&settings::path(pc._dir.path())).folder, None);
+        assert_eq!(text(&pc, "SELECT value FROM sync_meta WHERE name='enabled'").as_deref(), Some("0"));
     }
 
     #[test]
