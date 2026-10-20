@@ -67,13 +67,18 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), String> {
     write().map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
     // No remove first: Rust's rename already replaces an existing file on
     // Windows in one step, and removing would leave a moment with no file.
-    // Google Drive's uploader can hold the target open for a moment, which
-    // makes the rename fail with PermissionDenied, so try a few times.
+    // Google Drive's uploader can hold the file open for a moment, which makes
+    // the rename fail with access denied, or with a sharing or lock violation
+    // (Windows errors 32 and 33, which Rust does not map to PermissionDenied),
+    // so try a few times.
+    let busy = |e: &std::io::Error| {
+        e.kind() == std::io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(32) | Some(33))
+    };
     let mut tries = 0;
     loop {
         match fs::rename(&tmp, path) {
             Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && tries < 4 => {
+            Err(e) if busy(&e) && tries < 4 => {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
