@@ -7,6 +7,7 @@ pub mod clock;
 pub mod files;
 pub mod meta;
 pub mod outbox;
+pub mod pair;
 pub mod pull;
 pub mod schema;
 pub mod settings;
