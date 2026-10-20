@@ -24,7 +24,7 @@ pub fn apply(conn: &Connection, device: &str, c: &Change) -> rusqlite::Result<Ou
     let landed = match c.tbl.as_str() {
         "accounts" => accounts(conn, c)?,
         "categories" => categories(conn, c)?,
-        "bank_transactions" => bank_transactions(conn, c)?,
+        "bank_transactions" => bank_transactions(conn, device, c)?,
         "category_rules" => rules(conn, c)?,
         "budgets" => budgets(conn, c)?,
         "transactions" => transactions(conn, c)?,
@@ -59,7 +59,9 @@ fn field(v: &Value, name: &str) -> Sql {
 
 /// A row changed key: its clock, unsent edits and held-back changes follow it,
 /// or they would point at a key that no longer exists. `OR REPLACE` because the
-/// new key may already have entries; either way the newest wins on the clock.
+/// new key may already have entries, and then the moved row replaces them, not
+/// necessarily the newest one. That only happens when two keys merge, and at
+/// worst one stale clock entry stays, so it is accepted.
 fn rekey(conn: &Connection, tbl: &str, old: &str, new: &str) -> rusqlite::Result<()> {
     for t in ["sync_clock", "sync_outbox", "sync_pending"] {
         conn.execute(
@@ -186,7 +188,7 @@ fn categories(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
     }
 }
 
-fn bank_transactions(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
+fn bank_transactions(conn: &Connection, device: &str, c: &Change) -> rusqlite::Result<bool> {
     match c.field.as_str() {
         "_row" if c.value.is_null() => {
             // Never a SimpleFIN row: only Copilot history or a manual account's
@@ -199,7 +201,7 @@ fn bank_transactions(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
             )?;
             Ok(true)
         }
-        "_row" => insert_bank_row(conn, c),
+        "_row" => insert_bank_row(conn, device, c),
         "category" => {
             let pair = c.value.as_array();
             let source = pair.and_then(|p| p.get(1)).and_then(Value::as_str).unwrap_or("manual");
@@ -228,7 +230,7 @@ fn bank_transactions(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
 }
 
 /// A row SimpleFIN cannot supply here: a manual account's, or Copilot history.
-fn insert_bank_row(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
+fn insert_bank_row(conn: &Connection, device: &str, c: &Change) -> rusqlite::Result<bool> {
     if id_by_key(conn, "bank_transactions", &c.key)?.is_some() {
         return Ok(true);
     }
@@ -251,13 +253,13 @@ fn insert_bank_row(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
                    AND pending = 0
                    -- the other computer already shows it holds this row apart
                    AND NOT EXISTS (SELECT 1 FROM sync_clock k
-                                   WHERE k.tbl='bank_transactions' AND k.key=bank_transactions.sync_key)
+                                   WHERE k.tbl='bank_transactions' AND k.key=bank_transactions.sync_key AND k.device=?4)
                    AND NOT EXISTS (SELECT 1 FROM sync_pending p
                                    WHERE p.tbl='bank_transactions' AND p.key=bank_transactions.sync_key)
                    AND CAST(ROUND(amount*100) AS INTEGER) = CAST(ROUND(?2*100) AS INTEGER)
                    AND ABS(julianday(posted) - julianday(?3)) <= 3
                  ORDER BY ABS(julianday(posted) - julianday(?3)) LIMIT 1",
-                params![account_id, field(v, "amount"), field(v, "posted")],
+                params![account_id, field(v, "amount"), field(v, "posted"), device],
                 |r| r.get(0),
             )
             .optional()?;
@@ -611,6 +613,17 @@ mod tests {
         let c = change("bank_transactions", COPILOT_KEY, "_row", copilot_row("2026-10-02", "cat:Dining", "x"), 10);
         assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
         assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM bank_transactions"), 2);
+    }
+
+    #[test]
+    fn this_computers_own_edit_does_not_rule_out_a_twin() {
+        let conn = applying();
+        // A pushed edit is recorded in the clock under this device.
+        clock::record(&conn, "bank_transactions", "sf:ACT-1|TRN-1", "reviewed", 1, "laptop").unwrap();
+        let c = change("bank_transactions", COPILOT_KEY, "_row", copilot_row("2026-10-02", "cat:Dining", "x"), 10);
+        assert_eq!(apply(&conn, "pc", &c).unwrap(), Outcome::Applied);
+        assert_eq!(one::<i64>(&conn, "SELECT count(*) FROM bank_transactions"), 1);
+        assert_eq!(one::<String>(&conn, "SELECT sync_key FROM bank_transactions"), COPILOT_KEY);
     }
 
     #[test]
