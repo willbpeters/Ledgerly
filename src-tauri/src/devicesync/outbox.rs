@@ -106,7 +106,15 @@ mod tests {
             .unwrap();
         assert_eq!(applied, 1);
         let c = &taken.changes[0];
-        assert!(!clock::is_newer(&conn, &c.tbl, &c.key, &c.field, c.at, "pc").unwrap());
+        let recorded: (i64, String) = conn
+            .query_row(
+                "SELECT at, device FROM sync_clock WHERE tbl=?1 AND key=?2 AND field=?3",
+                rusqlite::params![c.tbl, c.key, c.field],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(recorded, (c.at, "pc".to_string()));
+        assert!(!clock::is_newer(&conn, &c.tbl, &c.key, &c.field, c.at - 1, "pc").unwrap());
     }
 
     #[test]
