@@ -134,10 +134,14 @@ pub fn apply_all(conn: &Connection, fetched: &[Fetched], schema: i64, now_ms: i6
     }
 
     for (id, device, c) in read_pending(&tx)? {
-        // A newer whole-row change (create or delete) has replaced this one.
+        // Replaced by a newer whole-row change (create or delete), or by a
+        // change from the same device in the same millisecond that landed
+        // first this round. That one is the later edit, and the same-device
+        // tie rule would otherwise let this older one overwrite it.
         let replaced: bool = tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sync_clock WHERE tbl=?1 AND key=?2 AND field='_row' AND at>?3)",
-            params![c.tbl, c.key, c.at],
+            "SELECT EXISTS (SELECT 1 FROM sync_clock WHERE tbl=?1 AND key=?2
+               AND ((field='_row' AND at>?3) OR (field=?4 AND at=?3 AND device=?5)))",
+            params![c.tbl, c.key, c.at, c.field, device],
             |r| r.get(0),
         )?;
         let expired = now_ms - c.at > PENDING_DAYS * 86_400_000;
@@ -216,6 +220,22 @@ mod tests {
             conn.query_row("SELECT note FROM bank_transactions WHERE external_id='TRN-1'", [], |r| r.get::<_, String>(0)).unwrap(),
             "lunch"
         );
+    }
+
+    #[test]
+    fn a_waiting_edit_does_not_overwrite_a_later_one_from_the_same_millisecond() {
+        let conn = laptop();
+        apply_all(&conn, &[file("pc/1-1.json", 9, vec![note("sf:ACT-1|TRN-2", "first", 10)])], 9, 100).unwrap();
+        conn.execute_batch(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description) VALUES (1,'TRN-2','2026-10-02',-30,'Dinner');",
+        )
+        .unwrap();
+        // The PC's next file carries its later edit, made in the same millisecond.
+        apply_all(&conn, &[file("pc/2-2.json", 9, vec![note("sf:ACT-1|TRN-2", "second", 10)])], 9, 200).unwrap();
+        let got: String =
+            conn.query_row("SELECT note FROM bank_transactions WHERE external_id='TRN-2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(got, "second");
+        assert_eq!(count(&conn, "SELECT count(*) FROM sync_pending"), 0);
     }
 
     #[test]

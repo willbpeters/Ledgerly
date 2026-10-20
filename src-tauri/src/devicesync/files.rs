@@ -90,6 +90,17 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), String> {
     }
 }
 
+/// Only names `file_name` makes: `<13 digits>-<digits>.json`. Google Drive's
+/// conflict copies (`... (1).json`) would otherwise be applied a second time.
+fn is_change_file_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".json") else { return false };
+    let Some((ms, seq)) = stem.split_once('-') else { return false };
+    ms.len() == 13
+        && ms.bytes().all(|b| b.is_ascii_digit())
+        && !seq.is_empty()
+        && seq.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// `<device>/<written at, ms>-<last outbox seq>.json`: the path below
 /// `changes/`, and the name a file is recorded under once applied.
 pub fn file_name(device: &str, written_at: i64, last_seq: i64) -> String {
@@ -115,7 +126,7 @@ pub fn list_others(folder: &Path, me: &str) -> Vec<String> {
         let Ok(files) = fs::read_dir(device.path()) else { continue };
         for f in files.filter_map(|f| f.ok()) {
             if let Ok(n) = f.file_name().into_string() {
-                if n.ends_with(".json") && !n.starts_with('.') {
+                if is_change_file_name(&n) {
                     names.push(format!("{device_name}/{n}"));
                 }
             }
@@ -174,6 +185,14 @@ mod tests {
         let name = file_name("pc", 1_760_000_000_000, 7);
         write_change_file(dir.path(), &name, &sample("pc")).unwrap();
         assert_eq!(read(dir.path(), &name).unwrap(), sample("pc"));
+    }
+
+    #[test]
+    fn listing_skips_google_drive_conflict_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        write_change_file(dir.path(), &file_name("pc", 1, 1), &sample("pc")).unwrap();
+        fs::write(dir.path().join("changes/pc/0000000000001-1 (1).json"), "{}").unwrap();
+        assert_eq!(list_others(dir.path(), "laptop"), vec!["pc/0000000000001-1.json".to_string()]);
     }
 
     #[test]
