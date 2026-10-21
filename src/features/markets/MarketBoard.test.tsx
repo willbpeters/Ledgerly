@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { TodayBoard } from "./TodayBoard";
-import { SectorHeatmap } from "./SectorHeatmap";
+import { SectorHeatmap, SECTOR_WEIGHTS } from "./SectorHeatmap";
 import { HoldingsHeatmap } from "./HoldingsHeatmap";
 import type { IndexRow } from "../../domain/market";
 import type { BoardGroup } from "../../domain/types";
@@ -54,19 +54,43 @@ describe("TodayBoard", () => {
 });
 
 describe("SectorHeatmap", () => {
-  it("draws one tile per sector, in the order given, coloured by its move", () => {
-    render(<SectorHeatmap sectors={[
-      row("XLK", "Technology", "sector", 101.8, 100),
-      row("XLE", "Energy", "sector", 100.06, 100),
-      row("XLP", "Consumer staples", "sector", 99.3, 100),
-    ]} />);
+  const three = [
+    row("XLE", "Energy", "sector", 100.06, 100),
+    row("XLK", "Technology", "sector", 101.8, 100),
+    row("XLP", "Consumer staples", "sector", 99.3, 100),
+  ];
+
+  it("draws one tile per sector, coloured by its move", () => {
+    render(<SectorHeatmap sectors={three} />);
+    expect(screen.getByRole("listitem", { name: "Technology +1.8%" })).toHaveClass("heat-p3");
+    expect(screen.getByRole("listitem", { name: "Energy +0.1%" })).toHaveClass("heat-0");
+    expect(screen.getByRole("listitem", { name: "Consumer staples -0.7%" })).toHaveClass("heat-n2");
+  });
+
+  it("sizes each sector by its weight in the S&P 500, biggest first", () => {
+    render(<SectorHeatmap sectors={three} />);
     const tiles = screen.getAllByRole("listitem");
     expect(tiles.map((t) => t.getAttribute("aria-label"))).toEqual([
-      "Technology +1.8%", "Energy +0.1%", "Consumer staples -0.7%",
+      "Technology +1.8%", "Consumer staples -0.7%", "Energy +0.1%",
     ]);
-    expect(tiles[0]).toHaveClass("heat-p3");
-    expect(tiles[1]).toHaveClass("heat-0");
-    expect(tiles[2]).toHaveClass("heat-n2");
+    // Area in percent-of-box units; the ratio of areas must match the ratio of weights.
+    const area = (t: HTMLElement) => parseFloat(t.style.width) * parseFloat(t.style.height);
+    const w = SECTOR_WEIGHTS;
+    expect(area(tiles[0]) / area(tiles[2])).toBeCloseTo(w.XLK / w.XLE, 5);
+    expect(area(tiles[1]) / area(tiles[2])).toBeCloseTo(w.XLP / w.XLE, 5);
+    expect(tiles[0]).toHaveTextContent(`${w.XLK}% of S&P`);
+  });
+
+  it("still shows a sector it has no weight for, at the smallest size", () => {
+    render(<SectorHeatmap sectors={[...three, row("XLNEW", "Something new", "sector", 101, 100)]} />);
+    expect(screen.getByRole("listitem", { name: "Something new +1.0%" })).toBeInTheDocument();
+  });
+
+  it("knows a weight for every sector on the board, adding to about 100%", () => {
+    const sum = Object.values(SECTOR_WEIGHTS).reduce((s, v) => s + v, 0);
+    expect(Object.keys(SECTOR_WEIGHTS)).toHaveLength(11);
+    expect(sum).toBeGreaterThan(97);
+    expect(sum).toBeLessThan(103);
   });
 
   it("waits for the first refresh", () => {
@@ -87,6 +111,9 @@ describe("HoldingsHeatmap", () => {
     expect(big.style.width).toBe("75%");
     expect(small.style.width).toBe("25%");
     expect(small).toHaveClass("heat-n3");
+    // The tile says what share of the portfolio its size stands for.
+    expect(big).toHaveTextContent("75%");
+    expect(small).toHaveTextContent("25%");
   });
 
   it("says so when nothing is held", () => {

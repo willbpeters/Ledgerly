@@ -381,7 +381,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .heat-n1 { background: color-mix(in srgb, var(--neg) 22%, var(--surface)); color: var(--ink); }
 .heat-n2 { background: color-mix(in srgb, var(--neg) 45%, var(--surface)); color: var(--ink); }
 .heat-n3 { background: color-mix(in srgb, var(--neg) 75%, var(--surface)); color: var(--surface); }
-.sector-heat { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-.sector-heat .heat-tile { min-height: 58px; }
-.holdings-heat { list-style: none; margin: 0; padding: 0; position: relative; height: 252px; }
-.holdings-heat .heat-tile { position: absolute; box-sizing: border-box; border: 2px solid var(--surface); }
+.heat-size { font-size: 10px; opacity: .8; }
+.heat-treemap { list-style: none; margin: 0; padding: 0; position: relative; height: 260px; }
+.heat-treemap .heat-tile { position: absolute; box-sizing: border-box; border: 2px solid var(--surface); }
