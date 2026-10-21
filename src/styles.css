@@ -64,11 +64,13 @@
   --line: #2b2825;
   --line-2: #3a3631;
   --line-soft: #211f1c;
-  --accent: #34d399;
+  /* "Forest": the light theme's deep green, lifted just enough to read on
+     the dark surface. The earlier mint (#34d399) was too bright here. */
+  --accent: #3f9d77;
   --accent-ink: #131211;
-  --accent-soft: rgba(52, 211, 153, .15);
-  --pos: #6ee7a5;
-  --pos-soft: rgba(110, 231, 165, .15);
+  --accent-soft: rgba(63, 157, 119, .15);
+  --pos: #5fb889;
+  --pos-soft: rgba(95, 184, 137, .15);
   --neg: #f87171;
   --neg-soft: rgba(248, 113, 113, .15);
   --warn: #fbbf24;
@@ -76,12 +78,12 @@
   --warn-line: rgba(251, 191, 36, .28);
   --shadow: 0 1px 2px rgba(0, 0, 0, .4);
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, .45);
-  --chart-1: #34d399;
-  --chart-2: #fbbf24;
-  --chart-3: #5eead4;
-  --chart-4: #f9a8d4;
-  --chart-5: #a3e635;
-  --chart-6: #94a3b8;
+  --chart-1: #3f9d77;
+  --chart-2: #d9a441;
+  --chart-3: #5b9bb5;
+  --chart-4: #c98aa6;
+  --chart-5: #9aae55;
+  --chart-6: #8c939c;
   --chart-grid: #2b2825;
 }
 
