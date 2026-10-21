@@ -215,13 +215,17 @@ pub fn earnings_last_updated(conn: &Connection) -> rusqlite::Result<Option<Strin
 }
 
 
-/// An index as the market strip receives it.
+/// A board symbol as the Markets screen receives it.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct IndexQuote {
     pub symbol: String,
     pub label: String,
+    /// `index`, `volatility`, `yield` or `sector` — see `indices::BoardSymbol`.
+    pub group: String,
     pub latest: f64,
     pub previous: f64,
+    /// Up to the last five closes, oldest first, for the sparkline.
+    pub recent: Vec<f64>,
 }
 
 pub fn upsert_index_closes(
@@ -243,20 +247,25 @@ pub fn upsert_index_closes(
 /// omitted: showing it as a flat 0.00% would be a lie about a missing fetch.
 pub fn list_index_quotes(conn: &Connection) -> rusqlite::Result<Vec<IndexQuote>> {
     let mut out = Vec::new();
-    for (symbol, label) in crate::market::indices::INDICES {
-        let mut stmt = conn.prepare(
-            "SELECT close FROM index_quotes WHERE symbol=?1 ORDER BY date DESC LIMIT 2")?;
-        let closes: Vec<f64> = stmt
-            .query_map([symbol], |r| r.get(0))?
+    let mut stmt = conn.prepare(
+        "SELECT close FROM index_quotes WHERE symbol=?1 ORDER BY date DESC LIMIT 5")?;
+    for b in crate::market::indices::INDICES {
+        // Newest first from the query; the sparkline wants oldest first.
+        let mut closes: Vec<f64> = stmt
+            .query_map([b.symbol], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<f64>>>()?;
         if closes.len() < 2 {
             continue;
         }
+        let (latest, previous) = (closes[0], closes[1]);
+        closes.reverse();
         out.push(IndexQuote {
-            symbol: (*symbol).to_string(),
-            label: (*label).to_string(),
-            latest: closes[0],
-            previous: closes[1],
+            symbol: b.symbol.to_string(),
+            label: b.label.to_string(),
+            group: b.group.to_string(),
+            latest,
+            previous,
+            recent: closes,
         });
     }
     Ok(out)
@@ -323,6 +332,28 @@ mod tests {
         assert_eq!(rows[0].label, "S&P 500");
         assert_eq!(rows[0].latest, 7591.7);
         assert_eq!(rows[0].previous, 7550.0);
+        assert_eq!(rows[0].group, "index");
+    }
+
+    #[test]
+    fn index_quotes_carry_the_last_five_closes_oldest_first() {
+        let conn = db::open_in_memory().unwrap();
+        let closes: Vec<(String, f64)> =
+            (1..=7).map(|d| (format!("2026-09-0{d}"), 100.0 + d as f64)).collect();
+        upsert_index_closes(&conn, "^VIX", &closes).unwrap();
+        let rows = list_index_quotes(&conn).unwrap();
+        assert_eq!(rows[0].recent, vec![103.0, 104.0, 105.0, 106.0, 107.0]);
+        assert_eq!(rows[0].group, "volatility");
+    }
+
+    #[test]
+    fn quotes_come_back_in_board_order() {
+        let conn = db::open_in_memory().unwrap();
+        for sym in ["XLK", "^RUT", "^GSPC"] {
+            upsert_index_closes(&conn, sym, &[("2026-09-09".into(), 1.0), ("2026-09-10".into(), 2.0)]).unwrap();
+        }
+        let order: Vec<String> = list_index_quotes(&conn).unwrap().into_iter().map(|q| q.symbol).collect();
+        assert_eq!(order, vec!["^GSPC", "^RUT", "XLK"]);
     }
 
     #[test]
