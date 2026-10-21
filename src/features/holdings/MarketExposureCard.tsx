@@ -1,6 +1,19 @@
 import { pct, share } from "../../ui/format";
 import { Card, EmptyState } from "../../ui/components";
-import type { MarketExposure } from "../../domain/risk";
+import type { ExposureInputs, MarketExposure } from "../../domain/risk";
+import type { Aligned } from "../../domain/returns";
+import type { PortfolioSummary } from "../../domain/types";
+
+/**
+ * Wires the risk maths' cash input straight from the portfolio summary.
+ * Exported so a test can pin the invariant here without mounting the whole
+ * screen: liabilities must never be netted into cash — credit-card debt
+ * leverages market exposure, it does not reduce it, and netting it here would
+ * make borrowing look like risk reduction.
+ */
+export function exposureInputs(aligned: Pick<Aligned, "assets" | "benchmark">, summary: Pick<PortfolioSummary, "cash">): ExposureInputs {
+  return { assets: aligned.assets, cash: summary.cash, benchmark: aligned.benchmark };
+}
 
 /**
  * Market exposure: how much of the portfolio is just the market, and what is

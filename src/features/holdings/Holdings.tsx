@@ -5,6 +5,10 @@ import { useSecurities } from "../../data/queries";
 import { money, pct } from "../../ui/format";
 import { PageHeader, Card, Button, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
+import { useRiskSeries } from "../../data/useRiskSeries";
+import { marketExposure } from "../../domain/risk";
+import { RiskCard } from "./RiskCard";
+import { MarketExposureCard, exposureInputs } from "./MarketExposureCard";
 import type { Holding } from "../../domain/types";
 
 interface Row extends Holding { weight: number | null; name: string | null; }
@@ -44,6 +48,7 @@ function loadVisible(): string[] {
 
 export function Holdings() {
   const { holdings, summary, byAccount, isLoading } = usePortfolio();
+  const { aligned, isLoading: riskLoading } = useRiskSeries(holdings);
   const { data: securities = [] } = useSecurities();
   const [visible, setVisible] = useState<string[]>(loadVisible);
   const [showCols, setShowCols] = useState(false);
@@ -106,6 +111,9 @@ export function Holdings() {
           <DataTable columns={cols} rows={toRows(b.holdings, b.holdingsValue)} getKey={(r) => r.security_id} />
         </Card>
       ))}
+
+      <RiskCard holdings={holdings} cash={summary.cash} />
+      <MarketExposureCard exposure={marketExposure(exposureInputs(aligned, summary))} isLoading={riskLoading} />
     </>
   );
 }
