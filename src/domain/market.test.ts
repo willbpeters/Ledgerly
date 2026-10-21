@@ -17,7 +17,9 @@ const news = (security_id: number, title: string, published: string): NewsItem =
      published, fetched_at: "2026-09-10T12:00:00Z" });
 const holdings = new Map([[1, 900], [2, 1400], [3, 3400]]);
 const dayChange = new Map([[1, 3.8], [2, 0.9], [3, 0.42]]);
-const indices: IndexQuote[] = [{ symbol: "^GSPC", label: "S&P 500", latest: 101, previous: 100 }];
+const quote = (symbol: string, label: string, group: IndexQuote["group"], latest: number, previous: number): IndexQuote =>
+  ({ symbol, label, group, latest, previous, recent: [previous, latest] });
+const indices: IndexQuote[] = [quote("^GSPC", "S&P 500", "index", 101, 100)];
 
 const base = {
   securities, profiles, holdings, dayChange, indices,
@@ -120,6 +122,24 @@ describe("buildMarketView", () => {
     const v = buildMarketView(base);
     expect(v.indices[0].label).toBe("S&P 500");
     expect(v.indices[0].changePct).toBeCloseTo(1.0, 5);
+  });
+
+  it("keeps the board in its own order and sorts the sectors by today's move", () => {
+    const v = buildMarketView({ ...base, indices: [
+      quote("^GSPC", "S&P 500", "index", 101, 100),
+      quote("XLE", "Energy", "sector", 99, 100),
+      quote("^VIX", "VIX", "volatility", 16, 17),
+      quote("XLK", "Technology", "sector", 102, 100),
+      quote("^TNX", "10-yr yield", "yield", 5.11, 5.13),
+    ] });
+    expect(v.indices.map((r) => r.symbol)).toEqual(["^GSPC", "^VIX", "^TNX"]);
+    expect(v.sectors.map((r) => r.label)).toEqual(["Technology", "Energy"]);
+  });
+
+  it("measures a yield's move in basis points", () => {
+    const v = buildMarketView({ ...base, indices: [quote("^TNX", "10-yr yield", "yield", 5.11, 5.13)] });
+    expect(v.indices[0].changeBp).toBeCloseTo(-2, 5);
+    expect(v.indices[0]).toMatchObject({ latest: 5.11, group: "yield", recent: [5.13, 5.11] });
   });
 
   it("reports the newest fetch time so staleness can be shown", () => {

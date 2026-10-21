@@ -1,5 +1,5 @@
 import type {
-  Security, SecurityProfile, NewsItem, EarningsEvent, IndexQuote,
+  Security, SecurityProfile, NewsItem, EarningsEvent, IndexQuote, BoardGroup,
 } from "./types";
 
 /** How far ahead the earnings strip looks. */
@@ -22,11 +22,20 @@ export interface MarketRow {
   lastEarnings?: ReportedEarnings;
 }
 
-export interface IndexRow { symbol: string; label: string; changePct: number; }
+export interface IndexRow {
+  symbol: string; label: string; group: BoardGroup;
+  latest: number; changePct: number;
+  /** Change in basis points. Meaningful for yields, which are quoted in percent. */
+  changeBp: number;
+  recent: number[];
+}
 export interface CalendarDay { date: string; tickers: string[]; }
 
 export interface MarketView {
+  /** The Today board, in the order the Rust symbol table gives. */
   indices: IndexRow[];
+  /** The sector funds, biggest move up first, for the heatmap. */
+  sectors: IndexRow[];
   companies: MarketRow[];
   funds: MarketRow[];
   calendar: CalendarDay[];
@@ -125,12 +134,17 @@ export function buildMarketView(i: MarketInputs): MarketView {
     .map(([date, tickers]) => ({ date, tickers }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  const rows: IndexRow[] = i.indices.map((q) => ({
+    symbol: q.symbol, label: q.label, group: q.group, latest: q.latest, recent: q.recent,
+    changePct: q.previous === 0 ? 0 : ((q.latest - q.previous) / q.previous) * 100,
+    // Yields are quoted in percent (5.11 = 5.11%), so a point of change is 100 bp.
+    changeBp: (q.latest - q.previous) * 100,
+  }));
+
   const fetchTimes = i.news.map((n) => n.fetched_at).sort();
   return {
-    indices: i.indices.map((q) => ({
-      symbol: q.symbol, label: q.label,
-      changePct: q.previous === 0 ? 0 : ((q.latest - q.previous) / q.previous) * 100,
-    })),
+    indices: rows.filter((r) => r.group !== "sector"),
+    sectors: rows.filter((r) => r.group === "sector").sort((a, b) => b.changePct - a.changePct),
     companies,
     funds,
     calendar,
