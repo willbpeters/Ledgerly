@@ -50,6 +50,10 @@ export interface SeriesPoint { date: string; value: number; }
 export interface ValuePoint extends SeriesPoint {
   /** Holdings only — unmoved by deposits, withdrawals or card balances. */
   invested: number;
+  /** Cash on every non-credit account, brokerage cash included. */
+  cash: number;
+  /** Owed on credit accounts, as a positive amount: the line rises with the debt. */
+  liabilities: number;
 }
 
 export interface SyncedHolding {
