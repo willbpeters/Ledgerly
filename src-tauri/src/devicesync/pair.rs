@@ -85,9 +85,11 @@ pub fn join(conn: &Connection, paths: &Paths, folder: &Path, at: NaiveDateTime) 
 
 /// Stop recording and forget the folder. The folder's files are left alone,
 /// so the other computer keeps working and this one can join again.
+/// The settings are saved first: if that fails, recording stays on to match
+/// a file that still says syncing, rather than edits going unrecorded.
 pub fn stop(conn: &Connection, app_dir: &Path) -> Result<(), String> {
-    meta::disable(conn).map_err(|e| e.to_string())?;
-    settings::save(&settings::path(app_dir), &DeviceSyncSettings::default())
+    settings::save(&settings::path(app_dir), &DeviceSyncSettings::default())?;
+    meta::disable(conn).map_err(|e| e.to_string())
 }
 
 /// The same test `meta::adopt` uses at launch: a non-blank folder and an id.
@@ -261,6 +263,7 @@ mod tests {
         let err = stage_restore(&pc.conn, &pc.paths, &backup, test_at("2026-10-16 09:00:00")).unwrap_err();
         assert!(err.contains("nothing was restored"), "{err}");
         assert!(!pc.paths.pending_restore().exists(), "the old backup must not be swapped in still synced");
+        assert_eq!(meta::get(&pc.conn, "enabled").unwrap().as_deref(), Some("1"), "recording matches the settings, still syncing");
     }
 
     #[test]

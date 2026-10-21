@@ -56,16 +56,19 @@ pub fn round(db: &Db, folder: &Path, device: &str, device_name: &str) -> Result<
 
 /// Stop syncing, after one last round so edits not yet sent reach the folder
 /// for the other computer. That round is best effort: an unreachable folder
-/// must never keep the owner from turning sync off.
-pub fn stop(db: &Db, app_dir: &Path, device_name: &str) -> Result<(), String> {
+/// must never keep the owner from turning sync off. Its failure comes back as
+/// `Some(warning)`, so the owner knows the last edits stayed on this computer.
+pub fn stop(db: &Db, app_dir: &Path, device_name: &str) -> Result<Option<String>, String> {
     let s = settings::load(&settings::path(app_dir));
+    let mut warning = None;
     if let (Some(folder), Some(id)) = (&s.folder, &s.device_id) {
         if let Err(e) = round(db, Path::new(folder), id, device_name) {
-            eprintln!("device sync: last round before stopping failed: {e}");
+            warning = Some(format!("Sync is off, but your last edits couldn't be sent to the other computer. {e}"));
         }
     }
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-    pair::stop(&conn, app_dir)
+    pair::stop(&conn, app_dir)?;
+    Ok(warning)
 }
 
 #[cfg(test)]
@@ -136,9 +139,13 @@ mod tests {
         );
 
         exec(&laptop, "UPDATE bank_transactions SET note='with Sam' WHERE external_id='TRN-1';");
-        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        assert_eq!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().pushed, 1);
         round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
         assert_eq!(text(&pc, "SELECT note FROM bank_transactions").as_deref(), Some("with Sam"));
+
+        // A file is applied once: the next round on either side finds nothing new.
+        assert_eq!(round(&pc.db, drive.path(), &pc.id, "PC").unwrap().applied, 0);
+        assert_eq!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().applied, 0);
     }
 
     #[test]
@@ -165,7 +172,7 @@ mod tests {
         let (pc, laptop) = pair_up(drive.path());
         exec(&pc, "UPDATE bank_transactions SET note='last one' WHERE external_id='TRN-1';");
 
-        stop(&pc.db, pc._dir.path(), "PC").unwrap();
+        assert_eq!(stop(&pc.db, pc._dir.path(), "PC").unwrap(), None);
         assert_eq!(settings::load(&settings::path(pc._dir.path())).folder, None);
         assert_eq!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().applied, 1);
         assert_eq!(text(&laptop, "SELECT note FROM bank_transactions").as_deref(), Some("last one"));
@@ -185,7 +192,8 @@ mod tests {
         };
         settings::save(&settings::path(pc._dir.path()), &unreachable).unwrap();
 
-        stop(&pc.db, pc._dir.path(), "PC").unwrap();
+        let warning = stop(&pc.db, pc._dir.path(), "PC").unwrap();
+        assert!(warning.is_some_and(|w| w.contains("couldn't be sent")), "the owner hears the last edits stayed here");
         assert_eq!(settings::load(&settings::path(pc._dir.path())).folder, None);
         assert_eq!(text(&pc, "SELECT value FROM sync_meta WHERE name='enabled'").as_deref(), Some("0"));
     }

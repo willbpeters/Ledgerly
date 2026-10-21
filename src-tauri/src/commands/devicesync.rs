@@ -5,6 +5,7 @@ use crate::db::Db;
 use crate::devicesync::{self, files, pair, run::RunReport, settings, DeviceSyncState};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::TryLockError;
 use tauri::Manager;
 
 #[derive(Serialize)]
@@ -89,11 +90,19 @@ pub async fn device_sync_join(app: tauri::AppHandle, folder: String) -> Result<(
 pub async fn device_sync_now(app: tauri::AppHandle) -> Result<Option<RunReport>, String> {
     super::off_main_thread(move || {
         let state = app.state::<DeviceSyncState>();
+        // A panic in an earlier round poisons the guard. That must not turn
+        // "Sync now" off for the rest of the session, so only busy counts.
+        let _guard = match state.running.try_lock() {
+            Ok(g) => g,
+            Err(TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                return Ok(state.last.lock().unwrap_or_else(|e| e.into_inner()).clone());
+            }
+        };
+        // Read under the guard, as stop does, so a round that raced Stop sees
+        // sync is off instead of running after it.
         let s = settings::load(&settings::path(&state.app_dir));
         let (Some(folder), Some(id)) = (s.folder, s.device_id) else { return Ok(None) };
-        let Ok(_guard) = state.running.try_lock() else {
-            return Ok(state.last.lock().unwrap_or_else(|e| e.into_inner()).clone());
-        };
         let result = devicesync::run::round(&app.state::<Db>(), &PathBuf::from(folder), &id, &devicesync::computer_name());
         match &result {
             Ok(r) => {
@@ -108,14 +117,19 @@ pub async fn device_sync_now(app: tauri::AppHandle) -> Result<Option<RunReport>,
 }
 
 /// Send what's left, then stop. Off the main thread: the last round touches
-/// the shared folder.
+/// the shared folder. `Some(warning)` means sync is off but the last edits
+/// couldn't be sent.
 #[tauri::command]
-pub async fn device_sync_stop(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn device_sync_stop(app: tauri::AppHandle) -> Result<Option<String>, String> {
     super::off_main_thread(move || {
         let state = app.state::<DeviceSyncState>();
         // Wait for a round already running, so the last one doesn't race it.
         let _guard = state.running.lock().unwrap_or_else(|e| e.into_inner());
-        devicesync::run::stop(&app.state::<Db>(), &state.app_dir, &devicesync::computer_name())
+        let warning = devicesync::run::stop(&app.state::<Db>(), &state.app_dir, &devicesync::computer_name())?;
+        // The last round belongs to the sync that just ended.
+        *state.last.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *state.last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        Ok(warning)
     })
     .await
 }

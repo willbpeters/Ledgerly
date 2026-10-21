@@ -31,6 +31,9 @@ pub fn run() {
             let sync_settings = devicesync::settings::load(&devicesync::settings::path(&dir));
             if let Err(e) = devicesync::meta::adopt(&conn, &sync_settings) {
                 eprintln!("device sync: {e}");
+                // A just-joined copy must never record under the other
+                // computer's id. Off until the next launch adopts cleanly.
+                let _ = devicesync::meta::disable(&conn);
             }
             app.manage(db::Db(std::sync::Mutex::new(conn)));
             app.manage(devicesync::DeviceSyncState::new(dir.clone()));
