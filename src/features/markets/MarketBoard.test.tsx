@@ -158,3 +158,27 @@ describe("HeatTreemap", () => {
     expect(screen.getByRole("listitem", { name: "BIG +0.5%" })).not.toHaveClass("heat-tiny");
   });
 });
+
+describe("readable tiles", () => {
+  it("shows short sector names on tiles, full names to assistive tech and on hover", () => {
+    render(<SectorHeatmap sectors={[
+      row("XLK", "Technology", "sector", 101, 100),
+      row("XLP", "Consumer staples", "sector", 99.3, 100),
+    ]} />);
+    const tile = screen.getByRole("listitem", { name: "Consumer staples -0.7%" });
+    expect(tile).toHaveTextContent("Staples");
+    expect(tile).not.toHaveTextContent("Consumer");
+    expect(tile.getAttribute("title")).toContain("Consumer staples");
+  });
+
+  it("drops the size line on a tile with room only for the name and move", () => {
+    // 85 / 15 by value: the small tile is 15% of the width, full height — room
+    // for a name and a move, not a third line.
+    render(<HoldingsHeatmap holdings={[
+      { ticker: "BIG", value: 85, changePct: 0.5 },
+      { ticker: "MID", value: 15, changePct: -0.5 },
+    ]} />);
+    expect(screen.getByRole("listitem", { name: "MID -0.5%" })).toHaveClass("heat-compact");
+    expect(screen.getByRole("listitem", { name: "BIG +0.5%" })).not.toHaveClass("heat-compact");
+  });
+});

@@ -92,3 +92,19 @@ describe("trend", () => {
     expect(trend([100])).toBe("flat");
   });
 });
+
+describe("treemap shapes", () => {
+  const aspect = (r: { w: number; h: number }) => Math.max(r.w / r.h, r.h / r.w);
+
+  it("keeps the eleven S&P sectors close to square, so labels fit", () => {
+    const weights = [33, 13, 10.5, 9.5, 9.5, 8.5, 5.5, 3, 2.5, 2, 2];
+    const rects = treemap(weights.map((v, i) => ({ key: `s${i}`, value: v })), 200, 100);
+    expect(rects).toHaveLength(11);
+    for (const r of rects) expect(aspect(r)).toBeLessThan(3);
+  });
+
+  it("keeps a lopsided portfolio's tiles from turning into slivers", () => {
+    const rects = treemap([30, 25, 23, 22].map((v, i) => ({ key: `h${i}`, value: v })), 200, 100);
+    for (const r of rects) expect(aspect(r)).toBeLessThan(2.5);
+  });
+});

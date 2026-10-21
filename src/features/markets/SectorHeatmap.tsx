@@ -25,6 +25,17 @@ export const SECTOR_WEIGHTS: Record<string, number> = {
   XLB: 2,
 };
 
+// What fits on a small tile. The full name stays in the hover text and the
+// accessible name; sectors not listed print their full name.
+const SHORT_NAMES: Record<string, string> = {
+  XLY: "Discretionary",
+  XLP: "Staples",
+  XLC: "Comm.",
+  XLRE: "Real estate",
+  XLV: "Health",
+  XLB: "Materials",
+};
+
 // A sector missing from the table still appears, at the smallest known size,
 // rather than vanishing from a heatmap that claims to show them all.
 const FALLBACK_WEIGHT = Math.min(...Object.values(SECTOR_WEIGHTS));
@@ -39,7 +50,8 @@ export function SectorHeatmap({ sectors }: { sectors: IndexRow[] }) {
         <HeatTreemap tiles={sectors.map((s) => {
           const weight = SECTOR_WEIGHTS[s.symbol] ?? FALLBACK_WEIGHT;
           return {
-            key: s.symbol, label: s.label, size: weight, changePct: s.changePct,
+            key: s.symbol, label: s.label, shortLabel: SHORT_NAMES[s.symbol],
+            size: weight, changePct: s.changePct,
             sizeNote: `${weight}% of S&P`,
             title: `${s.label} (${s.symbol}) · about ${weight}% of the S&P 500 · ${pct(s.changePct)} today`,
           };

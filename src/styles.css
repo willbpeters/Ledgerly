@@ -374,7 +374,7 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 
 /* Heatmap tiles: seven steps from deep red through neutral to deep green,
    mixed from the theme's own pos/neg so both palettes stay in key. */
-.heat-tile { border-radius: 5px; padding: 7px 8px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; min-width: 0; }
+.heat-tile { border-radius: 5px; padding: 6px 8px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; gap: 1px; min-width: 0; }
 .heat-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .heat-move { font-size: 12px; }
 .heat-0  { background: var(--line-soft); color: var(--ink); }
@@ -384,7 +384,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .heat-n1 { background: color-mix(in srgb, var(--neg) 22%, var(--surface)); color: var(--ink); }
 .heat-n2 { background: color-mix(in srgb, var(--neg) 45%, var(--surface)); color: var(--ink); }
 .heat-n3 { background: color-mix(in srgb, var(--neg) 75%, var(--surface)); color: var(--surface); }
-.heat-size { font-size: 10px; opacity: .8; }
-.heat-treemap { list-style: none; margin: 0; padding: 0; position: relative; height: 260px; }
+.heat-size { font-size: 10px; opacity: .8; margin-top: auto; white-space: nowrap; }
+.heat-tile.heat-compact .heat-size { display: none; }
+.heat-treemap { list-style: none; margin: 0; padding: 0; position: relative; height: 300px; }
 .heat-treemap .heat-tile { position: absolute; box-sizing: border-box; border: 2px solid var(--surface); }
 .heat-tile.heat-tiny > * { display: none; }

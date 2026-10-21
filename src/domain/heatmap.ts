@@ -20,43 +20,50 @@ export interface TreemapRect { key: string; x: number; y: number; w: number; h: 
 
 /**
  * Tile items into a `width` × `height` box with areas proportional to value.
- * A binary split: the items, largest first, are cut into two groups of roughly
- * equal value, the box is cut along its longer side in the same proportion,
- * and each half recurses. Not the squarest layout possible, but every tile is
- * exact in area, nothing overlaps, and for a dozen holdings it reads well.
+ *
+ * Squarified (Bruls, Huizing and van Wijk): items, largest first, are laid in
+ * strips along the box's shorter side, and a strip takes another item only
+ * while that makes its worst tile squarer. Tiles stay close to square, which is
+ * what lets a label fit — an earlier halving layout cut thin slivers whose text
+ * overlapped. Every tile is exact in area and nothing overlaps.
  */
 export function treemap(items: TreemapItem[], width: number, height: number): TreemapRect[] {
   const sorted = items.filter((i) => i.value > 0).sort((a, b) => b.value - a.value);
+  const total = sorted.reduce((s, i) => s + i.value, 0);
+  if (total <= 0 || width <= 0 || height <= 0) return [];
+  const scale = (width * height) / total;
+  const areas = sorted.map((i) => ({ key: i.key, area: i.value * scale }));
+
   const out: TreemapRect[] = [];
-  layout(sorted, 0, 0, width, height, out);
+  let [x, y, w, h] = [0, 0, width, height];
+  let k = 0;
+  while (k < areas.length) {
+    const side = Math.min(w, h);
+    const row = [areas[k++]];
+    while (k < areas.length && worst([...row, areas[k]], side) <= worst(row, side)) row.push(areas[k++]);
+
+    const rowArea = row.reduce((s, r) => s + r.area, 0);
+    // The last strip takes all the space left, so float drift never leaves a gap.
+    const thickness = k === areas.length ? (w >= h ? w : h) : rowArea / side;
+    let offset = 0;
+    for (const r of row) {
+      const length = (r.area / rowArea) * side;
+      if (w >= h) out.push({ key: r.key, x, y: y + offset, w: thickness, h: length });
+      else out.push({ key: r.key, x: x + offset, y, w: length, h: thickness });
+      offset += length;
+    }
+    if (w >= h) { x += thickness; w -= thickness; } else { y += thickness; h -= thickness; }
+  }
   return out;
 }
 
-function layout(items: TreemapItem[], x: number, y: number, w: number, h: number, out: TreemapRect[]) {
-  if (items.length === 0) return;
-  if (items.length === 1) {
-    out.push({ key: items[0].key, x, y, w, h });
-    return;
-  }
-  const total = items.reduce((s, i) => s + i.value, 0);
-  // The cut that brings the first group closest to half the value.
-  let acc = 0;
-  let cut = 1;
-  let best = Infinity;
-  for (let k = 0; k < items.length - 1; k++) {
-    acc += items[k].value;
-    const miss = Math.abs(acc - total / 2);
-    if (miss < best) { best = miss; cut = k + 1; }
-  }
-  const first = items.slice(0, cut);
-  const share = first.reduce((s, i) => s + i.value, 0) / total;
-  if (w >= h) {
-    layout(first, x, y, w * share, h, out);
-    layout(items.slice(cut), x + w * share, y, w * (1 - share), h, out);
-  } else {
-    layout(first, x, y, w, h * share, out);
-    layout(items.slice(cut), x, y + h * share, w, h * (1 - share), out);
-  }
+/** The worst aspect ratio in a strip of `row` laid along a side of length `side`. */
+function worst(row: { area: number }[], side: number): number {
+  const sum = row.reduce((s, r) => s + r.area, 0);
+  const s2 = side * side;
+  let w = 0;
+  for (const r of row) w = Math.max(w, (s2 * r.area) / (sum * sum), (sum * sum) / (s2 * r.area));
+  return w;
 }
 
 /** An SVG path for a sparkline in a `width` × `height` box, high values at the top. */

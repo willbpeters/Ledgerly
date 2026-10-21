@@ -9,7 +9,10 @@ export function heatClass(changePct: number): string {
 
 export interface HeatTile {
   key: string;
+  /** The full name: the accessible name, and the tile text unless `shortLabel` is given. */
   label: string;
+  /** A shorter name to print on the tile, where space is tight. */
+  shortLabel?: string;
   /** What sets the tile's area. */
   size: number;
   changePct: number;
@@ -26,6 +29,9 @@ const BOX_H = 100;
 // Below these fractions of the box's width or height, a tile drops its text.
 const TINY_W = 0.1;
 const TINY_H = 0.22;
+// Below these, it keeps its name and move but drops the size line.
+const COMPACT_W = 0.2;
+const COMPACT_H = 0.4;
 
 /** Tiles whose area is proportional to `size`, coloured by today's move. */
 export function HeatTreemap({ tiles }: { tiles: HeatTile[] }) {
@@ -38,15 +44,18 @@ export function HeatTreemap({ tiles }: { tiles: HeatTile[] }) {
         // Too small to hold readable text: the colour still shows, and the
         // name and figures live in the hover text and the accessible name.
         const tiny = r.w / BOX_W < TINY_W || r.h / BOX_H < TINY_H;
+        // Room for a name and a move, not for the size line as well.
+        const compact = !tiny && (r.w / BOX_W < COMPACT_W || r.h / BOX_H < COMPACT_H);
         return (
-          <li key={r.key} className={`heat-tile ${heatClass(t.changePct)}${tiny ? " heat-tiny" : ""}`}
+          <li key={r.key}
+            className={`heat-tile ${heatClass(t.changePct)}${tiny ? " heat-tiny" : compact ? " heat-compact" : ""}`}
             aria-label={`${t.label} ${pct(t.changePct)}`}
             title={t.title}
             style={{
               left: `${(r.x / BOX_W) * 100}%`, top: `${(r.y / BOX_H) * 100}%`,
               width: `${(r.w / BOX_W) * 100}%`, height: `${(r.h / BOX_H) * 100}%`,
             }}>
-            <span className="heat-name">{t.label}</span>
+            <span className="heat-name">{t.shortLabel ?? t.label}</span>
             <span className="heat-move n">{pct(t.changePct)}</span>
             <span className="heat-size">{t.sizeNote}</span>
           </li>
