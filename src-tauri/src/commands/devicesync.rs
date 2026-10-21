@@ -61,7 +61,8 @@ pub async fn device_sync_start_first(app: tauri::AppHandle, folder: String) -> R
         let state = app.state::<DeviceSyncState>();
         let db = app.state::<Db>();
         let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        pair::start_first(&conn, &state.app_dir, &PathBuf::from(folder)).map(|_| ())
+        let folder = pair::folder_for_start(&PathBuf::from(folder));
+        pair::start_first(&conn, &state.app_dir, &folder).map(|_| ())
     })
     .await
 }
@@ -75,7 +76,8 @@ pub async fn device_sync_join(app: tauri::AppHandle, folder: String) -> Result<(
         let backups = worker.state::<BackupState>();
         let db = worker.state::<Db>();
         let mut conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        let safety = pair::join(&conn, &backups.paths, &PathBuf::from(folder), backup::now())?;
+        let folder = pair::folder_for_join(&PathBuf::from(folder));
+        let safety = pair::join(&conn, &backups.paths, &folder, backup::now())?;
         backups.record(&safety);
         // Let go of finance.sqlite so the restarted app can replace it.
         *conn = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;

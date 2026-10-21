@@ -27,9 +27,10 @@ export function DeviceSyncPanel(p: DeviceSyncPanelProps) {
     return (
       <Card title="Sync between computers" subtitle="Keep your budgets, categories and edits the same on your PC and laptop.">
         <p className="muted">
-          Both computers need the same shared folder, such as one in Google Drive. Use a new, empty folder that
-          your other computer hasn't started sync in. Start on the computer whose data you want to keep, then
-          Join on the other. Joining replaces that computer's Ledgerly data with a copy (backed up first).
+          Both computers need a place they can both see, such as My Drive in Google Drive. Start on the
+          computer whose data you want to keep and pick that place: Ledgerly makes a "Ledgerly Sync" folder
+          there. Then Join on the other computer and pick the same place. Joining replaces that computer's
+          Ledgerly data with a copy (backed up first).
         </p>
         <div className="row center" style={{ gap: 8, marginTop: 12 }}>
           <Button onClick={p.onStartFirst} loading={busy}>Start with this computer…</Button>

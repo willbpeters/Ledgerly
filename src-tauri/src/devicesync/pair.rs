@@ -7,7 +7,41 @@ use super::{files, meta};
 use crate::backup::{restore, Attempt, Paths};
 use chrono::NaiveDateTime;
 use rusqlite::Connection;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// The folder Start creates inside the place the owner picks.
+pub const FOLDER_NAME: &str = "Ledgerly Sync";
+
+/// Where Start puts the sync data when the owner picks `chosen`: a
+/// "Ledgerly Sync" folder inside it, so picking "My Drive" doesn't scatter
+/// files across the Drive. Picking a "Ledgerly Sync" folder itself uses it
+/// as it is, rather than nesting a second one.
+pub fn folder_for_start(chosen: &Path) -> PathBuf {
+    if is_sync_folder_name(chosen) {
+        chosen.to_path_buf()
+    } else {
+        chosen.join(FOLDER_NAME)
+    }
+}
+
+/// Where Join looks when the owner picks `chosen`: the folder itself if it
+/// holds the copy, else its "Ledgerly Sync" folder, so the same place can be
+/// picked on both computers. Neither holding a copy gives `chosen` back, and
+/// `join` explains what to do.
+pub fn folder_for_join(chosen: &Path) -> PathBuf {
+    let inside = chosen.join(FOLDER_NAME);
+    if !files::seed_path(chosen).exists() && files::seed_path(&inside).exists() {
+        inside
+    } else {
+        chosen.to_path_buf()
+    }
+}
+
+fn is_sync_folder_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case(FOLDER_NAME))
+}
 
 /// Make this computer the first: start recording, put a copy of this database
 /// in `folder` for the other computer to join from, and remember the folder.
@@ -131,6 +165,36 @@ mod tests {
         let paths = Paths::new(dir.path());
         let conn = db::open(&paths.db()).unwrap();
         Computer { _dir: dir, paths, conn }
+    }
+
+    #[test]
+    fn start_makes_a_ledgerly_sync_folder_inside_the_chosen_place() {
+        let drive = tempfile::tempdir().unwrap();
+        assert_eq!(folder_for_start(drive.path()), drive.path().join("Ledgerly Sync"));
+        let pc = computer();
+        let folder = folder_for_start(drive.path());
+        start_first(&pc.conn, &pc.paths.app_dir, &folder).unwrap();
+        assert!(files::seed_path(&drive.path().join("Ledgerly Sync")).exists());
+    }
+
+    #[test]
+    fn choosing_the_ledgerly_sync_folder_itself_does_not_nest_another() {
+        let drive = tempfile::tempdir().unwrap();
+        let picked = drive.path().join("ledgerly sync");
+        assert_eq!(folder_for_start(&picked), picked);
+    }
+
+    #[test]
+    fn join_finds_the_copy_in_the_place_or_its_ledgerly_sync_folder() {
+        let drive = tempfile::tempdir().unwrap();
+        let pc = computer();
+        let folder = folder_for_start(drive.path());
+        start_first(&pc.conn, &pc.paths.app_dir, &folder).unwrap();
+
+        assert_eq!(folder_for_join(drive.path()), folder, "picking My Drive finds Ledgerly Sync");
+        assert_eq!(folder_for_join(&folder), folder, "picking Ledgerly Sync itself works too");
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(folder_for_join(empty.path()), empty.path(), "nothing there: join explains");
     }
 
     #[test]
