@@ -104,6 +104,14 @@ budgeting and spending module.
   (`1 / Σwᵢ²`), which is how many equally-sized holdings the portfolio
   actually behaves like. Maths is pure in `src/domain/risk.ts`. The card
   describes and never advises; see the spec for the phases still to come.
+- **Drawdown** card on Holdings: the worst peak-to-trough fall of today's
+  holdings over the stored two years (with dates and whether it recovered), and
+  how far below their high they sit now, in percent and dollars. Buy-and-hold
+  of today's shares, cash left out, built on the same aligned series as Market
+  exposure, so it shares that card's calendar and exclusions. Maths is pure in
+  `src/domain/drawdown.ts`.
+- **Holdings' per-account cards** open and close from their header; closed
+  account ids persist in localStorage (`ledgerly.holdings.collapsed.v1`).
 - **Price history**: `prices_backfill` stores **two years of daily closes**
   per security (`HISTORY_RANGE`), run once when `prices_history_depth` shows
   the database has fewer than `MIN_HISTORY_DAYS` (200). This is the

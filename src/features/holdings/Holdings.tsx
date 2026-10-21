@@ -9,6 +9,8 @@ import { useRiskSeries } from "../../data/useRiskSeries";
 import { marketExposure } from "../../domain/risk";
 import { RiskCard } from "./RiskCard";
 import { AccountHoldingsCard } from "./AccountHoldingsCard";
+import { DrawdownCard } from "./DrawdownCard";
+import { drawdown } from "../../domain/drawdown";
 import { MarketExposureCard, exposureInputs } from "./MarketExposureCard";
 import type { Holding } from "../../domain/types";
 
@@ -114,6 +116,7 @@ export function Holdings() {
       ))}
 
       <RiskCard holdings={holdings} cash={summary.cash} />
+      <DrawdownCard drawdown={drawdown(aligned)} isLoading={riskLoading} />
       <MarketExposureCard exposure={marketExposure(exposureInputs(aligned, summary))} isLoading={riskLoading} />
     </>
   );
