@@ -203,6 +203,16 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .value-tab-sub { font-size: 11px; color: var(--mut); }
 @media (max-width: 900px) { .value-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
+/* A card that opens and closes from its header (Holdings' per-account cards). */
+.collapse-head {
+  width: 100%; background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.collapse-head.closed { margin-bottom: 0; }
+.collapse-chevron { color: var(--mut); font-size: 13px; transition: transform .15s; }
+.collapse-head.closed .collapse-chevron { transform: rotate(-90deg); }
+.collapse-head:hover .collapse-chevron { color: var(--ink); }
+
 /* The Dashboard's accounts card. */
 .acct-group + .acct-group { margin-top: 12px; }
 .acct-group-head { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }

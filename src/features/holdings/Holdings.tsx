@@ -8,6 +8,7 @@ import { DataTable, type Column } from "../../ui/DataTable";
 import { useRiskSeries } from "../../data/useRiskSeries";
 import { marketExposure } from "../../domain/risk";
 import { RiskCard } from "./RiskCard";
+import { AccountHoldingsCard } from "./AccountHoldingsCard";
 import { MarketExposureCard, exposureInputs } from "./MarketExposureCard";
 import type { Holding } from "../../domain/types";
 
@@ -106,10 +107,10 @@ export function Holdings() {
       </Card>
 
       {accountsWithHoldings.length > 1 && accountsWithHoldings.map((b) => (
-        <Card key={b.account.id} title={b.account.name}
+        <AccountHoldingsCard key={b.account.id} accountId={b.account.id} title={b.account.name}
           subtitle={`${money(b.holdingsValue)} in holdings${b.cash ? ` · ${money(b.cash)} cash` : ""}`}>
           <DataTable columns={cols} rows={toRows(b.holdings, b.holdingsValue)} getKey={(r) => r.security_id} />
-        </Card>
+        </AccountHoldingsCard>
       ))}
 
       <RiskCard holdings={holdings} cash={summary.cash} />
