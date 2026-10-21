@@ -224,7 +224,7 @@ pub struct IndexQuote {
     pub group: String,
     pub latest: f64,
     pub previous: f64,
-    /// Up to the last five closes, oldest first, for the sparkline.
+    /// Up to the last `indices::SPARK_POINTS` closes, oldest first, for the sparkline.
     pub recent: Vec<f64>,
 }
 
@@ -248,11 +248,12 @@ pub fn upsert_index_closes(
 pub fn list_index_quotes(conn: &Connection) -> rusqlite::Result<Vec<IndexQuote>> {
     let mut out = Vec::new();
     let mut stmt = conn.prepare(
-        "SELECT close FROM index_quotes WHERE symbol=?1 ORDER BY date DESC LIMIT 5")?;
+        "SELECT close FROM index_quotes WHERE symbol=?1 ORDER BY date DESC LIMIT ?2")?;
+    let points = crate::market::indices::SPARK_POINTS as i64;
     for b in crate::market::indices::INDICES {
         // Newest first from the query; the sparkline wants oldest first.
         let mut closes: Vec<f64> = stmt
-            .query_map([b.symbol], |r| r.get(0))?
+            .query_map(params![b.symbol, points], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<f64>>>()?;
         if closes.len() < 2 {
             continue;
@@ -336,13 +337,19 @@ mod tests {
     }
 
     #[test]
-    fn index_quotes_carry_the_last_five_closes_oldest_first() {
+    fn index_quotes_carry_a_month_of_closes_oldest_first() {
         let conn = db::open_in_memory().unwrap();
+        // Forty days stored (as the benchmark's two-year backfill leaves far
+        // more); only the last month comes back for the sparkline.
         let closes: Vec<(String, f64)> =
-            (1..=7).map(|d| (format!("2026-09-0{d}"), 100.0 + d as f64)).collect();
+            (1..=40).map(|d| (format!("2026-08-{d:02}"), 100.0 + d as f64)).collect();
         upsert_index_closes(&conn, "^VIX", &closes).unwrap();
         let rows = list_index_quotes(&conn).unwrap();
-        assert_eq!(rows[0].recent, vec![103.0, 104.0, 105.0, 106.0, 107.0]);
+        let n = crate::market::indices::SPARK_POINTS;
+        let expected: Vec<f64> = (41 - n..=40).map(|d| 100.0 + d as f64).collect();
+        assert_eq!(rows[0].recent, expected);
+        assert_eq!(rows[0].latest, 140.0);
+        assert_eq!(rows[0].previous, 139.0);
         assert_eq!(rows[0].group, "volatility");
     }
 

@@ -52,6 +52,13 @@ pub const INDICES: &[BoardSymbol] = &[
 /// Yahoo's spark endpoint refuses more than 20 symbols per request.
 pub const SPARK_BATCH: usize = 20;
 
+/// How much each board refresh asks for: a month of daily closes (about 22),
+/// enough for a sparkline worth drawing, in the same single request as five days.
+pub const BOARD_RANGE: &str = "1mo";
+
+/// How many recent closes a quote carries for its sparkline: a month's worth.
+pub const SPARK_POINTS: usize = 23;
+
 /// The benchmark every risk figure is measured against. It is one of the
 /// `INDICES` above, so the ordinary board refresh keeps it current and only the
 /// initial two-year backfill is extra work.
@@ -64,13 +71,13 @@ pub fn history_url(symbol: &str) -> String {
 }
 
 /// Two years of daily closes for one index, oldest first. Run once, not on a
-/// timer: the board refresh stays a 5-day window.
+/// timer: the board refresh stays a one-month window.
 pub fn fetch_history(symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
     let body = crate::http::client()?.get(history_url(symbol)).send()?.text()?;
     Ok(crate::prices::yahoo::parse_chart_json(&body))
 }
 
-/// The batch URL for up to `SPARK_BATCH` symbols, five days of daily closes.
+/// The batch URL for up to `SPARK_BATCH` symbols, a month of daily closes.
 /// `^` and `=` are percent-encoded by hand: they are legal in a query string,
 /// and leaving them to the HTTP client's judgement is how a symbol goes missing.
 pub fn spark_url(symbols: &[&str]) -> String {
@@ -80,8 +87,7 @@ pub fn spark_url(symbols: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "https://query1.finance.yahoo.com/v7/finance/spark?symbols={list}&range={}&interval=1d",
-        crate::prices::yahoo::RECENT_RANGE,
+        "https://query1.finance.yahoo.com/v7/finance/spark?symbols={list}&range={BOARD_RANGE}&interval=1d",
     )
 }
 
@@ -112,7 +118,6 @@ pub fn fetch_board(symbols: &[&str]) -> anyhow::Result<Vec<(String, Vec<(String,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prices::yahoo::RECENT_RANGE;
 
     /// Hits the network. Run with:
     /// `cargo test --lib live_board -- --ignored --nocapture`
@@ -153,10 +158,10 @@ mod tests {
     }
 
     #[test]
-    fn the_spark_url_encodes_symbols_and_asks_for_five_daily_closes() {
+    fn the_spark_url_encodes_symbols_and_asks_for_a_month_of_daily_closes() {
         let url = spark_url(&["^gspc", "2YY=F", "XLK"]);
         assert!(url.contains("symbols=%5EGSPC,2YY%3DF,XLK&"), "{url}");
-        assert!(url.contains("range=5d"), "{url}");
+        assert!(url.contains("range=1mo"), "{url}");
         assert!(url.contains("interval=1d"), "{url}");
         assert!(url.starts_with("https://query1.finance.yahoo.com/v7/finance/spark?"), "{url}");
     }
@@ -186,6 +191,6 @@ mod tests {
     #[test]
     fn history_is_requested_over_two_years_and_the_board_is_not() {
         assert!(history_url(BENCHMARK).contains("range=2y"), "{}", history_url(BENCHMARK));
-        assert_eq!(RECENT_RANGE, "5d", "the board refresh must not rewrite two years of rows");
+        assert_eq!(BOARD_RANGE, "1mo", "the board refresh must not rewrite two years of rows");
     }
 }
