@@ -10,6 +10,12 @@ describe("format helpers", () => {
     expect(pct(12.34)).toBe("+12.3%");
     expect(pct(-3)).toBe("-3.0%");
   });
+  it("pct never shows a signed zero", () => {
+    expect(pct(-0.004)).toBe("0.0%");
+    expect(pct(0.03)).toBe("0.0%");
+    expect(pct(0)).toBe("0.0%");
+    expect(pct(-0.05)).toBe("-0.1%");
+  });
   it("fmtDate passes through ISO date", () => {
     expect(fmtDate("2026-01-02")).toBe("2026-01-02");
   });

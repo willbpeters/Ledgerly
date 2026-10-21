@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { TodayBoard } from "./TodayBoard";
 import { SectorHeatmap, SECTOR_WEIGHTS } from "./SectorHeatmap";
 import { HoldingsHeatmap } from "./HoldingsHeatmap";
-import type { IndexRow } from "../../domain/market";
+import type { IndexRow, TodayMove } from "../../domain/market";
 import type { BoardGroup } from "../../domain/types";
 
 const row = (symbol: string, label: string, group: BoardGroup, latest: number, previous: number): IndexRow => ({
@@ -11,6 +11,8 @@ const row = (symbol: string, label: string, group: BoardGroup, latest: number, p
   changePct: ((latest - previous) / previous) * 100,
   changeBp: (latest - previous) * 100,
 });
+
+const all = (pct: number): TodayMove => ({ scope: "all", pct, pendingShare: 0, pricedLabel: "Your investments" });
 
 const board = [
   row("^GSPC", "S&P 500", "index", 7766.93, 7712.2),
@@ -21,14 +23,14 @@ const board = [
 
 describe("TodayBoard", () => {
   it("shows a tile per symbol with its level", () => {
-    render(<TodayBoard rows={board} you={0.42} />);
+    render(<TodayBoard rows={board} you={all(0.42)} />);
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(screen.getByText("7,766.93")).toBeInTheDocument();
     expect(screen.getByText("Russell 2000")).toBeInTheDocument();
   });
 
   it("colours index moves but not the VIX or yields", () => {
-    render(<TodayBoard rows={board} you={0.42} />);
+    render(<TodayBoard rows={board} you={all(0.42)} />);
     expect(screen.getByText("+0.7%")).toHaveClass("pos");
     expect(screen.getByText("-0.6%")).toHaveClass("neg");
     const vix = within(screen.getByRole("listitem", { name: "VIX" }));
@@ -36,14 +38,14 @@ describe("TodayBoard", () => {
   });
 
   it("shows a yield as a percent level with its move in basis points", () => {
-    render(<TodayBoard rows={board} you={0.42} />);
+    render(<TodayBoard rows={board} you={all(0.42)} />);
     const tnx = within(screen.getByRole("listitem", { name: "10-yr yield" }));
     expect(tnx.getByText("5.11%")).toBeInTheDocument();
     expect(tnx.getByText("-2 bp")).not.toHaveClass("neg");
   });
 
   it("says how your investments moved today", () => {
-    render(<TodayBoard rows={board} you={0.42} />);
+    render(<TodayBoard rows={board} you={all(0.42)} />);
     expect(screen.getByText(/Your investments/)).toHaveTextContent("Your investments +0.4% today");
   });
 
@@ -52,15 +54,25 @@ describe("TodayBoard", () => {
       { ...board[0], recent: [7000, 7400, 7766.93] },
       { ...board[1], recent: [2900, 2850, 2789.45] },
       { ...board[2], recent: [12, 20, 16.69] },
-    ]} you={0} />);
+    ]} you={all(0)} />);
     const spark = (name: string) => screen.getByRole("listitem", { name }).querySelector("svg.sparkline");
     expect(spark("S&P 500")).toHaveClass("up");
     expect(spark("Russell 2000")).toHaveClass("down");
     expect(spark("VIX")).toHaveClass("flat");
   });
 
+  it("says what has priced so far while the mutual funds wait for the close", () => {
+    render(<TodayBoard rows={board} you={{ scope: "priced", pct: 0.4, pendingShare: 0.97, pricedLabel: "Your stocks" }} />);
+    expect(screen.getByText(/Your stocks/)).toHaveTextContent("Your stocks +0.4% today · mutual funds (97% of your investments) price after the close");
+  });
+
+  it("says when nothing has priced yet today", () => {
+    render(<TodayBoard rows={board} you={{ scope: "pending", pct: null, pendingShare: 1, pricedLabel: "" }} />);
+    expect(screen.getByText(/mutual funds price after the close/)).toBeInTheDocument();
+  });
+
   it("asks for a refresh when nothing has been fetched", () => {
-    render(<TodayBoard rows={[]} you={0} />);
+    render(<TodayBoard rows={[]} you={all(0)} />);
     expect(screen.getByText("No market data yet")).toBeInTheDocument();
   });
 });

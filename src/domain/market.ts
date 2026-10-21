@@ -18,8 +18,63 @@ export interface MarketRow {
   dayChangePct: number;
   tracks: string | null;
   news: NewsItem[];
+  /** Yahoo's quote type (EQUITY, ETF, MUTUALFUND), or null before a profile is fetched. */
+  quoteType: string | null;
   nextEarnings?: EarningsEvent;
   lastEarnings?: ReportedEarnings;
+}
+
+/** How "your investments" moved today, and over how much of them. */
+export interface TodayMove {
+  /** `all`: the whole portfolio. `priced`: only what has a price for today. `pending`: nothing has yet. */
+  scope: "all" | "priced" | "pending";
+  pct: number | null;
+  /** Share of holdings' value, 0..1, still waiting for today's price. */
+  pendingShare: number;
+  /** What the priced part is called, for the `priced` scope. */
+  pricedLabel: string;
+}
+
+// A move this small on a mutual fund is not a move: it is yesterday's NAV
+// standing in for a today that has not been published yet.
+const UNPRICED_PCT = 0.005;
+
+function isWeekdayInNewYork(now: Date): boolean {
+  const day = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" })).getDay();
+  return day !== 0 && day !== 6;
+}
+
+/**
+ * Today's move for the Markets header, honest about mutual funds.
+ *
+ * A mutual fund prices once a day, after the close. Until then the latest
+ * stored price for it is yesterday's NAV (SimpleFIN re-dates it to today), so
+ * its move reads 0% and a portfolio mostly in mutual funds shows +0.0% on a day
+ * the market is up. So on a weekday, mutual funds with no move are treated as
+ * not yet priced: the figure covers what has priced, and says how much is
+ * waiting. Once they move — or at the weekend — it is the whole portfolio's
+ * figure, the same one the Dashboard shows.
+ */
+export function todayMove(rows: MarketRow[], allPct: number, now: Date): TodayMove {
+  const waiting = isWeekdayInNewYork(now)
+    ? rows.filter((r) => r.quoteType === "MUTUALFUND" && Math.abs(r.dayChangePct) < UNPRICED_PCT)
+    : [];
+  const all: TodayMove = { scope: "all", pct: allPct, pendingShare: 0, pricedLabel: "Your investments" };
+  if (waiting.length === 0) return all;
+
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  const priced = rows.filter((r) => !waiting.includes(r) && r.value > 0);
+  const pricedValue = priced.reduce((s, r) => s + r.value, 0);
+  const pendingShare = total > 0 ? (total - pricedValue) / total : 0;
+  if (pricedValue <= 0) return { scope: "pending", pct: null, pendingShare, pricedLabel: "" };
+
+  const hasEtf = priced.some((r) => r.quoteType === "ETF");
+  return {
+    scope: "priced",
+    pct: priced.reduce((s, r) => s + r.value * r.dayChangePct, 0) / pricedValue,
+    pendingShare,
+    pricedLabel: hasEtf ? "Your stocks and ETFs" : "Your stocks",
+  };
 }
 
 export interface IndexRow {
@@ -98,6 +153,7 @@ export function buildMarketView(i: MarketInputs): MarketView {
       dayChangePct: i.dayChange.get(s.id) ?? 0,
       tracks: p?.tracks ?? null,
       news: newsOf.get(s.id) ?? [],
+      quoteType: p?.quote_type ?? null,
       nextEarnings: ahead[0],
       lastEarnings: last && {
         ...last,
