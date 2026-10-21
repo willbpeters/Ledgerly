@@ -47,6 +47,18 @@ describe("TodayBoard", () => {
     expect(screen.getByText(/Your investments/)).toHaveTextContent("Your investments +0.4% today");
   });
 
+  it("colours an index sparkline by its month and leaves the VIX and yields grey", () => {
+    render(<TodayBoard rows={[
+      { ...board[0], recent: [7000, 7400, 7766.93] },
+      { ...board[1], recent: [2900, 2850, 2789.45] },
+      { ...board[2], recent: [12, 20, 16.69] },
+    ]} you={0} />);
+    const spark = (name: string) => screen.getByRole("listitem", { name }).querySelector("svg.sparkline");
+    expect(spark("S&P 500")).toHaveClass("up");
+    expect(spark("Russell 2000")).toHaveClass("down");
+    expect(spark("VIX")).toHaveClass("flat");
+  });
+
   it("asks for a refresh when nothing has been fetched", () => {
     render(<TodayBoard rows={[]} you={0} />);
     expect(screen.getByText("No market data yet")).toBeInTheDocument();
@@ -100,7 +112,7 @@ describe("SectorHeatmap", () => {
 });
 
 describe("HoldingsHeatmap", () => {
-  it("draws one tile per holding, sized by value", () => {
+  it("draws one tile per stock, sized by value", () => {
     render(<HoldingsHeatmap holdings={[
       { ticker: "SWLGX", value: 3000, changePct: 1.2 },
       { ticker: "AAPL", value: 1000, changePct: -1.9 },
@@ -116,8 +128,21 @@ describe("HoldingsHeatmap", () => {
     expect(small).toHaveTextContent("25%");
   });
 
-  it("says so when nothing is held", () => {
+  it("says so when no individual stocks are held", () => {
     render(<HoldingsHeatmap holdings={[]} />);
-    expect(screen.getByText("No holdings yet")).toBeInTheDocument();
+    expect(screen.getByText("No individual stocks held")).toBeInTheDocument();
+  });
+});
+
+describe("HeatTreemap", () => {
+  it("keeps text off tiles too small to read, but still names them", () => {
+    render(<HoldingsHeatmap holdings={[
+      { ticker: "BIG", value: 980, changePct: 0.5 },
+      { ticker: "TINY", value: 20, changePct: -0.5 },
+    ]} />);
+    const tiny = screen.getByRole("listitem", { name: "TINY -0.5%" });
+    expect(tiny).toHaveClass("heat-tiny");
+    expect(tiny).toHaveAttribute("title", expect.stringContaining("TINY"));
+    expect(screen.getByRole("listitem", { name: "BIG +0.5%" })).not.toHaveClass("heat-tiny");
   });
 });

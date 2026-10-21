@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { heatLevel, treemap, sparkPath } from "./heatmap";
+import { heatLevel, treemap, sparkPath, sparkArea, trend } from "./heatmap";
 
 describe("heatLevel", () => {
   it("calls a tiny move flat", () => {
@@ -71,5 +71,24 @@ describe("sparkPath", () => {
 
   it("draws nothing for fewer than two points", () => {
     expect(sparkPath([5], 60, 20)).toBe("");
+  });
+});
+
+describe("sparkArea", () => {
+  it("closes the line down to the bottom edge, for a fill under it", () => {
+    expect(sparkArea([1, 3, 2], 60, 20)).toBe("M0 20 L30 0 L60 10 L60 20 L0 20 Z");
+  });
+
+  it("draws nothing for fewer than two points", () => {
+    expect(sparkArea([5], 60, 20)).toBe("");
+  });
+});
+
+describe("trend", () => {
+  it("reads the direction from first close to last", () => {
+    expect(trend([100, 90, 105])).toBe("up");
+    expect(trend([100, 110, 95])).toBe("down");
+    expect(trend([100, 120, 100])).toBe("flat");
+    expect(trend([100])).toBe("flat");
   });
 });

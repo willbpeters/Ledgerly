@@ -91,7 +91,7 @@ export function Markets() {
 
       <div className="grid grid-2">
         <SectorHeatmap sectors={view.sectors} />
-        <HoldingsHeatmap holdings={[...view.companies, ...view.funds].map((r) => (
+        <HoldingsHeatmap holdings={view.companies.map((r) => (
           { ticker: r.ticker, value: r.value, changePct: r.dayChangePct }
         ))} />
       </div>

@@ -30,9 +30,10 @@ budgeting and spending module.
 - **Markets**: a screen answering "what happened to what I own?" and "is this
   me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
   Russell 2000, International via VXUS, VIX, 10- and 5-year yields; level,
-  move and a 5-day sparkline; VIX and yields uncoloured, yields in basis
+  move and a one-month sparkline; VIX and yields uncoloured, yields in basis
   points) with your own day change in its header; an **S&P sector heatmap** (the
-  eleven SPDR sector funds) and a **holdings heatmap** (a treemap sized by value)
+  eleven SPDR sector funds, sized by approximate S&P weight from `SECTOR_WEIGHTS`)
+  and a **stocks heatmap** (individual stocks only, sized by value)
   coloured by today's move; held companies with their day move and latest headlines, biggest
   mover first; held index funds with what they track; and an earnings strip for
   the next 14 days with beat/miss on quarters just reported. Everything renders

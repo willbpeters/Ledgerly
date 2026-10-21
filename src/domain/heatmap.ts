@@ -73,3 +73,16 @@ export function sparkPath(values: number[], width: number, height: number): stri
     })
     .join(" ");
 }
+
+/** The sparkline's line closed down to the bottom edge, for a soft fill beneath it. */
+export function sparkArea(values: number[], width: number, height: number): string {
+  const line = sparkPath(values, width, height);
+  return line ? `${line} L${width} ${height} L0 ${height} Z` : "";
+}
+
+/** Which way a run of closes went, first to last. */
+export function trend(values: number[]): "up" | "down" | "flat" {
+  if (values.length < 2) return "flat";
+  const [first, last] = [values[0], values[values.length - 1]];
+  return last > first ? "up" : last < first ? "down" : "flat";
+}

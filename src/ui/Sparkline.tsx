@@ -1,12 +1,23 @@
-import { sparkPath } from "../domain/heatmap";
+import { sparkArea, sparkPath } from "../domain/heatmap";
 
-/** A few closes as a small line, no axes. Decorative: the figures beside it say the numbers. */
-export function Sparkline({ values, width = 64, height = 18 }: { values: number[]; width?: number; height?: number }) {
-  const d = sparkPath(values, width, height);
-  if (!d) return null;
+// Drawn in a fixed box and stretched to the space it is given; the stroke
+// keeps its width however far the box is stretched.
+const W = 100;
+const H = 32;
+
+/**
+ * Recent closes as a line with a soft fill beneath it. `tone` colours it
+ * (`up`, `down`, or `flat` for grey). Decorative: the figures beside it carry
+ * the numbers.
+ */
+export function Sparkline({ values, tone = "flat" }: { values: number[]; tone?: "up" | "down" | "flat" }) {
+  const line = sparkPath(values, W, H);
+  if (!line) return null;
   return (
-    <svg className="sparkline" width={width} height={height + 2} viewBox={`0 -1 ${width} ${height + 2}`} aria-hidden="true">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    <svg className={`sparkline ${tone}`} viewBox={`0 -2 ${W} ${H + 4}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={sparkArea(values, W, H)} fill="currentColor" fillOpacity={0.13} stroke="none" />
+      <path d={line} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinejoin="round"
+        strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

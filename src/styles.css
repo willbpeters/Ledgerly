@@ -363,11 +363,14 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 /* The Today board: a full-width grid of market tiles. */
 .board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.board-tile { background: var(--line-soft); border-radius: 9px; padding: 10px 12px; display: grid; gap: 3px; }
-.board-level { font-size: 19px; font-weight: 600; }
-.board-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.board-change { font-size: 12px; font-weight: 600; }
-.sparkline { display: block; }
+.board-tile { background: var(--line-soft); border-radius: 9px; padding: 10px 12px 8px; display: grid; gap: 6px; }
+.board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.board-level { font-size: 19px; font-weight: 600; margin-top: 2px; }
+.board-change { font-size: 12px; font-weight: 600; padding-top: 2px; white-space: nowrap; }
+/* The month's closes, full tile width; colour from the month's direction. */
+.sparkline { display: block; width: 100%; height: 40px; color: var(--mut); }
+.sparkline.up { color: var(--pos); }
+.sparkline.down { color: var(--neg); }
 
 /* Heatmap tiles: seven steps from deep red through neutral to deep green,
    mixed from the theme's own pos/neg so both palettes stay in key. */
@@ -384,3 +387,4 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .heat-size { font-size: 10px; opacity: .8; }
 .heat-treemap { list-style: none; margin: 0; padding: 0; position: relative; height: 260px; }
 .heat-treemap .heat-tile { position: absolute; box-sizing: border-box; border: 2px solid var(--surface); }
+.heat-tile.heat-tiny > * { display: none; }

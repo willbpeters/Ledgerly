@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { pct } from "../../ui/format";
 import { Card, EmptyState } from "../../ui/components";
 import { Sparkline } from "../../ui/Sparkline";
+import { trend } from "../../domain/heatmap";
 import type { IndexRow } from "../../domain/market";
 
 function level(r: IndexRow): string {
@@ -43,12 +44,17 @@ export function TodayBoard({ rows, you, actions, footer }:
         <ul className="board">
           {rows.map((r) => (
             <li key={r.symbol} className="board-tile" aria-label={r.label}>
-              <div className="cell-secondary">{r.label}</div>
-              <div className="board-level n">{level(r)}</div>
-              <div className="board-foot">
+              <div className="board-head">
+                <div>
+                  <div className="cell-secondary">{r.label}</div>
+                  <div className="board-level n">{level(r)}</div>
+                </div>
                 <Change r={r} />
-                <span className="muted"><Sparkline values={r.recent} /></span>
               </div>
+              {/* Coloured by the month's direction for what you would own;
+                  the VIX and yields stay grey for the same reason their moves do. */}
+              <Sparkline values={r.recent}
+                tone={r.group === "index" || r.group === "sector" ? trend(r.recent) : "flat"} />
             </li>
           ))}
         </ul>

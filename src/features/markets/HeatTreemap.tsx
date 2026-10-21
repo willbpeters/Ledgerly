@@ -23,6 +23,9 @@ export interface HeatTile {
 // can be any width; this only decides which way the first cuts run.
 const BOX_W = 200;
 const BOX_H = 100;
+// Below these fractions of the box's width or height, a tile drops its text.
+const TINY_W = 0.1;
+const TINY_H = 0.22;
 
 /** Tiles whose area is proportional to `size`, coloured by today's move. */
 export function HeatTreemap({ tiles }: { tiles: HeatTile[] }) {
@@ -32,8 +35,12 @@ export function HeatTreemap({ tiles }: { tiles: HeatTile[] }) {
     <ul className="heat-treemap">
       {rects.map((r) => {
         const t = byKey.get(r.key)!;
+        // Too small to hold readable text: the colour still shows, and the
+        // name and figures live in the hover text and the accessible name.
+        const tiny = r.w / BOX_W < TINY_W || r.h / BOX_H < TINY_H;
         return (
-          <li key={r.key} className={`heat-tile ${heatClass(t.changePct)}`} aria-label={`${t.label} ${pct(t.changePct)}`}
+          <li key={r.key} className={`heat-tile ${heatClass(t.changePct)}${tiny ? " heat-tiny" : ""}`}
+            aria-label={`${t.label} ${pct(t.changePct)}`}
             title={t.title}
             style={{
               left: `${(r.x / BOX_W) * 100}%`, top: `${(r.y / BOX_H) * 100}%`,
