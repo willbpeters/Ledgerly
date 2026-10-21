@@ -191,10 +191,23 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .stat-value { font-size: 20px; font-weight: 600; }
 .stat-hint { font-size: 11px; color: var(--mut); }
 
-.headline { display: flex; align-items: flex-end; gap: 36px; flex-wrap: wrap; }
-.headline-figure { display: grid; gap: 2px; }
-.headline-side { padding-bottom: 7px; }
-.headline-side .n { font-size: 17px; font-weight: 600; margin-top: 5px; }
+/* The Dashboard's value tabs: each is a headline figure and picks the chart's line. */
+.value-tabs { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 18px; margin-bottom: 14px; }
+.value-tabs button {
+  background: none; border: 0; border-bottom: 2px solid var(--line); padding: 2px 0 10px; text-align: left;
+  font: inherit; color: var(--ink); cursor: pointer; display: grid; gap: 5px; align-content: end;
+}
+.value-tabs button:hover { border-bottom-color: var(--line-2); }
+.value-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); }
+.value-tab-figure { font-size: 19px; font-weight: 600; }
+.value-tab-sub { font-size: 11px; color: var(--mut); }
+@media (max-width: 900px) { .value-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* The Dashboard's accounts card. */
+.acct-group + .acct-group { margin-top: 12px; }
+.acct-group-head { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.acct-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+.acct-row:last-child { border-bottom: 0; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
