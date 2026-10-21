@@ -6,6 +6,7 @@ import type {
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
+  DeviceSyncReport, DeviceSyncStatus,
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
@@ -81,6 +82,16 @@ export const api = {
     restore: (path: string) => invoke<void>("backup_restore", { path }),
     exportCsv: (folder: string) => invoke<string>("export_csv", { folder }),
     reveal: (path: string) => invoke<void>("reveal_path", { path }),
+  },
+  deviceSync: {
+    status: () => invoke<DeviceSyncStatus>("device_sync_status"),
+    startFirst: (folder: string) => invoke<void>("device_sync_start_first", { folder }),
+    /** Restarts the app on success, so the promise only ever settles with an error. */
+    join: (folder: string) => invoke<void>("device_sync_join", { folder }),
+    /** `null` when sync is off. */
+    now: () => invoke<DeviceSyncReport | null>("device_sync_now"),
+    /** A warning when sync is off but the last edits couldn't be sent, else `null`. */
+    stop: () => invoke<string | null>("device_sync_stop"),
   },
   categories: {
     list: () => invoke<Category[]>("categories_list"),

@@ -159,3 +159,33 @@ export interface BackupStatus {
   extra_folder: string | null;
   backups_folder: string;
 }
+
+/** One device-sync round, as `device_sync_now` reports it. */
+export interface DeviceSyncReport {
+  at: string;
+  pushed: number;
+  applied: number;
+  waiting: number;
+  skipped: number;
+  newer_files: number;
+}
+
+export interface PairedComputer {
+  id: string;
+  name: string;
+  /** Local time, `2026-10-16T09:30:12`. */
+  last_sync: string;
+}
+
+export interface DeviceSyncStatus {
+  enabled: boolean;
+  folder: string | null;
+  this_computer: string;
+  others: PairedComputer[];
+  /** Edits from the other computer waiting for their transaction to arrive here. */
+  waiting: number;
+  /** Edits made here not yet written to the folder. */
+  unsent: number;
+  last: DeviceSyncReport | null;
+  last_error: string | null;
+}

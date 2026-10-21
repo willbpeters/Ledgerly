@@ -22,6 +22,7 @@ export const keys = {
   indexDepth: ["market", "indexDepth"] as const,
   backupStatus: ["backup", "status"] as const,
   backupList: ["backup", "list"] as const,
+  deviceSync: ["deviceSync"] as const,
 };
 
 export const useAccounts = () => useQuery({ queryKey: keys.accounts, queryFn: api.accounts.list });
@@ -311,6 +312,41 @@ export function useRestoreBackup() {
 /** Read-only, so nothing to invalidate. */
 export function useExportCsv() {
   return useMutation({ mutationFn: (folder: string) => api.backup.exportCsv(folder) });
+}
+
+export const useDeviceSyncStatus = () => useQuery({ queryKey: keys.deviceSync, queryFn: api.deviceSync.status });
+
+/** A round that applied the other computer's edits can change any screen, so
+ *  everything is refetched; otherwise only the card's status. */
+export function useDeviceSyncNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deviceSync.now(),
+    onSettled: (report) => {
+      if (report && report.applied > 0) qc.invalidateQueries();
+      else qc.invalidateQueries({ queryKey: keys.deviceSync });
+    },
+  });
+}
+
+export function useStartDeviceSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (folder: string) => api.deviceSync.startFirst(folder),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.deviceSync }),
+  });
+}
+
+export function useJoinDeviceSync() {
+  return useMutation({ mutationFn: (folder: string) => api.deviceSync.join(folder) });
+}
+
+export function useStopDeviceSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deviceSync.stop(),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.deviceSync }),
+  });
 }
 
 /** A dry run: changes nothing, so nothing to invalidate. */
