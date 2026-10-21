@@ -53,11 +53,19 @@ export function useSimplefinConnect() {
     onSettled: () => invalidateAfterSync(qc),
   });
 }
+/** Edits from the other computer may have been waiting for the transactions a
+ *  bank sync just brought, so run a device-sync round straight after one. */
+function deviceSyncAfterBankSync(qc: ReturnType<typeof useQueryClient>) {
+  api.deviceSync.now()
+    .then((r) => { if (r && r.applied > 0) qc.invalidateQueries(); })
+    .catch(() => {});
+}
+
 export function useSimplefinSync() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.simplefin.sync(),
-    onSuccess: writeLastSync,
+    onSuccess: (report) => { writeLastSync(report); deviceSyncAfterBankSync(qc); },
     onSettled: () => invalidateAfterSync(qc),
   });
 }
@@ -237,7 +245,7 @@ export function useSimplefinBackfill() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (days: number) => api.simplefin.backfill(days),
-    onSuccess: writeLastSync,
+    onSuccess: (report) => { writeLastSync(report); deviceSyncAfterBankSync(qc); },
     onSettled: () => { invalidateAfterSync(qc); qc.invalidateQueries({ queryKey: ["bankTxns"] }); },
   });
 }
