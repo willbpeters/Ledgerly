@@ -5,7 +5,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { usePortfolio } from "../../data/usePortfolio";
 import { useSecurities } from "../../data/queries";
 import { useValueSeries, HISTORY_DAYS } from "../../data/useValueSeries";
-import { money, pct, fmtDate } from "../../ui/format";
+import { money, pct, fmtDate, shareCount } from "../../ui/format";
 import { Card, EmptyState, Segmented } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { useChartColors } from "../../ui/chartColors";
@@ -113,7 +113,7 @@ export function Dashboard() {
         </span>
       ),
     },
-    { key: "shares", label: "Shares", render: (r) => r.shares },
+    { key: "shares", label: "Shares", render: (r) => shareCount(r.shares) },
     { key: "last", label: "Last", render: (r) => (r.lastPrice ? money(r.lastPrice) : "—") },
     { key: "value", label: "Value", render: (r) => <span className="cell-primary">{money(r.marketValue)}</span> },
     {

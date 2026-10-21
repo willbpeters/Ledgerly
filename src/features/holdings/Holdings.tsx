@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { usePortfolio } from "../../data/usePortfolio";
 import { useSecurities } from "../../data/queries";
-import { money, pct } from "../../ui/format";
+import { money, pct, shareCount } from "../../ui/format";
 import { PageHeader, Card, Button, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import type { Holding } from "../../domain/types";
@@ -12,7 +12,7 @@ interface Row extends Holding { weight: number | null; name: string | null; }
 const COLS: Column<Row>[] = [
   { key: "ticker", label: "Ticker", align: "left", render: (r) => (
       <div><div className="cell-primary">{r.ticker}</div>{r.name && <div className="cell-secondary">{r.name}</div>}</div>) },
-  { key: "shares", label: "Shares", render: (r) => r.shares },
+  { key: "shares", label: "Shares", render: (r) => shareCount(r.shares) },
   { key: "avgCost", label: "Avg cost", render: (r) => money(r.avgCost) },
   { key: "costBasis", label: "Cost", render: (r) => money(r.costBasis) },
   { key: "lastPrice", label: "Last", render: (r) => (r.lastPrice ? money(r.lastPrice) : "—") },
