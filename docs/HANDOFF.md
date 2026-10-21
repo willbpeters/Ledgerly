@@ -28,8 +28,12 @@ budgeting and spending module.
 
 ### What's built
 - **Markets**: a screen answering "what happened to what I own?" and "is this
-  me or the whole market?". A strip of S&P/Nasdaq/Dow beside your own day
-  change; held companies with their day move and latest headlines, biggest
+  me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
+  Russell 2000, International via VXUS, VIX, 10- and 5-year yields; level,
+  move and a 5-day sparkline; VIX and yields uncoloured, yields in basis
+  points) with your own day change in its header; an **S&P sector heatmap** (the
+  eleven SPDR sector funds) and a **holdings heatmap** (a treemap sized by value)
+  coloured by today's move; held companies with their day move and latest headlines, biggest
   mover first; held index funds with what they track; and an earnings strip for
   the next 14 days with beat/miss on quarters just reported. Everything renders
   from a SQLite cache, so the screen never blocks on the network and works
@@ -315,7 +319,11 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   `refresh_all` refetches profiles weekly and earnings daily, gated on stored
   `updated_at` stamps; only news runs every poll. Removing those gates turns
   roughly 6 requests per poll into roughly 27. This is the same budget that
-  cost the project Stooq — see the note above about `MARKET_HOURS_MS`.
+  cost the project Stooq — see the note above about `MARKET_HOURS_MS`. The
+  whole market board (19 symbols) is **one** request per poll via Yahoo's
+  batch spark endpoint (`indices::spark_url`, max 20 symbols a request): add a
+  symbol past 20 and it becomes two, which `the_board_fits_in_one_request`
+  will flag. Spec: `docs/superpowers/specs/2026-10-21-markets-board-design.md`
 - **v5 adds the Markets tables** (`news_items`, `earnings_events`,
   `security_profile`, `index_quotes`). Every statement is `IF NOT EXISTS` and
   the completeness check is `v5_is_complete`.

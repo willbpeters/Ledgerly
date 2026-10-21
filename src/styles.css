@@ -359,3 +359,29 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .market-row-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .market-row-head .cell-secondary:last-child { margin-left: auto; }
 .market-day { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+
+/* The Today board: a full-width grid of market tiles. */
+.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.board-tile { background: var(--line-soft); border-radius: 9px; padding: 10px 12px; display: grid; gap: 3px; }
+.board-level { font-size: 19px; font-weight: 600; }
+.board-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.board-change { font-size: 12px; font-weight: 600; }
+.sparkline { display: block; }
+
+/* Heatmap tiles: seven steps from deep red through neutral to deep green,
+   mixed from the theme's own pos/neg so both palettes stay in key. */
+.heat-tile { border-radius: 5px; padding: 7px 8px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; min-width: 0; }
+.heat-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.heat-move { font-size: 12px; }
+.heat-0  { background: var(--line-soft); color: var(--ink); }
+.heat-p1 { background: color-mix(in srgb, var(--pos) 22%, var(--surface)); color: var(--ink); }
+.heat-p2 { background: color-mix(in srgb, var(--pos) 45%, var(--surface)); color: var(--ink); }
+.heat-p3 { background: color-mix(in srgb, var(--pos) 75%, var(--surface)); color: var(--surface); }
+.heat-n1 { background: color-mix(in srgb, var(--neg) 22%, var(--surface)); color: var(--ink); }
+.heat-n2 { background: color-mix(in srgb, var(--neg) 45%, var(--surface)); color: var(--ink); }
+.heat-n3 { background: color-mix(in srgb, var(--neg) 75%, var(--surface)); color: var(--surface); }
+.sector-heat { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.sector-heat .heat-tile { min-height: 58px; }
+.holdings-heat { list-style: none; margin: 0; padding: 0; position: relative; height: 252px; }
+.holdings-heat .heat-tile { position: absolute; box-sizing: border-box; border: 2px solid var(--surface); }
