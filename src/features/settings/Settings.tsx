@@ -6,6 +6,7 @@ import { ThemeToggle } from "../../ui/ThemeToggle";
 import { SimplefinCard } from "./SimplefinCard";
 import { CategoriesCard } from "./CategoriesCard";
 import { BackupCard } from "./BackupCard";
+import { DeviceSyncCard } from "./DeviceSyncCard";
 import { CopilotImportCard } from "./CopilotImportCard";
 
 export function Settings() {
@@ -43,6 +44,7 @@ export function Settings() {
       <CategoriesCard />
 
       <BackupCard />
+      <DeviceSyncCard />
 
       <Card title="About">
         <div className="grid" style={{ gap: 4, fontSize: 13 }}>
