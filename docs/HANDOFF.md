@@ -86,14 +86,20 @@ budgeting and spending module.
   (file → column mapping → preview → commit). Picking a **synced** account
   instead lists that account's **bank transactions** (date, description,
   category, amount), read-only, because those live in a different table.
-- **Holdings**: overall table, a **per-account breakdown** below it, and a **⚙
-  column picker** (persisted to localStorage).
-- **Dashboard**: a serif net-worth figure with today, all-time, invested, cash
-  and owed beside it — today and all time measure the **investments only**, and
-  say so in their captions; a value-over-time area chart with a Net worth /
-  Investments toggle and a 1M/3M range picker, whose Y axis zooms to the data
-  rather than anchoring at zero; and a positions table.
-- **Risk (Phase 1)**: a **Concentration** card on the dashboard — largest
+- **Holdings**: overall table, a **per-account breakdown** below it, a **⚙
+  column picker** (persisted to localStorage), and the Concentration and Market
+  exposure cards at the bottom.
+- **Dashboard** (an overview since 2026-10-21): a big value chart whose four
+  tabs are the headline figures — **Net worth** (serif), **Investments**,
+  **Cash**, **Liabilities** — each picking the line plotted, with a 1M/3M range
+  picker; today and all time sit under the Investments tab because they measure
+  the **investments only**. Below it, an **Accounts** card (visible accounts
+  grouped Brokerage / Cash / Credit cards, with group totals) and **Last 7
+  days** (bank transactions and manual investment transactions, merged, newest
+  first, read-only). The Y axis zooms to the data rather than anchoring at
+  zero, and goes below zero when the line does. Spec:
+  `docs/superpowers/specs/2026-10-21-dashboard-overview-design.md`.
+- **Risk (Phase 1)**: a **Concentration** card on the Holdings page — largest
   holding, top-5 combined, cash share, and **effective positions**
   (`1 / Σwᵢ²`), which is how many equally-sized holdings the portfolio
   actually behaves like. Maths is pure in `src/domain/risk.ts`. The card
@@ -308,9 +314,9 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Today and All time on the Dashboard describe the investments, not net
   worth.** `dayChangePct` divides by `priorInvested`, never by net worth —
   dividing by net worth lets a cash balance shrink the percentage, so a 2% day
-  reads as 1% purely because the owner keeps savings beside the portfolio. The
-  captions say `(investments)` for the same reason: the figures sit beside a
-  net-worth hero while measuring something narrower. `reconstructSeries`
+  reads as 1% purely because the owner keeps savings beside the portfolio. They
+  sit under the Investments tab for the same reason: they measure something
+  narrower than the net-worth hero beside them. `reconstructSeries`
   carries `invested` beside `value` so the chart can plot holdings alone; a
   deposit must move `value` and leave `invested` flat, which `history.test.ts`
   pins with concrete figures rather than by comparing two days to each other —
@@ -320,6 +326,14 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   investments line is not: a caveat that outlives its mode is a false
   statement, not a stale one. Spec:
   `docs/superpowers/specs/2026-09-11-dashboard-investment-figures-design.md`
+- **The chart's Cash and Liabilities lines** come from the same reconstruction:
+  each point also carries `cash` (every non-credit account, brokerage cash
+  included) and `liabilities` (credit accounts, kept **positive** so the line
+  rises with the debt). `value = invested + cash − liabilities` on every point,
+  pinned in `history.test.ts`. The tab figures still read the summary, where
+  liabilities are negative. The Accounts card groups by account type, so its
+  Brokerage total includes brokerage cash and does not equal the Investments tab;
+  the labels name account types for that reason.
 
 - **Smart App Control must stay OFF** on this machine. It was blocking execution
   of self-compiled unsigned binaries (every Rust build). This is required for
