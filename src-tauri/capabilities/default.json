@@ -8,6 +8,8 @@
     "opener:default",
     "dialog:allow-open",
     "dialog:allow-confirm",
-    "dialog:allow-message"
+    "dialog:allow-message",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

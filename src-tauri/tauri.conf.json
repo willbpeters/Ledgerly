@@ -32,6 +32,16 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4Q0M1NEE3ODIxMjdGNTgKUldSWWZ4S0NwMVRNS0JXcnZPc0RIeUpXTFZLaWZJVnZ2bEtNN1kzM1MyVzQ1QUQ0OVFpVGdVcWMK",
+      "endpoints": ["https://github.com/willbpeters/Ledgerly/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

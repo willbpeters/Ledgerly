@@ -31,6 +31,8 @@ chrono = { version = "0.4", features = ["clock"] }
 keyring = { version = "3", features = ["windows-native"] }
 base64 = "0.22"
 percent-encoding = "2"
+tauri-plugin-updater = "2.14.0"
+tauri-plugin-process = "2.4.0"
 
 
 [dev-dependencies]
