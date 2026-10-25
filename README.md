@@ -4,12 +4,11 @@
 investments and your everyday spending into one desktop app, and keeps all of
 it on your own computer. There are no accounts, no cloud and no subscription.
 
-[![Latest release](https://img.shields.io/github/v/release/willbpeters/Ledgerly?label=release)](https://github.com/willbpeters/Ledgerly/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/willbpeters/Tally?label=release)](https://github.com/willbpeters/Tally/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-informational)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)
 
-> Tally was called **Ledgerly** until version 0.1.3. The repository keeps its
-> original name.
+> Tally was called **Ledgerly** until version 0.1.3.
 
 ---
 
@@ -75,7 +74,7 @@ it on your own computer. There are no accounts, no cloud and no subscription.
 
 ## Install
 
-1. Open the [latest release](https://github.com/willbpeters/Ledgerly/releases/latest).
+1. Open the [latest release](https://github.com/willbpeters/Tally/releases/latest).
 2. Under **Assets**, download `Tally_<version>_x64-setup.exe` and run it.
 3. Windows may show **"Windows protected your PC"**, because the installer
    isn't signed with a paid certificate. Click **More info → Run anyway**.
@@ -121,8 +120,8 @@ disconnect existing installs from their data.
 ### Getting started
 
 ```bash
-git clone https://github.com/willbpeters/Ledgerly.git
-cd Ledgerly
+git clone https://github.com/willbpeters/Tally.git
+cd Tally
 npm install
 npm run tauri dev
 ```

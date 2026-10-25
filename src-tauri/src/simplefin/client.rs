@@ -10,7 +10,7 @@ const BAD_STORED: &str =
 
 fn http() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent("Tally/0.1 (Windows; +https://github.com/willbpeters/Ledgerly)")
+        .user_agent("Tally/0.1 (Windows; +https://github.com/willbpeters/Tally)")
         .timeout(Duration::from_secs(45))
         .build()
         .map_err(|e| e.to_string())

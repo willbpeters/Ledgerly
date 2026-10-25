@@ -1,7 +1,7 @@
 # Tally — Handoff & Next Steps
 
 **Last updated:** 2026-10-24
-**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (public: the updater reads its Releases without signing in), branch `master`
+**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Tally` (public: the updater reads its Releases without signing in), branch `master`
 
 **Renamed from Ledgerly to Tally on 2026-10-24** (0.1.3). Only what the owner
 sees changed. These still say "ledgerly" on purpose, because renaming them would
@@ -9,7 +9,11 @@ lose data or settings: the identifier `com.ledgerly.app` (the `%APPDATA%` data
 folder and the updater's identity), the Windows Credential Manager service
 `Ledgerly` (the saved SimpleFIN URL), the `ledgerly.*` localStorage keys, the
 `ledgerly-` backup file prefix, the Rust crate and binary `ledgerly`, the
-`LEDGERLY_DB` test variable, and the GitHub repo. The installer hook
+`LEDGERLY_DB` test variable, and this local folder (moving it forces a full
+Rust rebuild). The GitHub repo was renamed to `willbpeters/Tally`; GitHub
+redirects the old `willbpeters/Ledgerly` address, which copies from before
+0.1.3 still use to find updates, so **never create a new repo named
+`Ledgerly`** on this account. The installer hook
 `src-tauri/windows/hooks.nsh` removes an old Ledgerly install (program,
 shortcuts, Installed apps entry) after Tally installs, because the installer
 files apps under their display name and would otherwise leave both.

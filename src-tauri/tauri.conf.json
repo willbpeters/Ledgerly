@@ -44,7 +44,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4Q0M1NEE3ODIxMjdGNTgKUldSWWZ4S0NwMVRNS0JXcnZPc0RIeUpXTFZLaWZJVnZ2bEtNN1kzM1MyVzQ1QUQ0OVFpVGdVcWMK",
       "endpoints": [
-        "https://github.com/willbpeters/Ledgerly/releases/latest/download/latest.json"
+        "https://github.com/willbpeters/Tally/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
