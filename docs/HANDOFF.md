@@ -1,7 +1,7 @@
 # Ledgerly — Handoff & Next Steps
 
-**Last updated:** 2026-10-14
-**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (private), branch `master`
+**Last updated:** 2026-10-24
+**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (public: the updater reads its Releases without signing in), branch `master`
 
 ## What this project is
 
@@ -23,8 +23,9 @@ budgeting and spending module.
 - **Tests:** 296 TypeScript (Vitest) + 284 Rust (`cargo test`), plus 10 tests marked
   `#[ignore]` that touch the network, the OS credential store or the owner's
   real files — all passing as of 2026-10-15. Run the live ones with `cargo test --lib live_ -- --ignored`.
-- **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
-  under `src-tauri/target/release/bundle/`.
+- **Build:** releases are built on GitHub by the Release button (see
+  [Releasing](#releasing)). A local `npm run tauri build` still makes an
+  unsigned `-setup.exe` + `.msi` under `src-tauri/target/release/bundle/`.
 
 ### What's built
 - **Markets**: a screen answering "what happened to what I own?" and "is this
@@ -365,8 +366,9 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   20-holding portfolio made ~240 requests a minute, which invites a 429 and a
   repeat of the Stooq problem. Do not shorten `MARKET_HOURS_MS` without batching
   the fetches first.
-- **The `.exe` is a frozen snapshot.** Code changes do not appear until you run
-  `npm run tauri build` again. Use `npm run tauri dev` for live iteration.
+- **The installed app is a frozen snapshot.** Code changes reach it only through
+  a release. Use `npm run tauri dev` (the "Ledgerly (test)" shortcut) for live
+  iteration. Both use the same database, so don't run them at the same time.
 - **Windows PowerShell 5.1 does not support `&&`** for chaining commands — run
   commands on separate lines or join with `;`.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
@@ -525,6 +527,34 @@ G. **Dividends in returns** — dividends add cash but count toward no gain
   is dropped rather than carried forward — a repeated close reads as a 0% day,
   which flattens volatility and drags beta toward zero. `src/domain/returns.ts`
   explains the second at the point it is enforced.
+
+## Releasing
+
+Spec: `docs/superpowers/specs/2026-10-24-auto-update-design.md`.
+
+- **To release:** GitHub → Actions → **Release** → Run workflow → type a version
+  higher than the last (three numbers, e.g. `0.2.0`). About 15 minutes later a
+  Release appears; installed copies show "Version 0.2.0 is ready" on their next
+  launch (`src/app/UpdateBanner.tsx`). Pushing to `master` alone changes nothing
+  for the installed app.
+- **What the workflow does** (`.github/workflows/release.yml`): refuses a version
+  whose tag exists, runs `npm test`, writes the version into all five files with
+  `scripts/set-version.mjs`, builds a **draft** release with `tauri-action`
+  (config `src-tauri/tauri.release.conf.json`: NSIS only, updater artifacts),
+  then commits `chore(release): vX.Y.Z` to `master`, tags it and publishes. Pull
+  after a release: the bot's version commit is on GitHub, not your laptop.
+- **A failed run** leaves at most a draft release. Delete the draft on the
+  Releases page and run again with the same version.
+- **Signing key:** `%USERPROFILE%\.tauri\ledgerly.key` (no password), stored in
+  the repo secret `TAURI_SIGNING_PRIVATE_KEY`; its public half is
+  `plugins.updater.pubkey` in `tauri.conf.json`. **Keep a backup of the key
+  file.** If it is lost, installed copies reject every future update: make a
+  new key, replace the pubkey and secret, and reinstall once by hand.
+- **First install** from the Release page shows SmartScreen's "Windows protected
+  your PC" (no paid certificate): More info → Run anyway. It installs for the
+  current user (no admin prompt); updates install with a progress bar only.
+- **Keep the updater packages on their crates' major.minor** like the others
+  (`@tauri-apps/plugin-updater` ↔ `tauri-plugin-updater`, same for `process`).
 
 ## Commands
 
