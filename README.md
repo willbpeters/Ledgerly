@@ -1,3 +1,5 @@
+<img src="app-icon.svg" alt="Tally logo" width="96" height="96">
+
 # Tally
 
 **A private, local-first personal finance app for Windows.** Tally brings your
