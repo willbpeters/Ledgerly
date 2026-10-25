@@ -4,7 +4,7 @@
        npx tauri icon app-icon.svg -->
   <rect width="1024" height="1024" rx="228" fill="#3A3E44"/>
   <g fill="none" stroke="#FFC629" stroke-width="112">
-    <path d="M596 196 L520 640 Q496 790 644 778 Q690 774 716 760"/>
-    <path d="M300 482 L744 360" stroke-linecap="round"/>
+    <path d="M596 196 L530 690 Q522 772 604 772 L708 772"/>
+    <path d="M300 482 L744 360"/>
   </g>
 </svg>
