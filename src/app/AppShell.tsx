@@ -4,6 +4,7 @@ import { IconRail } from "./IconRail";
 import { CommandBar } from "./CommandBar";
 import { InsightRail } from "./InsightRail";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
+import { UpdateBanner } from "./UpdateBanner";
 
 const KEY = "ledgerly.insightRail";
 
@@ -29,6 +30,7 @@ export function AppShell() {
         <CommandBar onToggleInsight={toggle} />
         <main className="workspace">
           <div className="page">
+            <UpdateBanner />
             {/* Per-screen, so one broken screen still leaves the rails usable. */}
             <ErrorBoundary><Outlet /></ErrorBoundary>
           </div>

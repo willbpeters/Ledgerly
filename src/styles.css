@@ -327,6 +327,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .notice.neg { background: var(--neg-soft); color: var(--neg); }
 .notice.pos { background: var(--pos-soft); color: var(--pos); }
 .notice.info { background: var(--accent-soft); color: var(--accent); }
+.update-banner { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.update-banner-text { flex: 1; }
 
 .feed-row { display: flex; gap: 11px; align-items: center; }
 .feed-icon { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; }
