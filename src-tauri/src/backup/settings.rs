@@ -34,7 +34,7 @@ mod tests {
     #[test]
     fn settings_survive_a_save_and_load() {
         let (_dir, paths) = crate::backup::test_paths();
-        let s = BackupSettings { extra_folder: Some(r"E:\Ledgerly backups".into()) };
+        let s = BackupSettings { extra_folder: Some(r"E:\Tally backups".into()) };
         save(&paths.settings(), &s).unwrap();
         assert_eq!(load(&paths.settings()), s);
     }

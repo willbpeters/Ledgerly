@@ -1,6 +1,6 @@
 # Actions → Release → Run workflow, with a version like 0.2.0.
 # Builds the Windows installer, signs the update, and publishes a GitHub Release
-# that installed copies of Ledgerly offer on their next launch.
+# that installed copies of Tally offer on their next launch.
 name: Release
 
 on:
@@ -59,8 +59,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v${{ inputs.version }}
-          releaseName: Ledgerly v${{ inputs.version }}
-          releaseBody: "Install Ledgerly_${{ inputs.version }}_x64-setup.exe below. Already installed? Ledgerly offers this update when it opens."
+          releaseName: Tally v${{ inputs.version }}
+          releaseBody: "Install Tally_${{ inputs.version }}_x64-setup.exe below. Already installed? Tally offers this update when it opens."
           releaseDraft: true
           args: --config src-tauri/tauri.release.conf.json
 

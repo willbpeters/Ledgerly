@@ -385,7 +385,7 @@ pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan, remove: &[i64
 
     for m in &plan.matches {
         let category = match &m.category { Some(n) => category_named(&tx, n)?, None => None };
-        // A category the owner already chose in Ledgerly wins.
+        // A category the owner already chose in Tally wins.
         tx.execute(
             "UPDATE bank_transactions SET category_id=?1, category_source='manual', reviewed=1
              WHERE id=?2 AND category_source='auto'",

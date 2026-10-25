@@ -48,7 +48,7 @@ export function CategoriesCard() {
 
   return (
     <>
-      <Card title="Categories" subtitle="Used to sort your spending. Rename or recolour any of them, including the ones Ledgerly ships with.">
+      <Card title="Categories" subtitle="Used to sort your spending. Rename or recolour any of them, including the ones Tally ships with.">
         <div style={{ display: "grid", gap: 2 }}>
           {categories.map((c) => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 4px" }}>

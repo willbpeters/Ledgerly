@@ -30,7 +30,7 @@ export function BackupPanel(p: BackupPanelProps) {
   const warning = status.last_attempt?.warning;
 
   return (
-    <Card title="Backups" subtitle="Copies of your data, made automatically each day you open Ledgerly.">
+    <Card title="Backups" subtitle="Copies of your data, made automatically each day you open Tally.">
       {status.restore_error && <p className="neg" role="alert">Restore didn't happen: {status.restore_error}</p>}
       {failure && <p className="neg" role="alert">Last backup failed: {failure}</p>}
       {warning && <p className="muted">{warning}</p>}
@@ -55,7 +55,7 @@ export function BackupPanel(p: BackupPanelProps) {
 
       <div style={{ marginTop: 16 }}>
         {backups.length === 0 ? (
-          <EmptyState title="No backups yet" body="One is made the next time Ledgerly opens, or now with Back up now." />
+          <EmptyState title="No backups yet" body="One is made the next time Tally opens, or now with Back up now." />
         ) : (
           <DataTable
             rows={backups}

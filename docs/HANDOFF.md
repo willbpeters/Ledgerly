@@ -1,7 +1,18 @@
-# Ledgerly — Handoff & Next Steps
+# Tally — Handoff & Next Steps
 
 **Last updated:** 2026-10-24
 **Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (public: the updater reads its Releases without signing in), branch `master`
+
+**Renamed from Ledgerly to Tally on 2026-10-24** (0.1.3). Only what the owner
+sees changed. These still say "ledgerly" on purpose, because renaming them would
+lose data or settings: the identifier `com.ledgerly.app` (the `%APPDATA%` data
+folder and the updater's identity), the Windows Credential Manager service
+`Ledgerly` (the saved SimpleFIN URL), the `ledgerly.*` localStorage keys, the
+`ledgerly-` backup file prefix, the Rust crate and binary `ledgerly`, the
+`LEDGERLY_DB` test variable, and the GitHub repo. The installer hook
+`src-tauri/windows/hooks.nsh` removes an old Ledgerly install (program,
+shortcuts, Installed apps entry) after Tally installs, because the installer
+files apps under their display name and would otherwise leave both.
 
 ## What this project is
 
@@ -69,7 +80,7 @@ budgeting and spending module.
   **"Copilot history"** account for accounts Copilot no longer has; creates
   the owner's Copilot categories (Golf, Car, Date night…; Investments as a
   transfer kind); learns payee rules (2+ uses, 90% one category, never for
-  Apple Pay / Venmo / Zelle). It also lists Ledgerly rows Copilot does not have
+  Apple Pay / Venmo / Zelle). It also lists Tally rows Copilot does not have
   (deleted there after being paid back) with checkboxes to remove them. A
   backup is taken first; it all lands in one transaction; re-running is safe.
   Pure planner in `budget/copilot.rs`. Spec:
@@ -367,7 +378,7 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   repeat of the Stooq problem. Do not shorten `MARKET_HOURS_MS` without batching
   the fetches first.
 - **The installed app is a frozen snapshot.** Code changes reach it only through
-  a release. Use `npm run tauri dev` (the "Ledgerly (test)" shortcut) for live
+  a release. Use `npm run tauri dev` (the "Tally (test)" shortcut) for live
   iteration. Both use the same database, so don't run them at the same time.
 - **Windows PowerShell 5.1 does not support `&&`** for chaining commands — run
   commands on separate lines or join with `;`.
@@ -429,7 +440,7 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   `https://demo:demo@beta-bridge.simplefin.org/simplefin`. The demo has three
   cash accounts and no holdings, so holdings parsing is covered by fixtures.
 - **The SimpleFIN access URL lives in Windows Credential Manager** under service
-  `Ledgerly`, key `simplefin_access_url` — never in SQLite. Deleting the database
+  `Ledgerly` (kept through the rename), key `simplefin_access_url` — never in SQLite. Deleting the database
   does **not** disconnect SimpleFIN; use Disconnect in Settings.
 - **Charts read CSS variables**, so the theme must be applied before they first
   render. `theme.tsx` sets `data-theme` at module load for exactly this reason —
@@ -558,7 +569,7 @@ Spec: `docs/superpowers/specs/2026-10-24-auto-update-design.md`.
 
 ## Commands
 
-The easiest start is the **"Ledgerly (test)" shortcut on the Desktop**, which
+The easiest start is the **"Tally (test)" shortcut on the Desktop**, which
 runs `scripts/start-ledgerly.cmd`: it puts Rust on the PATH, then runs
 `npm run tauri dev` from the project folder. Closing its console window closes
 the app. The first start after code or dependency changes takes a minute

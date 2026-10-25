@@ -93,12 +93,12 @@ export interface CopilotPlan {
   matches: { txn_id: number; category: string | null; note: string | null }[];
   additions: { external_id: string; posted: string; amount: number; name: string; category: string | null }[];
   skipped: { date: string; name: string; amount: number; account: string }[];
-  /** Ledgerly rows Copilot does not have: usually deleted there after being paid back. */
+  /** Tally rows Copilot does not have: usually deleted there after being paid back. */
   not_in_copilot: { txn_id: number; date: string; name: string; amount: number; account: string }[];
   pending_or_excluded: number;
   new_categories: { name: string; kind: string }[];
   rules: { pattern: string; category: string }[];
-  /** Copilot account → the Ledgerly account it maps to. */
+  /** Copilot account → the Tally account it maps to. */
   accounts: [string, string][];
 }
 export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }

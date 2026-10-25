@@ -12,7 +12,7 @@ export function askToConfirm(
   message: string,
   options: { okLabel?: string; cancelLabel?: string } = {},
 ): Promise<boolean> {
-  return confirm(message, { title: "Ledgerly", kind: "warning", ...options });
+  return confirm(message, { title: "Tally", kind: "warning", ...options });
 }
 
 export type RemoveAnswer = "remove" | "remove-always" | "cancel";
@@ -21,7 +21,7 @@ export type RemoveAnswer = "remove" | "remove-always" | "cancel";
  *  again" saves a click every time after; Undo is the safety net instead. */
 export async function askToRemove(): Promise<RemoveAnswer> {
   const choice = await message("Remove this transaction from spending?", {
-    title: "Ledgerly",
+    title: "Tally",
     kind: "info",
     buttons: { yes: "Remove", no: "Remove, don't ask again", cancel: "Cancel" },
   });

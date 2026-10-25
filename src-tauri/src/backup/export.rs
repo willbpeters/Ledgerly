@@ -107,9 +107,9 @@ pub fn query_to_csv(conn: &Connection, sql: &str) -> rusqlite::Result<String> {
     Ok(out)
 }
 
-/// `Ledgerly export 2026-10-14`, or `… (2)` if that exists already.
+/// `Tally export 2026-10-14`, or `… (2)` if that exists already.
 fn folder_for(base: &Path, day: NaiveDate) -> PathBuf {
-    let stem = format!("Ledgerly export {}", day.format("%Y-%m-%d"));
+    let stem = format!("Tally export {}", day.format("%Y-%m-%d"));
     (1..)
         .map(|n| if n == 1 { base.join(&stem) } else { base.join(format!("{stem} ({n})")) })
         .find(|p| !p.exists())
@@ -183,7 +183,7 @@ mod tests {
 
         let folder = export_all(&conn, out.path(), day()).unwrap();
 
-        assert!(folder.ends_with("Ledgerly export 2026-10-14"));
+        assert!(folder.ends_with("Tally export 2026-10-14"));
         for (file, _) in EXPORTS {
             assert!(folder.join(file).exists(), "{file} missing");
         }
@@ -200,6 +200,6 @@ mod tests {
         let out = tempfile::tempdir().unwrap();
         export_all(&conn, out.path(), day()).unwrap();
         let second = export_all(&conn, out.path(), day()).unwrap();
-        assert!(second.ends_with("Ledgerly export 2026-10-14 (2)"));
+        assert!(second.ends_with("Tally export 2026-10-14 (2)"));
     }
 }

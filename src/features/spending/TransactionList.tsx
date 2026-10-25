@@ -7,7 +7,7 @@ import type { Account, BankTransaction, Category } from "../../domain/types";
 
 /**
  * The month's transactions with an inline category picker. Changing a category
- * marks that row as chosen by hand, and can teach Ledgerly to do the same for
+ * marks that row as chosen by hand, and can teach Tally to do the same for
  * everything else from that payee.
  */
 export function TransactionList({ transactions, categories, accounts, colourOf, onApprove, onRemove, onRestore }: {

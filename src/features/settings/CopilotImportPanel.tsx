@@ -13,7 +13,7 @@ export interface CopilotImportPanelProps {
   removeIds: Set<number>;
   onToggleRemove: (id: number) => void;
   onSetAllRemove: (all: boolean) => void;
-  /** What to do with transactions Ledgerly has and Copilot doesn't. */
+  /** What to do with transactions Tally has and Copilot doesn't. */
   mode: NotInCopilotMode;
   onModeChange: (mode: NotInCopilotMode) => void;
 }
@@ -27,7 +27,7 @@ export function CopilotImportPanel({
 }: CopilotImportPanelProps) {
   return (
     <Card title="Import from Copilot"
-      subtitle="Bring your Copilot categories, notes and history into Ledgerly, once, so you can stop using Copilot.">
+      subtitle="Bring your Copilot categories, notes and history into Tally, once, so you can stop using Copilot.">
       <div className="grid" style={{ gap: 12 }}>
         {result ? (
           <div className="notice pos">
@@ -51,12 +51,12 @@ export function CopilotImportPanel({
 
         {plan && !result && (
           <div className="grid" style={{ gap: 6, fontSize: 13 }}>
-            <div><strong>{plan.matches.length} matched</strong> to transactions Ledgerly already has, which get your Copilot category</div>
-            <div><strong>{plan.additions.length} added as history</strong> from before Ledgerly's own records</div>
+            <div><strong>{plan.matches.length} matched</strong> to transactions Tally already has, which get your Copilot category</div>
+            <div><strong>{plan.additions.length} added as history</strong> from before Tally's own records</div>
             {plan.skipped.length > 0 && (
               <details>
                 <summary style={{ cursor: "pointer" }}>
-                  {plan.skipped.length} not matched (Ledgerly's own record differs), skipped
+                  {plan.skipped.length} not matched (Tally's own record differs), skipped
                 </summary>
                 <div className="grid" style={{ gap: 2, paddingTop: 6 }}>
                   {plan.skipped.map((s, i) => (

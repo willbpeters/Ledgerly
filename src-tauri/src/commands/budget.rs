@@ -240,7 +240,7 @@ pub fn budget_set(db: tauri::State<Db>, category_id: i64, month: Option<String>,
 pub fn accounts_set_type(db: tauri::State<Db>, id: i64, kind: String) -> Result<(), String> {
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     conn.execute("UPDATE accounts SET type=?1 WHERE id=?2", params![kind, id])
-        .map_err(|_| "That is not an account type Ledgerly knows.".to_string())?;
+        .map_err(|_| "That is not an account type Tally knows.".to_string())?;
     Ok(())
 }
 

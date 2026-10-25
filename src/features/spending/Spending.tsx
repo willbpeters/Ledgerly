@@ -88,7 +88,7 @@ export function Spending() {
       <Card>
         <EmptyState
           title="No spending imported yet"
-          body={<>Connect SimpleFIN in <Link to="/settings">Settings</Link> and Ledgerly will pull
+          body={<>Connect SimpleFIN in <Link to="/settings">Settings</Link> and Tally will pull
             your bank and credit-card transactions, then sort them into categories for you.</>}
         />
       </Card>
@@ -122,7 +122,7 @@ export function Spending() {
       {view === "review" ? (
         <Card
           title="To review"
-          subtitle="New transactions, and any Ledgerly couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."
+          subtitle="New transactions, and any Tally couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."
           actions={toReview.length > 0 ? (
             <Button size="sm" loading={approve.isPending}
               onClick={() => approveSome(toReview.map((t) => t.id))}>

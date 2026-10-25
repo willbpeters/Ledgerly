@@ -8,7 +8,7 @@ import { askToConfirm } from "../../ui/confirm";
 import type { SyncReport, SimplefinSample } from "../../domain/types";
 
 // SimpleFIN's public demo. Its shared *setup token* is permanently claimed and
-// answers 403 to everyone, so the demo uses the access URL, which Ledgerly
+// answers 403 to everyone, so the demo uses the access URL, which Tally
 // accepts directly. Three sample cash accounts, no holdings.
 const DEMO_ACCESS_URL = "https://demo:demo@beta-bridge.simplefin.org/simplefin";
 
@@ -73,7 +73,7 @@ export function SimplefinCard() {
   }
   async function doDisconnect() {
     const removeAccounts = await askToConfirm(
-      "Also remove the accounts SimpleFIN created in Ledgerly? Keeping them means they stay, but stop updating.",
+      "Also remove the accounts SimpleFIN created in Tally? Keeping them means they stay, but stop updating.",
       { okLabel: "Remove them", cancelLabel: "Keep them" },
     );
     setError(""); setReport(null);
@@ -195,7 +195,7 @@ export function SimplefinCard() {
       <div className="grid" style={{ gap: 14 }}>
         <ol className="steps">
           <li>Sign up at <a href={SIMPLEFIN_MY_ACCOUNT_URL} onClick={(e) => { e.preventDefault(); openSimplefin(); }}>SimpleFIN Bridge</a> (about $1.50/month).</li>
-          <li>Connect each bank or brokerage you want in Ledgerly.</li>
+          <li>Connect each bank or brokerage you want in Tally.</li>
           <li>Click <strong>New Setup Token</strong>, copy it, and paste it below. Tokens work once, so make a new one if this fails.</li>
         </ol>
         <label>

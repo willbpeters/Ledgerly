@@ -55,7 +55,7 @@ pub fn file_name(at: NaiveDateTime, kind: Kind, n: u32) -> String {
 }
 
 /// The inverse of `file_name`. Anything else in the folder parses to `None`,
-/// which is what keeps pruning away from files Ledgerly did not write.
+/// which is what keeps pruning away from files Tally did not write.
 pub fn parse(name: &str) -> Option<Parsed> {
     let body = name.strip_prefix(PREFIX)?.strip_suffix(EXT)?;
     if !body.is_ascii() || body.len() <= STAMP_LEN {

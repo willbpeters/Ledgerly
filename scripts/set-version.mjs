@@ -1,4 +1,4 @@
-// Writes one version into every file that carries Ledgerly's version.
+// Writes one version into every file that carries Tally's version.
 // Usage: node scripts/set-version.mjs 0.2.0   (the Release workflow runs this)
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,5 +47,5 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const path = root + file;
     writeFileSync(path, bump(readFileSync(path, "utf8"), version));
   }
-  console.log(`Ledgerly is now version ${version}.`);
+  console.log(`Tally is now version ${version}.`);
 }

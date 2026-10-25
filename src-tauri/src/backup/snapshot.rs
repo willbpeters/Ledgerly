@@ -35,7 +35,7 @@ pub fn names_in(dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The backups in `dir`, newest first. Files Ledgerly did not name are skipped.
+/// The backups in `dir`, newest first. Files Tally did not name are skipped.
 pub fn list(dir: &Path) -> Vec<Entry> {
     let mut found: Vec<(naming::Parsed, Entry)> = names_in(dir)
         .into_iter()

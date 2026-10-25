@@ -134,7 +134,7 @@ export function ValueCard({ summary, series: fullSeries }: { summary: PortfolioS
 
       {series.length < 2 ? (
         <EmptyState title="Not enough price history yet"
-          body="The chart is rebuilt from daily closes. Ledgerly downloads them on first launch — if you have just connected an account, give it a moment and refresh." />
+          body="The chart is rebuilt from daily closes. Tally downloads them on first launch — if you have just connected an account, give it a moment and refresh." />
       ) : (
         <ResponsiveContainer width="100%" height={380}>
           <AreaChart data={series} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>

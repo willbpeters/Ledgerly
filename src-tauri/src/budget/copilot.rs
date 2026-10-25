@@ -19,7 +19,7 @@ pub const HISTORY_ACCOUNT: &str = "Copilot history";
 pub struct CopilotRow {
     pub date: String,
     pub name: String,
-    /// Ledgerly's sign: negative is money out (Copilot's is the opposite).
+    /// Tally's sign: negative is money out (Copilot's is the opposite).
     pub amount: f64,
     pub pending: bool,
     pub category: String,
@@ -60,7 +60,7 @@ pub struct Addition {
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Skipped { pub date: String, pub name: String, pub amount: f64, pub account: String }
-/// A Ledgerly transaction Copilot does not have — usually one the owner deleted
+/// A Tally transaction Copilot does not have — usually one the owner deleted
 /// there after being paid back. Offered for removal, never removed unasked.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NotInCopilot { pub txn_id: i64, pub date: String, pub name: String, pub amount: f64, pub account: String }
@@ -79,7 +79,7 @@ pub struct Plan {
     pub pending_or_excluded: usize,
     pub new_categories: Vec<NewCategory>,
     pub rules: Vec<LearnedRule>,
-    /// Copilot account label → the Ledgerly account it maps to.
+    /// Copilot account label → the Tally account it maps to.
     pub accounts: Vec<(String, String)>,
 }
 
@@ -128,14 +128,14 @@ pub fn parse_csv(text: &str) -> Result<Vec<CopilotRow>, String> {
         .collect())
 }
 
-/// Copilot names that mean the same as one of Ledgerly's.
+/// Copilot names that mean the same as one of Tally's.
 const SAME_AS: &[(&str, &str)] = &[
     ("eating out", "Dining"), ("groceries", "Groceries"), ("shops", "Shopping"),
     ("subscriptions", "Subscriptions"), ("entertainment", "Entertainment"),
     ("travel", "Travel"), ("other", "Other"),
 ];
 
-/// The Ledgerly category name a row belongs in. An internal transfer is always
+/// The Tally category name a row belongs in. An internal transfer is always
 /// Transfer, whatever its category says.
 pub fn category_for(r: &CopilotRow) -> Option<String> {
     if r.kind == "internal transfer" {
@@ -179,7 +179,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut used: HashSet<i64> = HashSet::new();
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     let mut labels: BTreeMap<String, String> = BTreeMap::new();
-    // The dates Copilot covers for each Ledgerly account, first to last.
+    // The dates Copilot covers for each Tally account, first to last.
     let mut covers: BTreeMap<i64, (String, String)> = BTreeMap::new();
 
     for r in rows {
@@ -228,7 +228,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         });
     }
 
-    // Ledgerly rows Copilot does not have, from the first date Copilot covers
+    // Tally rows Copilot does not have, from the first date Copilot covers
     // for that account. Only the export's own newest day is left alone: Copilot
     // runs a few hours behind the bank, so a row from that day may simply not
     // have reached it yet. The newest day of the whole file, not the account's —
@@ -245,7 +245,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     }
     p.not_in_copilot.sort_by(|a, b| b.date.cmp(&a.date));
 
-    // Categories the owner used that Ledgerly does not have yet.
+    // Categories the owner used that Tally does not have yet.
     let have: HashSet<String> = snap.category_names.iter().map(|c| c.to_lowercase()).collect();
     let mut wanted: Vec<String> = p.matches.iter().map(|m| m.category.clone())
         .chain(p.additions.iter().map(|a| a.category.clone())).flatten().collect();
@@ -307,7 +307,7 @@ mod tests {
         }
     }
 
-    /// Copilot covers account 1 from 07-01 to 07-20; Ledgerly holds 10 and 11
+    /// Copilot covers account 1 from 07-01 to 07-20; Tally holds 10 and 11
     /// (matched by the two rows below) plus whatever a test adds.
     fn covered(extra: Vec<ExistingTxn>) -> (Vec<CopilotRow>, Snapshot) {
         let rows = parse_csv(&csv(&[

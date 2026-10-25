@@ -100,7 +100,7 @@ pub fn epoch_to_date(v: &Value) -> String {
 /// v2 (`errlist`, `connections`).
 pub fn parse_accounts_json(body: &str) -> Result<SfAccountSet, String> {
     let root: Value = serde_json::from_str(body)
-        .map_err(|_| "SimpleFIN sent a response Ledgerly couldn't read. Try again in a minute.".to_string())?;
+        .map_err(|_| "SimpleFIN sent a response Tally couldn't read. Try again in a minute.".to_string())?;
 
     let mut errors: Vec<String> = Vec::new();
     if let Some(arr) = root.get("errors").and_then(Value::as_array) {

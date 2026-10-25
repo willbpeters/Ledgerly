@@ -11,8 +11,8 @@ export interface AddBankSectionProps {
   updating: boolean;
 }
 
-/** Adding a bank happens on SimpleFIN's site, not in Ledgerly. This walks the
- *  owner there and back, and offers a way to hand Ledgerly a fresh token when
+/** Adding a bank happens on SimpleFIN's site, not in Tally. This walks the
+ *  owner there and back, and offers a way to hand Tally a fresh token when
  *  the existing connection does not pick the new bank up, so they never have
  *  to disconnect and start over. */
 export function AddBankSection({ onOpenSimplefin, onUpdateConnection, updating }: AddBankSectionProps) {
@@ -36,7 +36,7 @@ export function AddBankSection({ onOpenSimplefin, onUpdateConnection, updating }
           <div className="muted" style={{ fontSize: 12 }}>
             Still not showing up? On the same SimpleFIN page, under <strong>Apps</strong>, make a new setup
             token and paste it here. Your existing accounts are kept and matched up, nothing is duplicated.
-            Ledgerly backs up your data first, so you can restore it from Backups if anything looks wrong.
+            Tally backs up your data first, so you can restore it from Backups if anything looks wrong.
           </div>
           <label>
             New setup token

@@ -2,7 +2,7 @@
 //! of an `/accounts` response, and redact the money out of them.
 //!
 //! No I/O, no database. This module exists because `parse.rs` deliberately
-//! keeps only the fields Ledgerly models, dropping SimpleFIN's free-form
+//! keeps only the fields Tally models, dropping SimpleFIN's free-form
 //! `extra` object — the very thing we are trying to find. Everything here
 //! therefore works on untouched `serde_json::Value` trees.
 
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 /// every account runs dry.
 pub fn sample_transactions(body: &str, n: usize) -> Result<String, String> {
     let root: Value = serde_json::from_str(body).map_err(|_| {
-        "SimpleFIN sent a response Ledgerly couldn't read. Try again in a minute.".to_string()
+        "SimpleFIN sent a response Tally couldn't read. Try again in a minute.".to_string()
     })?;
 
     let mut out: Vec<Value> = Vec::new();
