@@ -73,7 +73,7 @@ function describeTxn(t: Transaction, tickerOf: Map<number, string>): string {
 
 /**
  * Bank and manual investment transactions in the window, across visible
- * accounts, newest first. Investment rows carry their cash effect, so a buy
+ * accounts, newest first, leaving out bank rows removed in Spending. Investment rows carry their cash effect, so a buy
  * reads as money out, the way it does in the account.
  */
 export function recentActivity(i: ActivityInputs): ActivityRow[] {
@@ -86,7 +86,8 @@ export function recentActivity(i: ActivityInputs): ActivityRow[] {
   for (const t of i.bankTxns) {
     const account = nameOf.get(t.account_id);
     const date = t.posted.slice(0, 10);
-    if (account == null || !inWindow(date)) continue;
+    // Removed in Spending (e.g. paid back): out of every list, not just budgets.
+    if (account == null || t.removed || !inWindow(date)) continue;
     rows.push({ key: `b${t.id}`, date, account, amount: t.amount, pending: t.pending,
       description: t.payee?.trim() || t.description });
   }

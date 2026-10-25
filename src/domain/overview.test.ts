@@ -72,6 +72,12 @@ describe("recentActivity", () => {
     expect(rows).toEqual([]);
   });
 
+  it("leaves out rows removed in Spending", () => {
+    const rows = recentActivity({ ...base, txns: [],
+      bankTxns: [bank(1, 1, TODAY, -5), bank(2, 1, TODAY, -40, { removed: true })] });
+    expect(rows.map((r) => r.amount)).toEqual([-5]);
+  });
+
   it("falls back to the bank description and flags pending rows", () => {
     const [r] = recentActivity({ ...base, txns: [], bankTxns: [bank(1, 1, TODAY, -84.12, { payee: "  ", pending: true })] });
     expect(r).toMatchObject({ description: "POS 1234 WHOLEFDS", pending: true });
