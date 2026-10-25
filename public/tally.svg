@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Tally's mark: a lowercase "t" drawn as two rounded strokes, the upright
-       leaning like a tally mark. Source for every icon size:
+  <!-- Tally's mark: an italic lowercase "t" with its crossbar slanted through
+       it, like a tally strike. Source for every icon size:
        npx tauri icon app-icon.svg -->
   <rect width="1024" height="1024" rx="228" fill="#3A3E44"/>
-  <g fill="none" stroke="#FFC629" stroke-width="116" stroke-linecap="round">
-    <path d="M540 212 L504 628 Q490 790 664 772"/>
-    <path d="M300 436 L732 356"/>
+  <g fill="none" stroke="#FFC629" stroke-width="112">
+    <path d="M596 196 L520 640 Q496 790 644 778 Q690 774 716 760"/>
+    <path d="M300 482 L744 360" stroke-linecap="round"/>
   </g>
 </svg>
