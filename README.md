@@ -1,4 +1,4 @@
-<img src="app-icon.svg" alt="Tally logo" width="96" height="96">
+<img src="brand/tally-logo.svg" alt="Tally logo" width="96" height="96">
 
 # Tally
 
