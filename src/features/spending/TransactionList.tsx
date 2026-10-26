@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useSetTransactionCategory } from "../../data/queries";
 import { useOfferUndo } from "../../data/undo";
 import { splitRemainder } from "../../domain/splits";
@@ -32,6 +32,12 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
   const [splitting, setSplitting] = useState<number | null>(null);
   const byId = new Map(categories.map((c) => [c.id, c]));
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? "—";
+  // An editor must not outlive its row: the list changes under it on a month
+  // change or a sync, and the row could come back with the editor still open.
+  useEffect(() => {
+    if (splitting != null && !transactions.some((t) => t.id === splitting)) setSplitting(null);
+  }, [transactions, splitting]);
+  const openSplit = (id: number) => { setTeaching(null); setSplitting(id); };
   const columns = 5 + (onApprove ? 1 : 0) + (onRemove || onRestore ? 1 : 0);
 
   function choose(t: BankTransaction, value: string) {
@@ -99,12 +105,15 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                         })}
                         {remainder !== 0 && (
                           <div className="cell-secondary">
-                            {money(Math.abs(remainder))} not assigned — the bank changed the amount
+                            {Math.sign(remainder) === Math.sign(t.amount)
+                              ? `${money(Math.abs(remainder))} not assigned — the bank changed the amount`
+                              : `The pieces are ${money(Math.abs(remainder))} more than the bank's amount — edit the split`}
                           </div>
                         )}
                         {!t.removed && (
                           <button className="btn btn-ghost btn-sm" style={{ justifySelf: "start", padding: "2px 0" }}
-                            aria-label={`Edit split for ${name}`} onClick={() => setSplitting(t.id)}>
+                            aria-label={`Edit split for ${name}`} aria-expanded={splitting === t.id}
+                            onClick={() => openSplit(t.id)}>
                             Edit split
                           </button>
                         )}
@@ -138,8 +147,8 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                             }} />
                           )}
                           {!t.removed && (
-                            <button className="btn btn-ghost btn-sm" aria-label={`Split ${name}`}
-                              title="Split across categories" onClick={() => setSplitting(t.id)}>Split</button>
+                            <button className="btn btn-ghost btn-sm" aria-label={`Split ${name}`} aria-expanded={splitting === t.id}
+                              title="Split across categories" onClick={() => openSplit(t.id)}>Split</button>
                           )}
                         </div>
                         {teaching === t.id && t.payee && (

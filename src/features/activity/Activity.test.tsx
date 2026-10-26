@@ -66,6 +66,17 @@ describe("Activity — synced accounts show their bank transactions", () => {
     expect(screen.getByText(/82\.14/)).toBeInTheDocument();
   });
 
+  it("labels a split transaction Split rather than its empty category", () => {
+    accounts = [account(1, "Chase Card", "simplefin")];
+    bankTxns = [{
+      ...bankTxn(1, 1, "WHOLE FOODS", -82.14), category_id: null,
+      splits: [{ id: 1, category_id: 1, amount: -60, note: null }, { id: 2, category_id: null, amount: -22.14, note: null }],
+    }];
+    show();
+    expect(screen.getByText("Split")).toBeInTheDocument();
+    expect(screen.queryByText("Uncategorised")).not.toBeInTheDocument();
+  });
+
   it("does not leak another account's transactions in", () => {
     accounts = [account(1, "Chase Card", "simplefin")];
     bankTxns = [bankTxn(1, 1, "WHOLE FOODS", -82.14), bankTxn(2, 99, "SOMEONE ELSE", -10)];

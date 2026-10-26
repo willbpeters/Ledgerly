@@ -93,6 +93,50 @@ describe("TransactionList splits", () => {
     expect(screen.getByText(/\$4\.50 not assigned/)).toBeInTheDocument();
   });
 
+  it("says the pieces are too much when the bank's amount went down", () => {
+    renderList({ transactions: [split({ amount: -80 })] });
+    expect(screen.queryByText(/not assigned/)).toBeNull();
+    expect(screen.getByText(/The pieces are \$5\.50 more than the bank's amount — edit the split/)).toBeInTheDocument();
+  });
+
+  it("still offers Approve on a split row", () => {
+    const onApprove = vi.fn();
+    renderList({ transactions: [split({ reviewed: false })], onApprove });
+    fireEvent.click(screen.getByRole("button", { name: "Approve Target" }));
+    expect(onApprove).toHaveBeenCalledWith(7);
+  });
+
+  it("closes the editor on Cancel", () => {
+    renderList();
+    fireEvent.click(screen.getByRole("button", { name: "Split Target" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByLabelText("Amount for piece 1")).toBeNull();
+  });
+
+  it("marks the Split button expanded while its editor is open", () => {
+    renderList();
+    const button = screen.getByRole("button", { name: "Split Target" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("stays closed when its row leaves the list and comes back", () => {
+    const ui = (transactions: BankTransaction[]) => (
+      <QueryClientProvider client={client}><ToastProvider>
+        <TransactionList transactions={transactions} categories={[category]} accounts={[account]}
+          colourOf={() => "#000"} />
+      </ToastProvider></QueryClientProvider>
+    );
+    const client = new QueryClient();
+    const { rerender } = render(ui([txn()]));
+    fireEvent.click(screen.getByRole("button", { name: "Split Target" }));
+    expect(screen.getByLabelText("Amount for piece 1")).toBeInTheDocument();
+    rerender(ui([]));
+    rerender(ui([txn()]));
+    expect(screen.queryByLabelText("Amount for piece 1")).toBeNull();
+  });
+
   it("offers no Split on a removed row", () => {
     renderList({ transactions: [txn({ removed: true })], onRestore: vi.fn() });
     expect(screen.queryByRole("button", { name: "Split Target" })).toBeNull();
