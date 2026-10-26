@@ -20,6 +20,7 @@ function titleFor(pathname: string): string {
 
 export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void }) {
   const { pathname } = useLocation();
+  const onSpending = pathname.startsWith("/spending");
   const navigate = useNavigate();
   const { data: status } = useSimplefinStatus();
   const sync = useSimplefinSync();
@@ -45,7 +46,8 @@ export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void })
     e.preventDefault();
     const q = term.trim();
     if (!q) return;
-    navigate(`/holdings?q=${encodeURIComponent(q)}`);
+    // On Spending the box searches transactions; everywhere else, holdings.
+    navigate(`${onSpending ? "/spending" : "/holdings"}?q=${encodeURIComponent(q)}`);
     input.current?.blur();
   }
 
@@ -66,7 +68,7 @@ export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void })
       <form className="cmd-search" onSubmit={submit}>
         <Icons.search size={14} />
         <input ref={input} value={term} onChange={(e) => setTerm(e.target.value)}
-          placeholder="Search a ticker or account" aria-label="Search" />
+          placeholder={onSpending ? "Search transactions" : "Search a ticker or account"} aria-label="Search" />
         <span className="kbd">Ctrl K</span>
       </form>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>

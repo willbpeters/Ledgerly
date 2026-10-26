@@ -68,9 +68,10 @@ These are the gaps a former Copilot user would notice first.
       Copilot-style To review list. See HANDOFF "Copilot-style sorting".
 - [x] **9b. Import from Copilot.** Done 2026-10-15, with Remove and Undo in
       Spending. See HANDOFF "Import from Copilot" and "Remove and Undo".
-- [ ] **10. Search and filter transactions.** Spending shows one month at a
-      time with no search. Wanted: find by payee, description, amount or
-      category across all months.
+- [x] **10. Search and filter transactions.** Done 2026-10-25: Spending →
+      Search finds words, exact amounts and >/< sizes across every month, with
+      category and account filters; the command bar's search box goes there
+      while you are on Spending. Removed transactions are not searched yet.
 - [ ] **11. Edit a bank transaction.** Partly done 2026-10-15: notes are stored
       and shown (Copilot's arrive with the import), and **Remove** covers
       "exclude from budget". Still to do: editing a note in Tally, and a

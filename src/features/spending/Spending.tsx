@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   useBankTransactions, useCategories, useBudgets, useAccounts, useBankTransactionRange,
   useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
@@ -10,14 +10,19 @@ import { Card, Button, EmptyState, Segmented } from "../../ui/components";
 import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
+import { SearchPanel } from "./SearchPanel";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
 
-type View = "month" | "review";
+type View = "month" | "review" | "search";
 
 export function Spending() {
-  const [view, setView] = useState<View>("month");
+  // The command bar's search sends you here with ?q=…, straight into Search.
+  const [params] = useSearchParams();
+  const q = params.get("q") ?? "";
+  const [view, setView] = useState<View>(q ? "search" : "month");
+  useEffect(() => { if (q) setView("search"); }, [q]);
   const [month, setMonth] = useState(thisMonth);
   const [focus, setFocus] = useState<number | "uncategorised" | null>(null);
   const { from, to } = monthWindow(month);
@@ -32,6 +37,13 @@ export function Spending() {
   const { data: range } = useBankTransactionRange();
   const colours = useChartColors();
 
+  // Search covers every month, so it loads the whole range, but only once
+  // the Search view is opened.
+  const [first, last] = range ?? [null, null];
+  const { data: everyTxn = [], isLoading: loadingEvery } =
+    useBankTransactions(first ?? "", last ?? "", view === "search" && first != null && last != null);
+  const searchable = fromVisibleAccounts(everyTxn, allAccounts);
+
   // The review list obeys the same filter as the month: a hidden account or an
   // investment account has nothing to review here.
   const { data: allToReview = [] } = useBankTransactionsToReview();
@@ -44,7 +56,7 @@ export function Spending() {
   const hiddenAccounts = new Set(allAccounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
   const removedThisMonth = allTxns.filter((t) => t.removed && !hiddenAccounts.has(t.account_id));
   const offerUndo = useOfferUndo();
-  const byId = (id: number) => [...allTxns, ...allToReview].filter((t) => t.id === id).slice(0, 1);
+  const byId = (id: number) => [...allTxns, ...allToReview, ...everyTxn].filter((t) => t.id === id).slice(0, 1);
 
   async function removeOne(id: number) {
     if (askBeforeRemove()) {
@@ -102,6 +114,7 @@ export function Spending() {
           <Segmented<View> value={view} onChange={setView} items={[
             { value: "month", label: "Month" },
             { value: "review", label: `To review (${toReview.length})` },
+            { value: "search", label: "Search" },
           ]} />
           {view === "month" && (
             <div className="row center" style={{ gap: 8 }}>
@@ -119,7 +132,18 @@ export function Spending() {
         )}
       </div>
 
-      {view === "review" ? (
+      {view === "search" ? (
+        <SearchPanel
+          key={q}
+          initialText={q}
+          transactions={searchable}
+          loading={loadingEvery}
+          categories={categories}
+          accounts={accounts}
+          colourOf={colourOf}
+          onRemove={removeOne}
+        />
+      ) : view === "review" ? (
         <Card
           title="To review"
           subtitle="New transactions, and any Tally couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."

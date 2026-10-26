@@ -159,8 +159,8 @@ export const budgetKeys = {
 export const useCategories = () => useQuery({ queryKey: budgetKeys.categories, queryFn: api.categories.list });
 export const useRules = () => useQuery({ queryKey: budgetKeys.rules, queryFn: api.rules.list });
 export const useBudgets = () => useQuery({ queryKey: budgetKeys.budgets, queryFn: api.budgets.list });
-export const useBankTransactions = (from: string, to: string) =>
-  useQuery({ queryKey: budgetKeys.txns(from, to), queryFn: () => api.bankTransactions.list(from, to) });
+export const useBankTransactions = (from: string, to: string, enabled = true) =>
+  useQuery({ queryKey: budgetKeys.txns(from, to), queryFn: () => api.bankTransactions.list(from, to), enabled });
 export const useBankTransactionRange = () =>
   useQuery({ queryKey: budgetKeys.range, queryFn: api.bankTransactions.range });
 
