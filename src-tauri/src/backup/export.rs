@@ -27,7 +27,9 @@ pub const EXPORTS: [(&str, &str); 8] = [
     (
         "bank-transactions.csv",
         "SELECT b.posted AS date, a.name AS account, b.description, b.payee, b.memo, b.amount,
-                c.name AS category, b.category_source, b.mcc, b.pending
+                CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.txn_id = b.id)
+                     THEN 'Split' ELSE c.name END AS category,
+                b.category_source, b.mcc, b.pending
          FROM bank_transactions b
          JOIN accounts a ON a.id = b.account_id
          LEFT JOIN categories c ON c.id = b.category_id
@@ -205,7 +207,7 @@ mod tests {
         assert!(investments.starts_with("\u{FEFF}date,account,ticker,type,quantity,price,amount,fees,note\r\n"));
         assert!(investments.contains("2026-10-02,Checking,VTI,buy,2,250,500,0,\r\n"));
         let bank = std::fs::read_to_string(folder.join("bank-transactions.csv")).unwrap();
-        assert!(bank.contains("2026-10-03,Checking,\"Coffee, large\",,,-4.5,Test category,auto,,0\r\n"));
+        assert!(bank.contains("2026-10-03,Checking,\"Coffee, large\",,,-4.5,Split,auto,,0\r\n"), "a split row reads Split, not its own category");
         let splits = std::fs::read_to_string(folder.join("transaction-splits.csv")).unwrap();
         assert!(splits.starts_with("\u{FEFF}date,account,payee,transaction_amount,category,amount,note\r\n"));
         assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,Test category,-3,\r\n"));

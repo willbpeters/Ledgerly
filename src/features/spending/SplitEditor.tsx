@@ -65,6 +65,8 @@ export function SplitEditor({ txn, categories, onDone }: {
 
   function save(next: Piece[], title: string) {
     // txn is the row as it was before: exactly what Undo puts back.
+    // Piece notes are not editable in the app yet, so saving sends none and
+    // clears any that were there; Undo restores them from txn.
     setSplits.mutate(
       { id: txn.id, splits: next.map((p) => ({ category_id: p.category_id, amount: p.amount, note: null })) },
       { onSuccess: () => { offerUndo(title, txn); onDone(); } },

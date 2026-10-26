@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { piecesOf, splitRemainder, validateSplits, inCategory } from "./splits";
+import { piecesOf, splitRemainder, validateSplits, inCategory, amountInCategory } from "./splits";
 import type { BankTransaction, TxnSplit } from "./types";
 
 const txn = (over: Partial<BankTransaction> = {}): BankTransaction => ({
@@ -86,6 +86,27 @@ describe("validateSplits", () => {
   it("treats an amount that is not a number as missing", () => {
     expect(validateSplits(-85.5, [p(1, -85.5), p(2, NaN)]).problem).toBe("no-amount");
     expect(validateSplits(-85.5, [p(1, -85.5), p(2, Infinity)]).problem).toBe("no-amount");
+  });
+});
+
+describe("amountInCategory", () => {
+  it("is the whole amount when it is not split and in that category", () => {
+    expect(amountInCategory(txn(), 1)).toBe(-85.5);
+    expect(amountInCategory(txn(), 2)).toBe(0);
+    expect(amountInCategory(txn({ category_id: null }), "uncategorised")).toBe(-85.5);
+  });
+
+  it("adds up only the pieces in that category", () => {
+    expect(amountInCategory(costco, 1)).toBe(-60);
+    expect(amountInCategory(costco, 2)).toBe(-25.5);
+    expect(amountInCategory(costco, 3)).toBe(0);
+    expect(amountInCategory(costco, "uncategorised")).toBe(0);
+  });
+
+  it("sums several pieces in the same category and finds uncategorised ones, remainder included", () => {
+    const t = txn({ category_id: null, amount: -90, splits: [piece(1, 1, -20), piece(2, 1, -30), piece(3, null, -10)] });
+    expect(amountInCategory(t, 1)).toBe(-50);
+    expect(amountInCategory(t, "uncategorised")).toBe(-40); // the -10 piece and the -30 remainder
   });
 });
 

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { searchTransactions, type TxnSearch } from "../../domain/search";
+import { amountInCategory } from "../../domain/splits";
 import { money } from "../../ui/format";
 import { Card, EmptyState } from "../../ui/components";
 import { TransactionList } from "./TransactionList";
@@ -30,8 +31,12 @@ export function SearchPanel({ initialText = "", transactions, loading, categorie
     () => (searching ? searchTransactions(transactions, search, { categories, accounts }) : []),
     [searching, transactions, search, categories, accounts],
   );
-  const out = matches.reduce((s, t) => s + Math.min(t.amount, 0), 0);
-  const into = matches.reduce((s, t) => s + Math.max(t.amount, 0), 0);
+  // With a category filter, a split purchase counts only the pieces in that
+  // category; otherwise the whole amount, as the bank has it.
+  const counted = (t: BankTransaction) =>
+    search.categoryId == null ? t.amount : amountInCategory(t, search.categoryId);
+  const out = matches.reduce((s, t) => s + Math.min(counted(t), 0), 0);
+  const into = matches.reduce((s, t) => s + Math.max(counted(t), 0), 0);
 
   return (
     <Card

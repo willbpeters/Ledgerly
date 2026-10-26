@@ -222,6 +222,10 @@ fn dollars(cents: i64) -> String {
 /// Copilot import away from it: all of them touch only automatic rows.
 /// Unsplitting leaves the row uncategorised for the owner to choose. All of it
 /// happens in one transaction; a refused split changes nothing.
+///
+/// Rust checks the count, that no piece is zero, and the sum, but not the signs:
+/// the editor gives every piece the transaction's sign, and Undo may send an
+/// opposite-sign uncategorised piece to put back a gap a sync left.
 pub fn set_splits(conn: &Connection, txn_id: i64, pieces: &[NewSplit]) -> Result<(), String> {
     let amount: f64 = conn
         .query_row("SELECT amount FROM bank_transactions WHERE id=?1", [txn_id], |r| r.get(0))
@@ -372,8 +376,16 @@ pub fn restore_rows(conn: &Connection, states: &[RowState]) -> rusqlite::Result<
         if s.category_source != "auto" && s.category_source != "manual" {
             return Err(rusqlite::Error::InvalidParameterName(format!("category_source {}", s.category_source)));
         }
+        // A row that has been split since keeps no category of its own: its pieces
+        // carry them, and sync, re-sort, transfer pairing and the Copilot import
+        // skip it only because it is manual. So an older category and source are
+        // not put back on it; only reviewed and removed are.
         changed += tx.execute(
-            "UPDATE bank_transactions SET category_id=?1, category_source=?2, reviewed=?3, removed=?4 WHERE id=?5",
+            "UPDATE bank_transactions SET
+                category_id = CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits WHERE txn_id = ?5) THEN NULL ELSE ?1 END,
+                category_source = CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits WHERE txn_id = ?5) THEN 'manual' ELSE ?2 END,
+                reviewed=?3, removed=?4
+             WHERE id=?5",
             params![s.category_id, s.category_source, s.reviewed as i64, s.removed as i64, s.id],
         )?;
     }
@@ -795,6 +807,22 @@ mod tests {
 
         assert_eq!(row(&conn, "t1"), (Some("Shopping".into()), "auto".into(), false));
         assert!(!removed(&conn, "t1"));
+    }
+
+    #[test]
+    fn undoing_an_earlier_action_never_gives_a_split_row_a_category() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        let groceries = seed::category_id(&conn, "Groceries").unwrap();
+        // How the row looked before it was split: an automatic category, unreviewed.
+        let before = RowState { id, category_id: groceries, category_source: "auto".into(), reviewed: false, removed: true };
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        assert_eq!(restore_rows(&conn, &[before]).unwrap(), 1);
+
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), false), "still a split row; reviewed restored");
+        assert!(removed(&conn, "c1"), "removed restored");
+        assert_eq!(splits_of(&conn, "c1").len(), 2, "the pieces are untouched");
     }
 
     #[test]

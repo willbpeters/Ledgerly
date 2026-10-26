@@ -120,7 +120,11 @@ export function summariseMonth(
       if (category == null) {
         // What a split no longer covers always needs a category, even when it is
         // money in (a purchase that settled lower leaves a positive remainder).
-        if (piece.remainder || piece.amount < 0) {
+        // So does a real uncategorised piece of the opposite sign to the
+        // transaction: undoing an Unsplit after the bank's amount went down stores
+        // the gap that way, and it is not income.
+        const oppositeInASplit = t.splits.length > 0 && Math.sign(piece.amount) !== Math.sign(t.amount);
+        if (piece.remainder || piece.amount < 0 || oppositeInASplit) {
           needsCategory = true;
           uncategorisedTotal += -piece.amount;
         } else {

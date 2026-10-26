@@ -42,10 +42,21 @@ export function piecesOf(t: BankTransaction): Piece[] {
   return pieces;
 }
 
+const pieceIn = (p: Piece, category: number | "uncategorised") =>
+  category === "uncategorised" ? p.category_id == null : p.category_id === category;
+
 /** Whether any piece of the transaction is in that category. */
 export function inCategory(t: BankTransaction, category: number | "uncategorised"): boolean {
-  return piecesOf(t).some((p) =>
-    category === "uncategorised" ? p.category_id == null : p.category_id === category);
+  return piecesOf(t).some((p) => pieceIn(p, category));
+}
+
+/**
+ * How much of the transaction is in that category, with its sign: the sum of
+ * the matching pieces (0 when none match). A search filtered to one category
+ * totals this rather than the whole amount of a split purchase.
+ */
+export function amountInCategory(t: BankTransaction, category: number | "uncategorised"): number {
+  return piecesOf(t).reduce((s, p) => (pieceIn(p, category) ? s + p.amount : s), 0);
 }
 
 /** Why a split cannot be saved yet. "short": some of it is not assigned;

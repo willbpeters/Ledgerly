@@ -151,6 +151,14 @@ describe("summariseMonth with split transactions", () => {
     expect(s.uncategorisedTotal).toBe(90);
   });
 
+  it("does not count an uncategorised piece of the opposite sign as income", () => {
+    // An Undo of an Unsplit after the bank's amount went down stores the gap as a real piece.
+    const s = summariseMonth([split(-80, [[1, -60], [2, -25.5], [null, 5.5]])], cats, [], "2026-09");
+    expect(s.income).toBe(0);
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(-5.5);
+  });
+
   it("treats what the pieces no longer cover as needing a category", () => {
     const s = summariseMonth([split(-90, [[1, -60], [2, -25.5]])], cats, [], "2026-09");
     expect(s.spent).toBe(85.5);

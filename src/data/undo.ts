@@ -55,7 +55,9 @@ async function undoSplit(before: BankTransaction): Promise<void> {
   // A sync may have changed the amount since the split, leaving the pieces short
   // of it. Rust only accepts pieces that add up, so put the difference back as an
   // uncategorised piece. Totals are unchanged: `piecesOf` already counted that
-  // remainder as uncategorised.
+  // remainder as uncategorised. That holds only because `summariseMonth` treats
+  // an uncategorised piece of the opposite sign to its transaction as needing a
+  // category, as it does a remainder; otherwise a positive piece would be income.
   const remainder = splitRemainder(before);
   if (remainder !== 0) pieces.push({ category_id: null, amount: remainder, note: null });
   await api.bankTransactions.setSplits(before.id, pieces);
