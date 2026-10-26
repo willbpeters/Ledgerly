@@ -251,6 +251,8 @@ export function useSetRecurringDismissed() {
   return useMutation({
     mutationFn: (v: { key: string; dismissed: boolean }) =>
       v.dismissed ? api.recurring.dismiss(v.key) : api.recurring.undismiss(v.key),
+    // Returned, not fired and forgotten: mutateAsync then resolves only once the
+    // dismissed list has refetched, so the row is gone before any Undo toast.
     onSuccess: () => qc.invalidateQueries({ queryKey: recurringKeys.dismissed }),
   });
 }

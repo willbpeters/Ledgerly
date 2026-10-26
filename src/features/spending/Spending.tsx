@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   useBankTransactions, useCategories, useBudgets, useAccounts, useBankTransactionRange,
   useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
+  useRecurringDismissed, useSetRecurringDismissed,
 } from "../../data/queries";
 import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
 import { inCategory } from "../../domain/splits";
@@ -12,11 +13,16 @@ import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
 import { SearchPanel } from "./SearchPanel";
+import { RecurringPanel } from "./RecurringPanel";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
 
-type View = "month" | "review" | "search";
+type View = "month" | "review" | "search" | "recurring";
+
+// One array for "no dismissed bills yet", so the panel's detection (which
+// depends on this list) isn't re-run over the whole history on every render.
+const NO_KEYS: string[] = [];
 
 export function Spending() {
   // The command bar's search sends you here with ?q=…, straight into Search.
@@ -38,12 +44,17 @@ export function Spending() {
   const { data: range } = useBankTransactionRange();
   const colours = useChartColors();
 
-  // Search covers every month, so it loads the whole range, but only once
-  // the Search view is opened.
+  // Search and Recurring cover every month, so they load the whole range,
+  // but only once one of them is opened. Both read the same cached query.
   const [first, last] = range ?? [null, null];
+  const everyMonth = view === "search" || view === "recurring";
   const { data: everyTxn = [], isLoading: loadingEvery } =
-    useBankTransactions(first ?? "", last ?? "", view === "search" && first != null && last != null);
+    useBankTransactions(first ?? "", last ?? "", everyMonth && first != null && last != null);
   const searchable = fromVisibleAccounts(everyTxn, allAccounts);
+
+  const { data: dismissedKeys, isLoading: loadingDismissed } = useRecurringDismissed();
+  const dismissed = dismissedKeys ?? NO_KEYS;
+  const setDismissed = useSetRecurringDismissed();
 
   // The review list obeys the same filter as the month: a hidden account or an
   // investment account has nothing to review here.
@@ -116,6 +127,7 @@ export function Spending() {
             { value: "month", label: "Month" },
             { value: "review", label: `To review (${toReview.length})` },
             { value: "search", label: "Search" },
+            { value: "recurring", label: "Recurring" },
           ]} />
           {view === "month" && (
             <div className="row center" style={{ gap: 8 }}>
@@ -143,6 +155,15 @@ export function Spending() {
           accounts={accounts}
           colourOf={colourOf}
           onRemove={removeOne}
+        />
+      ) : view === "recurring" ? (
+        <RecurringPanel
+          transactions={searchable}
+          loading={loadingEvery || loadingDismissed}
+          categories={categories}
+          accounts={accounts}
+          dismissed={dismissed}
+          onSetDismissed={(key, d) => setDismissed.mutateAsync({ key, dismissed: d })}
         />
       ) : view === "review" ? (
         <Card
