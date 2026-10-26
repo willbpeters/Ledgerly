@@ -182,7 +182,8 @@ function couldBeBill(t: BankTransaction, kindOf: Map<number, Category["kind"]>):
  * counts as one whole charge. Pending rows never make or shape a bill, but a
  * pending charge newer than the last posted one is the bill's latest charge.
  * Removed rows (the owner was paid back) still count for timing: the bill was
- * charged. They do not count for money.
+ * charged. They do not count for money, and a series in which every charge was
+ * paid back is not a bill.
  */
 export function detectRecurring(
   txns: BankTransaction[],
@@ -254,9 +255,10 @@ function seriesFrom(key: string, rows: BankTransaction[], today: string): Recurr
   const fitting = gaps.filter((g) => g >= rule.min && g <= rule.max).length;
   if (fitting < gaps.length * STEADY_SHARE) return null;
 
-  // Money is judged on charges the owner paid for: removed ones only when there are no others.
+  // A bill every charge of which was paid back is not a bill the owner pays.
   const paid = settled.filter((c) => !c.removed);
-  const amounts = (paid.length > 0 ? paid : settled).map((c) => c.amount);
+  if (paid.length === 0) return null;
+  const amounts = paid.map((c) => c.amount);
   const recent = amounts.slice(-RECENT_CHARGES);
   const typical = median(recent);
   const slack = Math.max(typical * AMOUNT_SLACK, AMOUNT_FLOOR);
@@ -339,9 +341,11 @@ export function monthOutlook(series: RecurringSeries[], today: string): MonthOut
   for (const s of series) {
     if (!s.active) continue;
     if (s.lastDate >= from && s.lastDate <= to) {
-      paidCount += 1;
       // Every charge in the month the owner paid for: a weekly bill may already have made three.
-      for (const c of s.charges) if (!c.removed && c.date >= from && c.date <= to) paidCents += Math.round(c.amount * 100);
+      // A bill whose only charges this month were paid back has charged nothing to report.
+      const mine = s.charges.filter((c) => !c.removed && c.date >= from && c.date <= to);
+      if (mine.length > 0) paidCount += 1;
+      for (const c of mine) paidCents += Math.round(c.amount * 100);
     }
     // Every expected date after the last charge that lands in this month.
     for (let k = 1; ; k++) {

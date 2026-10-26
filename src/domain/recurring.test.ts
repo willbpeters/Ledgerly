@@ -162,6 +162,7 @@ describe("detectRecurring", () => {
       ...monthly("Card Payment", "02", months, -500, { category_id: 3 }),
       ...monthly("Side Gig", "03", months, -10, { category_id: 2 }),
       ...monthly("Pending Co", "04", months, -10, { pending: true }),
+      ...monthly("Paid Back", "06", months, -10, { removed: true }),
       ...monthly("New Thing", "07", months, -10, { category_id: null }),
     ];
     expect(detectRecurring(txns, cats, TODAY).map((s) => s.name)).toEqual(["New Thing"]);
@@ -312,7 +313,7 @@ describe("detectRecurring", () => {
     const [s] = detectRecurring(txns, cats, TODAY);
     expect(s).toMatchObject({ lastDate: "2026-10-03", nextDate: "2026-11-03", active: true, count: 4 });
     expect(statusOf(s, TODAY)).toEqual({ kind: "paid" });
-    expect(monthOutlook([s], TODAY)).toMatchObject({ paidCount: 1, paidTotal: 0, due: [] });
+    expect(monthOutlook([s], TODAY)).toMatchObject({ paidCount: 0, paidTotal: 0, due: [] });
   });
 
   it("finds a bill by its rhythm even when a removed row hides a month's money", () => {
@@ -332,11 +333,9 @@ describe("detectRecurring", () => {
     expect(detectRecurring(txns, cats, TODAY)[0].amount).toBe(50);
   });
 
-  it("falls back to every charge when all were removed", () => {
+  it("drops a series whose every charge was paid back", () => {
     const txns = monthly("Phone", "03", ["2026-08", "2026-09", "2026-10"], -50, { removed: true });
-    const [s] = detectRecurring(txns, cats, TODAY);
-    expect(s.amount).toBe(50);
-    expect(monthOutlook([s], TODAY).paidTotal).toBe(0);
+    expect(detectRecurring(txns, cats, TODAY)).toEqual([]);
   });
 
   it("sums only the kept lines of a day that was partly removed", () => {
@@ -489,12 +488,12 @@ describe("monthOutlook", () => {
     expect(o.due.map((d) => d.date)).toEqual(["2026-03-31"]);
   });
 
-  it("skips removed charges in what was paid, but still counts the bill as charged", () => {
+  it("skips removed charges in what was paid, and does not count a bill whose only charge this month was removed", () => {
     const o = monthOutlook([
       series({ lastDate: "2026-10-03",
         charges: [{ date: "2026-09-03", amount: 50 }, { date: "2026-10-03", amount: 50, removed: true }] }),
     ], "2026-10-20");
-    expect(o.paidCount).toBe(1);
+    expect(o.paidCount).toBe(0);
     expect(o.paidTotal).toBe(0);
   });
 

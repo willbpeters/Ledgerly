@@ -118,8 +118,9 @@ budgeting and spending module.
     month" all use it, so a bill is not "Late" while its charge is only pending.
   - **Removed** rows (the owner was paid back) still count for timing: cadence,
     last and next date, and whether the bill is still active. They do not count
-    for money: the amount uses the non-removed charges where there are any, and
-    "Paid this month" leaves removed charges out. The Recurring panel therefore
+    for money: the amount uses the non-removed charges, "Paid this month" leaves
+    removed charges out (a bill with none this month is not counted as charging),
+    and a series whose every charge was removed is not a bill. The Recurring panel therefore
     gets the rows of visible accounts with removed ones kept
     (`inVisibleAccounts`), not `fromVisibleAccounts`.
   - The next date steps by days or calendar months from the last charge. For
