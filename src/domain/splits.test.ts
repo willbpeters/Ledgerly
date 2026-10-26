@@ -23,7 +23,8 @@ describe("piecesOf", () => {
 
   it("adds what the pieces no longer cover, uncategorised, after the bank changed the amount", () => {
     expect(piecesOf({ ...costco, amount: -90 })).toEqual([
-      { category_id: 1, amount: -60 }, { category_id: 2, amount: -25.5 }, { category_id: null, amount: -4.5 },
+      { category_id: 1, amount: -60 }, { category_id: 2, amount: -25.5 },
+      { category_id: null, amount: -4.5, remainder: true },
     ]);
   });
 

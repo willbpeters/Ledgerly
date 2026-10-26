@@ -125,6 +125,30 @@ describe("summariseMonth with split transactions", () => {
     const s = summariseMonth([split(100, [[3, 120], [1, -20]])], cats, [], "2026-09");
     expect(s.income).toBe(120);
     expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(20);
+    expect(s.uncategorisedCount).toBe(0);
+  });
+
+  it("shows a settled-lower split's overage under Needs a category, not income", () => {
+    const s = summariseMonth([split(-85, [[1, -60], [2, -30]])], cats, [], "2026-09");
+    expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(60);
+    expect(s.categories.find((c) => c.category.id === 2)?.spent).toBe(30);
+    expect(s.income).toBe(0);
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(-5);
+  });
+
+  it("reduces each category by its piece of a split refund", () => {
+    const s = summariseMonth([split(30, [[1, 20], [2, 10]])], cats, [], "2026-09");
+    expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(-20);
+    expect(s.categories.find((c) => c.category.id === 2)?.spent).toBe(-10);
+    expect(s.income).toBe(0);
+    expect(s.uncategorisedCount).toBe(0);
+  });
+
+  it("counts a split with several uncategorised pieces once", () => {
+    const s = summariseMonth([split(-90, [[null, -60], [null, -30]])], cats, [], "2026-09");
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(90);
   });
 
   it("treats what the pieces no longer cover as needing a category", () => {

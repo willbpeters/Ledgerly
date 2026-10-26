@@ -105,6 +105,7 @@ export function summariseMonth(
   let uncategorisedTotal = 0;
 
   for (const t of inMonth) {
+    let needsCategory = false; // a transaction counts once, however many of its pieces do
     for (const piece of piecesOf(t)) {
       const category = piece.category_id == null ? null : byId.get(piece.category_id) ?? null;
       if (category?.kind === "transfer") {
@@ -116,8 +117,10 @@ export function summariseMonth(
         continue;
       }
       if (category == null) {
-        if (piece.amount < 0) {
-          uncategorisedCount += 1;
+        // What a split no longer covers always needs a category, even when it is
+        // money in (a purchase that settled lower leaves a positive remainder).
+        if (piece.remainder || piece.amount < 0) {
+          needsCategory = true;
           uncategorisedTotal += -piece.amount;
         } else {
           income += piece.amount;
@@ -129,6 +132,7 @@ export function summariseMonth(
       row.count += 1;
       totals.set(category.id, row);
     }
+    if (needsCategory) uncategorisedCount += 1;
   }
 
   const rows: CategorySpend[] = categories

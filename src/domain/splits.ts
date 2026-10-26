@@ -7,7 +7,12 @@ import type { BankTransaction } from "./types";
  * look uncategorised.
  */
 
-export interface Piece { category_id: number | null; amount: number }
+export interface Piece {
+  category_id: number | null;
+  amount: number;
+  /** Set on the piece `piecesOf` adds for what the pieces no longer cover after a later sync changed the amount. */
+  remainder?: true;
+}
 
 // Rounds half a cent away from zero, as Rust's f64::round does (Math.round
 // takes -0.125 * 100 to -12, Rust to -13), so these checks agree with set_splits.
@@ -31,9 +36,9 @@ export function splitRemainder(t: BankTransaction): number {
  */
 export function piecesOf(t: BankTransaction): Piece[] {
   if (t.splits.length === 0) return [{ category_id: t.category_id, amount: t.amount }];
-  const pieces = t.splits.map((s) => ({ category_id: s.category_id, amount: s.amount }));
+  const pieces: Piece[] = t.splits.map((s) => ({ category_id: s.category_id, amount: s.amount }));
   const left = splitRemainder(t);
-  if (left !== 0) pieces.push({ category_id: null, amount: left });
+  if (left !== 0) pieces.push({ category_id: null, amount: left, remainder: true });
   return pieces;
 }
 
