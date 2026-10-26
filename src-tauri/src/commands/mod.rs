@@ -8,6 +8,7 @@ pub mod budget;
 pub mod market;
 pub mod backup;
 pub mod copilot;
+pub mod goals;
 pub mod recurring;
 
 /// Run slow work — anything that touches the network — on a worker thread.
