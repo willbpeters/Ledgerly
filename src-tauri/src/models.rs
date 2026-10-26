@@ -120,6 +120,18 @@ pub struct BankTransaction {
     pub note: Option<String>,
     /// Left out of Spending and budgets (the owner was paid back); restorable.
     pub removed: bool,
+    /// The pieces, when the owner split it across categories; empty otherwise.
+    /// While split, `category_id` is null and the pieces are what count.
+    pub splits: Vec<TxnSplit>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxnSplit {
+    pub id: i64,
+    pub category_id: Option<i64>,
+    /// Carries the transaction's sign: a purchase splits into negative pieces.
+    pub amount: f64,
+    pub note: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

@@ -1,7 +1,8 @@
 use crate::budget::store;
 use crate::db::Db;
-use crate::models::{BankTransaction, Budget, Category, CategoryRule};
+use crate::models::{BankTransaction, Budget, Category, CategoryRule, TxnSplit};
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 
 // ---------- categories ----------
 
@@ -90,7 +91,34 @@ fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {
         reviewed: r.get::<_, i64>(12)? != 0,
         note: r.get(13)?,
         removed: r.get::<_, i64>(14)? != 0,
+        splits: Vec::new(),
     })
+}
+
+/// Fill in each row's split pieces. The table holds only rows the owner split
+/// by hand, so it is read whole rather than by a list of ids, which for a
+/// search across every month would run to thousands.
+fn attach_splits(conn: &Connection, rows: &mut [BankTransaction]) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT txn_id, id, category_id, amount, note FROM bank_transaction_splits
+         ORDER BY txn_id, sort, id",
+    )?;
+    let mut by_txn: HashMap<i64, Vec<TxnSplit>> = HashMap::new();
+    let pieces = stmt.query_map([], |r| {
+        Ok((r.get::<_, i64>(0)?, TxnSplit {
+            id: r.get(1)?, category_id: r.get(2)?, amount: r.get(3)?, note: r.get(4)?,
+        }))
+    })?;
+    for piece in pieces {
+        let (txn_id, split) = piece?;
+        by_txn.entry(txn_id).or_default().push(split);
+    }
+    for row in rows.iter_mut() {
+        if let Some(splits) = by_txn.remove(&row.id) {
+            row.splits = splits;
+        }
+    }
+    Ok(())
 }
 
 pub fn list_transactions(conn: &Connection, from: &str, to: &str)
@@ -99,8 +127,9 @@ pub fn list_transactions(conn: &Connection, from: &str, to: &str)
         "SELECT {TXN_COLUMNS} FROM bank_transactions WHERE posted >= ?1 AND posted <= ?2
          ORDER BY posted DESC, id DESC"
     ))?;
-    let rows = stmt.query_map([from, to], txn_from_row)?;
-    rows.collect()
+    let mut rows = stmt.query_map([from, to], txn_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    attach_splits(conn, &mut rows)?;
+    Ok(rows)
 }
 
 /// Every transaction the owner has not looked at yet, any month, newest first.
@@ -109,8 +138,9 @@ pub fn list_to_review(conn: &Connection) -> rusqlite::Result<Vec<BankTransaction
         "SELECT {TXN_COLUMNS} FROM bank_transactions WHERE reviewed = 0 AND removed = 0
          ORDER BY posted DESC, id DESC"
     ))?;
-    let rows = stmt.query_map([], txn_from_row)?;
-    rows.collect()
+    let mut rows = stmt.query_map([], txn_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    attach_splits(conn, &mut rows)?;
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -165,6 +195,14 @@ pub fn bank_transaction_set_category(
 ) -> Result<usize, String> {
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
     store::set_category(&conn, id, category_id, apply_to_payee).map_err(|e| e.to_string())
+}
+
+/// Split a transaction across categories; an empty list unsplits it.
+#[tauri::command]
+pub fn bank_transaction_set_splits(db: tauri::State<Db>, id: i64, splits: Vec<store::NewSplit>)
+    -> Result<(), String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    store::set_splits(&conn, id, &splits)
 }
 
 // ---------- rules ----------
@@ -331,5 +369,32 @@ mod tests {
         }
         let rows = list_transactions(&conn, "2026-09-01", "2026-09-30").unwrap();
         assert_eq!(rows.iter().map(|r| r.external_id.as_str()).collect::<Vec<_>>(), vec!["c", "b"]);
+    }
+
+    #[test]
+    fn listed_transactions_carry_their_split_pieces_in_order() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute("INSERT INTO accounts (name,type,currency,created_at) VALUES ('C','credit','USD','2026-01-01')", []).unwrap();
+        conn.execute_batch(
+            "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+             VALUES (1,'split','2026-09-10',-85.5,'Costco'), (1,'plain','2026-09-11',-5,'Coffee');",
+        ).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='split'", [], |r| r.get(0)).unwrap();
+        store::set_splits(&conn, id, &[
+            store::NewSplit { category_id: None, amount: -60.0, note: Some("food".into()) },
+            store::NewSplit { category_id: None, amount: -25.5, note: None },
+        ]).unwrap();
+
+        let rows = list_transactions(&conn, "2026-09-01", "2026-09-30").unwrap();
+        let plain = rows.iter().find(|r| r.external_id == "plain").unwrap();
+        assert!(plain.splits.is_empty());
+        let split = rows.iter().find(|r| r.external_id == "split").unwrap();
+        let pieces: Vec<(f64, Option<String>)> = split.splits.iter().map(|s| (s.amount, s.note.clone())).collect();
+        assert_eq!(pieces, vec![(-60.0, Some("food".to_string())), (-25.5, None)]);
+
+        // The review list carries them too.
+        conn.execute("UPDATE bank_transactions SET reviewed=0 WHERE id=?1", [id]).unwrap();
+        let review = list_to_review(&conn).unwrap();
+        assert_eq!(review.iter().find(|r| r.id == id).unwrap().splits.len(), 2);
     }
 }
