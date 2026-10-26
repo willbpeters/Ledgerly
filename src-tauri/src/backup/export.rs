@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// Each file and the query that fills it. Columns are named for a person
 /// reading the file in Excel, and IDs are joined to names for the same reason.
 /// Market caches and snapshots are left out: they are re-fetchable or derived.
-pub const EXPORTS: [(&str, &str); 7] = [
+pub const EXPORTS: [(&str, &str); 8] = [
     (
         "accounts.csv",
         "SELECT name, type, institution, currency, source, hidden, synced_balance,
@@ -56,6 +56,18 @@ pub const EXPORTS: [(&str, &str); 7] = [
         "SELECT r.match_type, r.pattern, c.name AS category, r.created_at
          FROM category_rules r JOIN categories c ON c.id = r.category_id
          ORDER BY r.match_type, r.pattern",
+    ),
+    // One line per piece, beside the transaction it came from, so a split can
+    // be rebuilt from bank-transactions.csv and this file alone.
+    (
+        "transaction-splits.csv",
+        "SELECT b.posted AS date, a.name AS account, COALESCE(b.payee, b.description) AS payee,
+                b.amount AS transaction_amount, c.name AS category, s.amount, s.note
+         FROM bank_transaction_splits s
+         JOIN bank_transactions b ON b.id = s.txn_id
+         JOIN accounts a ON a.id = b.account_id
+         LEFT JOIN categories c ON c.id = s.category_id
+         ORDER BY b.posted, b.id, s.sort",
     ),
 ];
 
@@ -176,7 +188,9 @@ mod tests {
                VALUES (1, 1, 'buy', '2026-10-02', 2, 250, 500);
              INSERT INTO categories (id, name, kind) VALUES (900, 'Test category', 'spending');
              INSERT INTO bank_transactions (account_id, external_id, posted, amount, description, category_id)
-               VALUES (1, 'x1', '2026-10-03', -4.5, 'Coffee, large', 900);",
+               VALUES (1, 'x1', '2026-10-03', -4.5, 'Coffee, large', 900);
+             INSERT INTO bank_transaction_splits (txn_id, category_id, amount, sort)
+               VALUES (1, 900, -3, 0), (1, NULL, -1.5, 1);",
         )
         .unwrap();
         let out = tempfile::tempdir().unwrap();
@@ -192,6 +206,10 @@ mod tests {
         assert!(investments.contains("2026-10-02,Checking,VTI,buy,2,250,500,0,\r\n"));
         let bank = std::fs::read_to_string(folder.join("bank-transactions.csv")).unwrap();
         assert!(bank.contains("2026-10-03,Checking,\"Coffee, large\",,,-4.5,Test category,auto,,0\r\n"));
+        let splits = std::fs::read_to_string(folder.join("transaction-splits.csv")).unwrap();
+        assert!(splits.starts_with("\u{FEFF}date,account,payee,transaction_amount,category,amount,note\r\n"));
+        assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,Test category,-3,\r\n"));
+        assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,,-1.5,\r\n"));
     }
 
     #[test]
