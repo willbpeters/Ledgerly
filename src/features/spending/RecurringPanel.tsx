@@ -29,8 +29,9 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 /**
  * Bills and subscriptions Tally has spotted in the history, with what is
- * still due this month. `transactions` is everything that counts toward
- * spending, from every month; detection decides which of it repeats.
+ * still due this month. `transactions` is every row in the visible accounts,
+ * from every month, removed ones included (a removed charge was still made);
+ * detection decides which of it repeats.
  */
 export function RecurringPanel({ transactions, loading, categories, accounts, dismissed, onSetDismissed, today = localIsoDate() }: {
   transactions: BankTransaction[];
@@ -61,11 +62,12 @@ export function RecurringPanel({ transactions, loading, categories, accounts, di
     [transactions, categories, today, dismissed],
   );
   const live = series.filter((s) => s.active);
-  const stale = series.filter((s) => !s.active);
+  // Newest last charge first: the bill that stopped most recently is the likeliest to matter.
+  const stale = series.filter((s) => !s.active).sort((a, b) => b.lastDate.localeCompare(a.lastDate));
   const outlook = useMemo(() => monthOutlook(series, today), [series, today]);
   // A weekly bill can come due several times: count the bills, not the charges.
   const dueBills = new Set(outlook.due.map((d) => d.key)).size;
-  const dismissedRows = useMemo(() => namesForKeys(transactions, dismissed), [transactions, dismissed]);
+  const dismissedRows = useMemo(() => namesForKeys(transactions, dismissed, categories), [transactions, dismissed, categories]);
   // Everything Tally spotted may be dismissed: say that, not that it found nothing.
   const allDismissed = useMemo(
     () => series.length === 0 && dismissed.length > 0
@@ -158,7 +160,7 @@ export function RecurringPanel({ transactions, loading, categories, accounts, di
         <div className="card stat">
           <div className="stat-label">Still due this month</div>
           <div className="stat-value n">{loading ? "—" : money(outlook.dueTotal)}</div>
-          {!loading && <div className="stat-hint">{plural(dueBills, "bill", "bills")} to come</div>}
+          {!loading && <div className="stat-hint">{plural(dueBills, "bill", "bills")} still due</div>}
         </div>
         <div className="card stat">
           <div className="stat-label">Paid this month</div>

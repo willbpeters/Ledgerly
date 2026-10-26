@@ -12,9 +12,18 @@ import { piecesOf } from "./splits";
  * loading, and quietly losing money off the screen is the worse failure.
  */
 export function fromVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
-  const excluded = new Set(accounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
   // A removed transaction was paid back: it is not spending the owner made.
-  return txns.filter((t) => !t.removed && !excluded.has(t.account_id));
+  return inVisibleAccounts(txns, accounts).filter((t) => !t.removed);
+}
+
+/**
+ * Transactions in accounts that count, removed ones included: not in a hidden
+ * account and not in an investment account. For what needs the whole record of
+ * charges, such as recurring bills, where a removed row was still charged.
+ */
+export function inVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
+  const excluded = new Set(accounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
+  return txns.filter((t) => !excluded.has(t.account_id));
 }
 
 /** First and last day of a `YYYY-MM` month, inclusive. */

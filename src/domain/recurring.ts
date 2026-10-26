@@ -69,8 +69,9 @@ function addDays(date: string, by: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function addMonths(date: string, by: number): string {
-  const [y, m, day] = date.split("-").map(Number);
+/** `by` calendar months on, landing on `day` (the date's own day unless given), clamped to the month's length. */
+function addMonths(date: string, by: number, day = Number(date.slice(8))): string {
+  const [y, m] = date.split("-").map(Number);
   // Day 0 of the month after the target is the target's last day.
   const last = new Date(Date.UTC(y, m - 1 + by + 1, 0)).getUTCDate();
   const d = new Date(Date.UTC(y, m - 1 + by, Math.min(day, last)));
@@ -78,13 +79,31 @@ function addMonths(date: string, by: number): string {
 }
 
 /**
- * `times` steps on from `date`. Always counted from `date` itself, so a bill
- * on the 31st is expected on the 31st again after a short month, not the 28th
- * for ever after.
+ * `times` steps on from `date`. Always counted from `date` itself, never one
+ * step at a time, so several steps do not drift: two months on from Jan 31 is
+ * Mar 31, not Mar 28. A single step from a date that was already clamped (Feb 28)
+ * cannot know the bill was on the 31st; `stepSeries` knows, from the series' own
+ * recent days of the month.
  */
 export function stepDate(date: string, cadence: Cadence, times = 1): string {
   const rule = ruleFor(cadence);
   return rule.days != null ? addDays(date, rule.days * times) : addMonths(date, rule.months! * times);
+}
+
+/**
+ * `times` steps on from a series' last charge. For calendar-month cadences the
+ * day of the month is the largest among the last three charges, then clamped to
+ * the target month: a bill on the 31st that paid on Feb 28 is expected on Mar 31,
+ * not Mar 28. Weekly and fortnightly bills just add days.
+ */
+export function stepSeries(
+  s: Pick<RecurringSeries, "lastDate" | "cadence" | "charges">,
+  times = 1,
+): string {
+  const rule = ruleFor(s.cadence);
+  if (rule.days != null) return addDays(s.lastDate, rule.days * times);
+  const days = [s.lastDate, ...s.charges.slice(-3).map((c) => c.date)].map((d) => Number(d.slice(8)));
+  return addMonths(s.lastDate, rule.months! * times, Math.max(...days));
 }
 
 export interface RecurringSeries {
@@ -94,11 +113,15 @@ export interface RecurringSeries {
   cadence: Cadence;
   /** A typical charge, as a positive number: the median of the last three. */
   amount: number;
-  /** Every charge, oldest first, as positive amounts; same-day duplicates once. */
-  charges: { date: string; amount: number }[];
+  /**
+   * Every charge, oldest first, as positive amounts; the rows of one day are
+   * summed into one charge. A removed charge (the owner was paid back) is still
+   * here, flagged, because the bill was charged: it counts for timing, not money.
+   */
+  charges: { date: string; amount: number; removed?: boolean }[];
   lastDate: string;
   nextDate: string;
-  /** Charges seen, with same-day duplicates counted once. */
+  /** Charges seen, with the rows of one day counted as one. */
   count: number;
   categoryId: number | null;
   accountId: number;
@@ -117,7 +140,7 @@ const AMOUNT_SLACK = 0.25;
 const AMOUNT_FLOOR = 2;
 /**
  * How many of the latest charges the amount is judged on. A price rise settles
- * in within half a year, however long the history: judging every charge would
+ * in within six charges, however long the history: judging every charge would
  * count the old price against a bill for years after the rise.
  */
 const RECENT_CHARGES = 6;
@@ -137,12 +160,29 @@ function cadenceFor(gap: number): CadenceRule | null {
 }
 
 /**
+ * Whether a row could be part of a bill: money out, and not filed as a transfer
+ * (a card payment) or income. A split is a bill unless every piece is one of those.
+ * Uncategorised rows are kept, because a new subscription usually arrives
+ * without a category. Pending and removed rows are for the caller to judge.
+ */
+function couldBeBill(t: BankTransaction, kindOf: Map<number, Category["kind"]>): boolean {
+  if (t.amount >= 0) return false;
+  const notABill = (p: { category_id: number | null }) => {
+    const kind = p.category_id == null ? null : kindOf.get(p.category_id);
+    return kind === "transfer" || kind === "income";
+  };
+  return !piecesOf(t).every(notABill);
+}
+
+/**
  * Every bill and subscription in `txns`, soonest next charge first.
  *
  * Only money out is looked at: paychecks and refunds are not bills, and a
- * row filed as a transfer (a card payment) or as income is not one either.
- * Uncategorised rows are kept, because a new subscription usually arrives
- * without a category. A split transaction counts as one whole charge.
+ * row filed as a transfer or as income is not one either. A split transaction
+ * counts as one whole charge. Pending rows never make or shape a bill, but a
+ * pending charge newer than the last posted one is the bill's latest charge.
+ * Removed rows (the owner was paid back) still count for timing: the bill was
+ * charged. They do not count for money.
  */
 export function detectRecurring(
   txns: BankTransaction[],
@@ -154,13 +194,7 @@ export function detectRecurring(
   const skip = new Set(dismissed);
   const groups = new Map<string, BankTransaction[]>();
   for (const t of txns) {
-    if (t.amount >= 0 || t.pending || t.removed) continue;
-    // A split is a bill unless every piece is a transfer or income.
-    const notABill = (p: { category_id: number | null }) => {
-      const kind = p.category_id == null ? null : kindOf.get(p.category_id);
-      return kind === "transfer" || kind === "income";
-    };
-    if (piecesOf(t).every(notABill)) continue;
+    if (!couldBeBill(t, kindOf)) continue;
     const key = recurringKey(t);
     if (key === "" || skip.has(key)) continue;
     const group = groups.get(key);
@@ -176,40 +210,68 @@ export function detectRecurring(
   return found.sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.name.localeCompare(b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
-function seriesFrom(key: string, rows: BankTransaction[], today: string): RecurringSeries | null {
+interface Charge { date: string; amount: number; removed: boolean; rows: BankTransaction[] }
+
+/**
+ * Rows on the same day (a retry, two lines of one order) are one charge made of
+ * several lines: their amounts add up, and every row stays in `rows`. Only
+ * lines not removed count toward the amount; a charge with none left is removed.
+ */
+function chargesOf(rows: BankTransaction[]): Charge[] {
   const sorted = [...rows].sort((a, b) => a.posted.localeCompare(b.posted) || a.id - b.id);
-  // Rows on the same day (a retry, two lines of one order) are one charge made
-  // of several lines: their amounts add up, and every row stays in `rows`.
-  const charges: { date: string; cents: number; rows: BankTransaction[] }[] = [];
+  const days: { date: string; kept: number; all: number; keptRows: number; rows: BankTransaction[] }[] = [];
   for (const t of sorted) {
     const cents = Math.round(-t.amount * 100);
-    const prev = charges[charges.length - 1];
-    if (prev && prev.date === t.posted) {
-      prev.cents += cents;
-      prev.rows.push(t);
-    } else {
-      charges.push({ date: t.posted, cents, rows: [t] });
+    let day = days[days.length - 1];
+    if (!day || day.date !== t.posted) {
+      day = { date: t.posted, kept: 0, all: 0, keptRows: 0, rows: [] };
+      days.push(day);
     }
+    day.all += cents;
+    if (!t.removed) {
+      day.kept += cents;
+      day.keptRows += 1;
+    }
+    day.rows.push(t);
   }
-  if (charges.length < MIN_CHARGES) return null;
+  return days.map((d) => ({
+    date: d.date,
+    amount: (d.keptRows > 0 ? d.kept : d.all) / 100,
+    removed: d.keptRows === 0,
+    rows: d.rows,
+  }));
+}
 
-  const gaps = charges.slice(1).map((c, i) => daysBetween(charges[i].date, c.date));
+function seriesFrom(key: string, rows: BankTransaction[], today: string): RecurringSeries | null {
+  // Pending rows are not yet settled: they take no part in finding the rhythm or the amount.
+  const settled = chargesOf(rows.filter((t) => !t.pending));
+  if (settled.length < MIN_CHARGES) return null;
+
+  const gaps = settled.slice(1).map((c, i) => daysBetween(settled[i].date, c.date));
   const rule = cadenceFor(median(gaps));
   if (!rule) return null;
   // The median alone would accept wild gaps either side of one good one.
   const fitting = gaps.filter((g) => g >= rule.min && g <= rule.max).length;
   if (fitting < gaps.length * STEADY_SHARE) return null;
 
-  const amounts = charges.map((c) => c.cents / 100);
+  // Money is judged on charges the owner paid for: removed ones only when there are no others.
+  const paid = settled.filter((c) => !c.removed);
+  const amounts = (paid.length > 0 ? paid : settled).map((c) => c.amount);
   const recent = amounts.slice(-RECENT_CHARGES);
   const typical = median(recent);
   const slack = Math.max(typical * AMOUNT_SLACK, AMOUNT_FLOOR);
   const steady = recent.filter((a) => Math.abs(a - typical) <= slack).length;
   if (steady < recent.length * STEADY_SHARE) return null;
 
-  const last = charges[charges.length - 1];
+  const last = settled[settled.length - 1];
   const first = last.rows[0];
-  const nextDate = stepDate(last.date, rule.cadence);
+  // A pending charge newer than the last posted one is the latest charge: the bill has been paid.
+  const all = [...settled, ...chargesOf(rows.filter((t) => t.pending && t.posted > last.date))];
+  const charges = all.map((c) => (c.removed
+    ? { date: c.date, amount: c.amount, removed: true }
+    : { date: c.date, amount: c.amount }));
+  const lastDate = all[all.length - 1].date;
+  const nextDate = stepSeries({ lastDate, cadence: rule.cadence, charges });
   // A split charge is filed under its largest piece.
   const largest = last.rows.flatMap(piecesOf).reduce((best, p) => (Math.abs(p.amount) > Math.abs(best.amount) ? p : best));
   return {
@@ -218,14 +280,14 @@ function seriesFrom(key: string, rows: BankTransaction[], today: string): Recurr
     cadence: rule.cadence,
     // The last three, so a price rise shows the new price.
     amount: median(amounts.slice(-3)),
-    charges: charges.map((c, i) => ({ date: c.date, amount: amounts[i] })),
-    lastDate: last.date,
+    charges,
+    lastDate,
     nextDate,
-    count: charges.length,
+    count: all.length,
     categoryId: largest.category_id,
     accountId: first.account_id,
     active: today <= addDays(nextDate, rule.grace),
-    transactionIds: sorted.map((t) => t.id),
+    transactionIds: all.flatMap((c) => c.rows.map((t) => t.id)),
   };
 }
 
@@ -235,12 +297,19 @@ export type RecurringStatus =
   | { kind: "late"; since: string };
 
 /**
+ * Days past the expected date before a bill shows as Late. Weekends and
+ * posting lag mean a charge routinely lands a day or two after its date; within
+ * that slack the bill is simply Due on that date.
+ */
+export const LATE_AFTER_DAYS = 2;
+
+/**
  * Where one bill stands today. Late wins: a weekly bill paid last Monday but
- * missing this Monday is late, not paid. Paid only when nothing more is
- * expected this month.
+ * missing this Monday (by more than the slack) is late, not paid. Paid only
+ * when nothing more is expected this month.
  */
 export function statusOf(s: RecurringSeries, today: string): RecurringStatus {
-  if (s.nextDate < today) return { kind: "late", since: s.nextDate };
+  if (today > addDays(s.nextDate, LATE_AFTER_DAYS)) return { kind: "late", since: s.nextDate };
   const { from, to } = monthWindow(today.slice(0, 7));
   if (s.lastDate >= from && s.lastDate <= to && s.nextDate > to) return { kind: "paid" };
   return { kind: "due", date: s.nextDate };
@@ -271,12 +340,12 @@ export function monthOutlook(series: RecurringSeries[], today: string): MonthOut
     if (!s.active) continue;
     if (s.lastDate >= from && s.lastDate <= to) {
       paidCount += 1;
-      // Every charge in the month: a weekly bill may already have made three.
-      for (const c of s.charges) if (c.date >= from && c.date <= to) paidCents += Math.round(c.amount * 100);
+      // Every charge in the month the owner paid for: a weekly bill may already have made three.
+      for (const c of s.charges) if (!c.removed && c.date >= from && c.date <= to) paidCents += Math.round(c.amount * 100);
     }
     // Every expected date after the last charge that lands in this month.
     for (let k = 1; ; k++) {
-      const date = stepDate(s.lastDate, s.cadence, k);
+      const date = stepSeries(s, k);
       if (date > to) break;
       // The first expected date may fall before this month: a bill that missed it
       // is late (statusOf says so), and a late bill is still owed. `active`
@@ -297,14 +366,20 @@ export function monthOutlook(series: RecurringSeries[], today: string): MonthOut
  * A name for each dismissed key, for the Dismissed list. A key is lowercased
  * and stripped of runs of three or more digits, so the latest charge's own name
  * reads better; a key with no charge left (its account was removed) shows as
- * itself. Only rows detectRecurring would look at count: money out, not pending,
- * not removed.
+ * itself. Only rows detectRecurring would look at count: money out that is not
+ * a transfer or income, and not pending (a removed row still counts, as it does
+ * for detection).
  */
-export function namesForKeys(txns: BankTransaction[], keys: string[]): { key: string; name: string }[] {
+export function namesForKeys(
+  txns: BankTransaction[],
+  keys: string[],
+  categories: Category[],
+): { key: string; name: string }[] {
+  const kindOf = new Map(categories.map((c) => [c.id, c.kind]));
   const wanted = new Set(keys);
   const latest = new Map<string, BankTransaction>();
   for (const t of txns) {
-    if (t.amount >= 0 || t.pending || t.removed) continue;
+    if (t.pending || !couldBeBill(t, kindOf)) continue;
     const key = recurringKey(t);
     if (!wanted.has(key)) continue;
     const seen = latest.get(key);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { monthWindow, monthLabel, shiftMonth, summariseMonth, limitFor, fromVisibleAccounts } from "./spending";
+import { monthWindow, monthLabel, shiftMonth, summariseMonth, limitFor, fromVisibleAccounts, inVisibleAccounts } from "./spending";
 import type { Account, BankTransaction, Budget, Category } from "./types";
 
 const cats: Category[] = [
@@ -217,5 +217,21 @@ describe("fromVisibleAccounts", () => {
     // Robinhood interest and crypto sales are neither spending nor income.
     const brokerage: Account = { ...accounts[1], type: "brokerage", hidden: false };
     expect(fromVisibleAccounts(rows, [accounts[0], brokerage]).map((t) => t.id)).toEqual([1]);
+  });
+});
+
+describe("inVisibleAccounts", () => {
+  const acct = (id: number, over: Partial<Account>): Account => ({
+    id, name: `A${id}`, type: "cash", institution: null, currency: "USD", created_at: "",
+    source: "simplefin", external_id: `e${id}`, synced_balance: 0, last_synced_at: null, hidden: false, ...over,
+  });
+  const row = (id: number, account_id: number, removed = false) =>
+    ({ id, account_id, removed, posted: "2026-09-01", amount: -5 }) as BankTransaction;
+
+  it("drops hidden and investment accounts but keeps removed rows", () => {
+    const accounts = [acct(1, {}), acct(2, { hidden: true }), acct(3, { type: "brokerage" })];
+    const rows = [row(1, 1), row(2, 1, true), row(3, 2), row(4, 3), row(5, 9)];
+    expect(inVisibleAccounts(rows, accounts).map((t) => t.id)).toEqual([1, 2, 5]);
+    expect(fromVisibleAccounts(rows, accounts).map((t) => t.id)).toEqual([1, 5]);
   });
 });

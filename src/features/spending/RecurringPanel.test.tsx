@@ -54,7 +54,7 @@ describe("RecurringPanel", () => {
     // One weekly bill, last charged Oct 12: Oct 19 (missed) and Oct 26 are both owed.
     const weekly = ["2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12"].map((d) => charge("Meal Kit", d, -30));
     renderPanel(weekly);
-    expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("1 bill to come");
+    expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("1 bill still due");
     expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("$60.00");
   });
 
@@ -190,7 +190,7 @@ describe("RecurringPanel", () => {
   it("counts several bills still due in the plural", () => {
     const gym = monthly("Gym", "28", ["2026-07", "2026-08", "2026-09"], -40);
     renderPanel([...spotify, ...gym]);
-    expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("2 bills to come");
+    expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("2 bills still due");
   });
 
   it("says the list is empty, not that nothing was spotted, when every bill is dismissed", () => {
@@ -208,6 +208,27 @@ describe("RecurringPanel", () => {
   it("says plainly when every spotted bill has stopped", () => {
     renderPanel(monthly("Old Gym", "05", ["2026-03", "2026-04", "2026-05"], -40));
     expect(screen.getByText("None of the bills Tally spotted are still being charged.")).toBeInTheDocument();
+  });
+
+  it("lists bills not seen lately with the most recently seen first", () => {
+    renderPanel([
+      ...monthly("Old Gym", "05", ["2026-02", "2026-03", "2026-04"], -40),
+      ...monthly("Old Paper", "07", ["2026-03", "2026-04", "2026-05"], -12),
+      ...monthly("Old Club", "09", ["2026-01", "2026-02", "2026-03"], -20),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Not seen lately (3)" }));
+    const names = screen.getAllByRole("row").slice(1).map((r) => within(r).getByText(/^Old /).textContent);
+    expect(names).toEqual(["Old Paper", "Old Gym", "Old Club"]);
+  });
+
+  it("counts a pending latest charge as paid, not late", () => {
+    renderPanel([
+      ...monthly("Netflix", "15", ["2026-07", "2026-08", "2026-09"], -15.49),
+      { ...charge("Netflix", "2026-10-15", -15.49), pending: true },
+    ]);
+    const row = screen.getByRole("row", { name: /Netflix/ });
+    expect(within(row).getByText("Paid this month")).toBeInTheDocument();
+    expect(screen.queryByText(/^Late/)).toBeNull();
   });
 
   it("labels the amount and the actions column", () => {

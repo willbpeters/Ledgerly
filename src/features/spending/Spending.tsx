@@ -5,7 +5,7 @@ import {
   useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
   useRecurringDismissed, useSetRecurringDismissed,
 } from "../../data/queries";
-import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
+import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts, inVisibleAccounts } from "../../domain/spending";
 import { inCategory } from "../../domain/splits";
 import { money } from "../../ui/format";
 import { Card, Button, EmptyState, Segmented } from "../../ui/components";
@@ -57,6 +57,8 @@ export function Spending() {
   const { data: everyTxn = NO_TXNS, isLoading: loadingEvery } =
     useBankTransactions(first ?? "", last ?? "", everyMonth && first != null && last != null);
   const searchable = useMemo(() => fromVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
+  // Recurring keeps removed rows: a bill whose charge was paid back was still charged.
+  const recurringTxns = useMemo(() => inVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
   // The every-month list is not ready until the range is known and then loaded.
   const loadingAll = everyMonth && (loadingRange || loadingEvery);
 
@@ -166,7 +168,7 @@ export function Spending() {
         />
       ) : view === "recurring" ? (
         <RecurringPanel
-          transactions={searchable}
+          transactions={recurringTxns}
           loading={loadingAll || loadingDismissed}
           categories={categories}
           accounts={accounts}

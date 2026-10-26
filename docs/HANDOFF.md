@@ -97,30 +97,48 @@ budgeting and spending module.
   has "Remove, don't ask again"; Settings → Spending turns it back on.
 - **Recurring** (Spending → Recurring): bills and subscriptions spotted from
   every month's history by `detectRecurring` in `src/domain/recurring.ts`
-  (pure, tested). Money out only; pending and removed rows are left out, as
-  are transfer and income rows (a split is skipped only when every piece is
-  one); uncategorised ones are kept. A split counts whole, and its series is
-  filed under the largest piece of its latest charge. Charges are grouped by
-  `recurringKey` (payee, or the description when the payee is blank or only
+  (pure, tested). Money out only; transfer and income rows are left out (a
+  split is skipped only when every piece is one); uncategorised ones are kept.
+  A split counts whole, and its series is filed under the largest piece of its
+  latest charge. Charges are grouped by `recurringKey` (payee, or the
+  description when the payee is blank or nothing but runs of three or more
   digits; lowercased, runs of 3+ digits removed, spaces collapsed; the display
   name falls back the same way). Same-day rows from one payee are one bill:
-  their amounts are summed into one charge. A bill needs **3+ charges**; the
-  median gap picks the cadence (weekly 6–8 days, every two weeks 13–16,
-  monthly 27–33, every three months 84–98, yearly 350–380) and **75%** of
-  gaps must fit it. Amount steadiness is judged on the **last six charges**
-  (**75%** within **25% or $2** of their median), so a price rise settles in
-  within about half a year however long the history; the usual amount is the
-  median of the last three. The next date steps by days or calendar months
-  from the last charge (Jan 31 → Feb 28). Past the next date by more than its
-  grace (3/5/10/20/30 days) a bill is "Not seen lately" ("Probably
-  cancelled") and drops out of the month's figures. `monthOutlook`: "Still
-  due" lists every expected unpaid charge this month — a late bill's missed
-  date from last month included — and counts distinct bills; "Paid this
-  month" sums every charge this month from bills still being charged (a weekly
-  bill charged three times counts all three). Totals are summed in whole
-  cents. "Not recurring" stores the key in `recurring_dismissed` (v10), with
-  Undo once it has landed; dismissed bills are listed with Restore. Rust never
-  builds keys, it only stores what `recurringKey` made.
+  their amounts are summed into one charge. Two subscriptions to the same payee
+  on different days are merged into one key (a known limit). A bill needs
+  **3+ charges**; the median gap picks the cadence (weekly 6–8 days, every two
+  weeks 13–16, monthly 27–33, every three months 84–98, yearly 350–380) and
+  **75%** of gaps must fit it. Amount steadiness is judged on the **last six
+  charges** (**75%** within **25% or $2** of their median), so a price rise
+  settles in within six charges however long the history; the usual amount is
+  the median of the last three.
+  - **Pending** rows never make a bill or shape its cadence or amount. But once
+    a bill is detected from posted charges, a pending charge dated after its
+    last one is its latest charge: the last date, the next date and "Paid this
+    month" all use it, so a bill is not "Late" while its charge is only pending.
+  - **Removed** rows (the owner was paid back) still count for timing: cadence,
+    last and next date, and whether the bill is still active. They do not count
+    for money: the amount uses the non-removed charges where there are any, and
+    "Paid this month" leaves removed charges out. The Recurring panel therefore
+    gets the rows of visible accounts with removed ones kept
+    (`inVisibleAccounts`), not `fromVisibleAccounts`.
+  - The next date steps by days or calendar months from the last charge. For
+    month-based cadences the day of the month is the largest among the last
+    three charges (then clamped to the target month), so Jan 31, Feb 28, Mar 31
+    is followed by Apr 30 and then May 31, not the 28th for ever after.
+  - A bill shows **Late** only when today is more than **2 days** past its next
+    date (`LATE_AFTER_DAYS`: weekends and posting lag); within that it is Due on
+    that date. Past the next date by more than its grace (3/5/10/20/30 days) a
+    bill is "Not seen lately" ("Probably cancelled"; newest last charge first)
+    and drops out of the month's figures.
+  - `monthOutlook`: "Still due" lists every expected unpaid charge this month,
+    a late bill's missed date from last month included; "Paid this month" sums
+    every charge this month from bills still being charged (a weekly bill
+    charged three times counts all three). The distinct-bill count under "Still
+    due" is done by the panel, not `monthOutlook`. Totals are summed in whole
+    cents. "Not recurring" stores the key in `recurring_dismissed` (v10), with
+    Undo once it has landed; dismissed bills are listed with Restore. Rust never
+    builds keys, it only stores what `recurringKey` made.
 - **Split transactions** (Spending): Split on a row opens `SplitEditor`
   beneath it; the pieces (category + amount, carrying the transaction's sign)
   must add up to the cent, and Rust checks again (`store::set_splits`), storing
