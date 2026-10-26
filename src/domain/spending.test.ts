@@ -105,6 +105,36 @@ describe("summariseMonth", () => {
   });
 });
 
+const split = (amount: number, pieces: [number | null, number][]): BankTransaction => ({
+  ...txn(amount, null), category_source: "manual",
+  splits: pieces.map(([category_id, a], i) => ({ id: 100 + i, category_id, amount: a, note: null })),
+});
+
+describe("summariseMonth with split transactions", () => {
+  it("counts each piece in its own category", () => {
+    const s = summariseMonth([split(-85.5, [[1, -60], [2, -25.5]])], cats, [], "2026-09");
+    const groceries = s.categories.find((c) => c.category.id === 1)!;
+    const dining = s.categories.find((c) => c.category.id === 2)!;
+    expect([groceries.spent, groceries.count]).toEqual([60, 1]);
+    expect([dining.spent, dining.count]).toEqual([25.5, 1]);
+    expect(s.spent).toBe(85.5);
+    expect(s.uncategorisedCount).toBe(0);
+  });
+
+  it("puts an income piece in income", () => {
+    const s = summariseMonth([split(100, [[3, 120], [1, -20]])], cats, [], "2026-09");
+    expect(s.income).toBe(120);
+    expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(20);
+  });
+
+  it("treats what the pieces no longer cover as needing a category", () => {
+    const s = summariseMonth([split(-90, [[1, -60], [2, -25.5]])], cats, [], "2026-09");
+    expect(s.spent).toBe(85.5);
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(4.5);
+  });
+});
+
 describe("limitFor", () => {
   const budgets: Budget[] = [
     { id: 1, category_id: 1, month: null, limit_amount: 400 },
