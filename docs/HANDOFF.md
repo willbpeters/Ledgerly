@@ -123,15 +123,20 @@ budgeting and spending module.
     and a series whose every charge was removed is not a bill. The Recurring panel therefore
     gets the rows of visible accounts with removed ones kept
     (`inVisibleAccounts`), not `fromVisibleAccounts`.
-  - The next date steps by days or calendar months from the last charge. For
-    month-based cadences the day of the month is the largest among the last
-    three charges (then clamped to the target month), so Jan 31, Feb 28, Mar 31
-    is followed by Apr 30 and then May 31, not the 28th for ever after.
+  - The next date steps by days or calendar months from the last charge's own
+    day of the month (clamped to the target month). Only when that charge fell
+    on the last day of its month, so its day may have been clamped, is the
+    largest day among the last three charges used instead: Jan 31, Feb 28,
+    Mar 31, Apr 30 is followed by May 31, not the 28th for ever after, while a
+    billing day that moved from the 28th to the 5th stays on the 5th.
   - A bill shows **Late** only when today is more than **2 days** past its next
     date (`LATE_AFTER_DAYS`: weekends and posting lag); within that it is Due on
-    that date. Past the next date by more than its grace (3/5/10/20/30 days) a
-    bill is "Not seen lately" ("Probably cancelled"; newest last charge first)
-    and drops out of the month's figures.
+    that date, and the badge reads "Expected <date>" once that date has passed.
+    A bill charged this month whose charges this month were all removed shows
+    **Paid back this month** (`paidBack`), not paid: it is in neither "Still
+    due" nor "Paid this month". Past the next date by more than its grace
+    (3/5/10/20/30 days) a bill is "Not seen lately" ("Probably cancelled";
+    newest last charge first) and drops out of the month's figures.
   - `monthOutlook`: "Still due" lists every expected unpaid charge this month,
     a late bill's missed date from last month included; "Paid this month" sums
     every charge this month from bills still being charged (a weekly bill
