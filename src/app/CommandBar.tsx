@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useSimplefinStatus, useSimplefinSync } from "../data/queries";
+import { useSimplefinStatus, useSimplefinSync, useSimplefinSyncing } from "../data/queries";
 import { useToast } from "../ui/toast";
 import { timeAgo } from "../ui/format";
 import { Button } from "../ui/components";
@@ -23,6 +23,7 @@ export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void })
   const navigate = useNavigate();
   const { data: status } = useSimplefinStatus();
   const sync = useSimplefinSync();
+  const syncing = useSimplefinSyncing();
   const toast = useToast();
   const [term, setTerm] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -72,7 +73,7 @@ export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void })
         {status?.connected && (
           <>
             <span className="cmd-status"><span className="dot" />Synced {timeAgo(status.last_synced_at)}</span>
-            <Button variant="secondary" size="sm" loading={sync.isPending} onClick={runSync}>
+            <Button variant="secondary" size="sm" loading={syncing} onClick={runSync}>
               <Icons.sync size={13} />Sync
             </Button>
           </>

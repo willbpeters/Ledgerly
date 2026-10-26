@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
@@ -52,14 +52,19 @@ export function useSimplefinConnect() {
     onSettled: () => invalidateAfterSync(qc),
   });
 }
+const syncKey = ["simplefin", "sync"] as const;
 export function useSimplefinSync() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: syncKey,
     mutationFn: () => api.simplefin.sync(),
     onSuccess: writeLastSync,
     onSettled: () => invalidateAfterSync(qc),
   });
 }
+/** True while any sync is running, including the one started at launch, so
+ *  every Sync button shows it rather than only the one that was clicked. */
+export const useSimplefinSyncing = () => useIsMutating({ mutationKey: syncKey }) > 0;
 export function useSimplefinDisconnect() {
   const qc = useQueryClient();
   return useMutation({

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose, useBackupNow } from "../../data/queries";
+import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinSyncing, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose, useBackupNow } from "../../data/queries";
 import { AddBankSection, SIMPLEFIN_MY_ACCOUNT_URL } from "./AddBankSection";
 import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
@@ -35,6 +35,7 @@ export function SimplefinCard() {
   const { data: status, isLoading } = useSimplefinStatus();
   const connect = useSimplefinConnect();
   const sync = useSimplefinSync();
+  const syncing = useSimplefinSyncing();
   const disconnect = useSimplefinDisconnect();
   const backfill = useSimplefinBackfill();
   const diagnose = useSimplefinDiagnose();
@@ -105,7 +106,7 @@ export function SimplefinCard() {
         <div className="grid" style={{ gap: 12 }}>
           <div className="muted">Last synced {timeAgo(status.last_synced_at)}. Balances and holdings update each time you sync.</div>
           <div className="row center">
-            <Button onClick={doSync} loading={sync.isPending}>Sync now</Button>
+            <Button onClick={doSync} loading={syncing}>Sync now</Button>
             <Button variant="secondary" loading={backfill.isPending} onClick={() => {
               setError(""); setReport(null);
               backfill.mutate(730, { onSuccess: setReport, onError: (e) => setError(String(e)) });

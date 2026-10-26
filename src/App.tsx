@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { usePriceAutoRefresh } from "./data/usePriceAutoRefresh";
 import { usePriceHistory } from "./data/priceHistory";
+import { useSimplefinAutoSync } from "./data/useSimplefinAutoSync";
 import { AppShell } from "./app/AppShell";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Holdings } from "./features/holdings/Holdings";
@@ -33,6 +34,8 @@ const router = createBrowserRouter([
 
 function AutoRefresh() {
   usePriceAutoRefresh();
+  // Pull fresh balances and transactions from the bank once at launch.
+  useSimplefinAutoSync();
   // Fills in two years of daily closes once, so the risk figures have
   // something to work from.
   usePriceHistory();
