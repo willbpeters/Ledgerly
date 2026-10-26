@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
-import type { NewSplit } from "../domain/types";
+import type { NewGoal, NewSplit } from "../domain/types";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
@@ -44,6 +44,8 @@ function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
     qc.invalidateQueries({ queryKey: k });
   }
   qc.invalidateQueries({ queryKey: ["bankTxns"] });
+  // A sync can remove an account, which unlinks any goal following it.
+  qc.invalidateQueries({ queryKey: ["goals"] });
 }
 export function useSimplefinConnect() {
   const qc = useQueryClient();
@@ -121,6 +123,8 @@ export function useDeleteAccount() {
       qc.invalidateQueries({ queryKey: keys.accounts });
       qc.invalidateQueries({ queryKey: keys.transactions });
       qc.invalidateQueries({ queryKey: keys.synced });
+      // Its goals now follow nothing: the database set their account to null.
+      qc.invalidateQueries({ queryKey: ["goals"] });
     },
   });
 }
@@ -370,5 +374,33 @@ export function useSetRemoved() {
   return useMutation({
     mutationFn: (v: { ids: number[]; removed: boolean }) => api.bankTransactions.setRemoved(v.ids, v.removed),
     onSuccess: () => invalidateSpending(qc),
+  });
+}
+
+// ---------- goals ----------
+
+const goalsKey = ["goals"] as const;
+
+export const useGoals = () => useQuery({ queryKey: goalsKey, queryFn: api.goals.list });
+
+export function useCreateGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (goal: NewGoal) => api.goals.create(goal),
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey }),
+  });
+}
+export function useUpdateGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; goal: NewGoal }) => api.goals.update(v.id, v.goal),
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey }),
+  });
+}
+export function useDeleteGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.goals.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey }),
   });
 }

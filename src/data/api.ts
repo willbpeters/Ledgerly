@@ -6,6 +6,7 @@ import type {
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
+  Goal, NewGoal,
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
@@ -123,5 +124,11 @@ export const api = {
   },
   accountTypes: {
     set: (id: number, kind: string) => invoke<void>("accounts_set_type", { id, kind }),
+  },
+  goals: {
+    list: () => invoke<Goal[]>("goals_list"),
+    create: (goal: NewGoal) => invoke<Goal>("goals_create", { goal }),
+    update: (id: number, goal: NewGoal) => invoke<void>("goals_update", { id, goal }),
+    delete: (id: number) => invoke<void>("goals_delete", { id }),
   },
 };

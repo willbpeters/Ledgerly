@@ -182,3 +182,20 @@ export interface BackupStatus {
   extra_folder: string | null;
   backups_folder: string;
 }
+
+/** A savings goal. It follows one account's value, or an amount kept up to date by hand. */
+export interface Goal {
+  id: number; name: string; target_amount: number;
+  /** `YYYY-MM-DD`, or null for a goal with no deadline. */
+  target_date: string | null;
+  /** The account whose value is the progress; null when updated by hand. */
+  account_id: number | null;
+  /** Saved so far, for a goal updated by hand. */
+  saved_amount: number;
+  created_at: string;
+}
+/** A goal on its way to the database, before it has an id. */
+export interface NewGoal {
+  name: string; target_amount: number; target_date: string | null;
+  account_id: number | null; saved_amount: number;
+}
