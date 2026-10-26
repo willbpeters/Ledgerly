@@ -161,6 +161,20 @@ describe("SplitEditor", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
   });
 
+  it("still finishes a save when a piece is edited while it is in flight", async () => {
+    let finish: () => void = () => {};
+    setSplits.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const onDone = renderEditor();
+    type(amount(1), "60");
+    type(amount(2), "25.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save split" }));
+    await waitFor(() => expect(setSplits).toHaveBeenCalled());
+    type(amount(2), "25.5");
+    finish();
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
   it("cancels without saving", () => {
     const onDone = renderEditor();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

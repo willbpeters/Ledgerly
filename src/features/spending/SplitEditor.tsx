@@ -57,8 +57,9 @@ export function SplitEditor({ txn, categories, onDone }: {
   const sign = txn.amount < 0 ? -1 : 1;
   const pieces: Piece[] = drafts.map((d) => ({ category_id: d.category_id, amount: sign * dollarsOf(d.amount) }));
   const { left, problem } = validateSplits(txn.amount, pieces);
-  // Any edit makes an earlier failed save stale.
-  const edit = (change: (prev: Draft[]) => Draft[]) => { setSplits.reset(); setDrafts(change); };
+  // An edit makes an earlier failed save stale. Never reset a save still in
+  // flight: that detaches it, and its Undo toast would never appear.
+  const edit = (change: (prev: Draft[]) => Draft[]) => { if (setSplits.isError) setSplits.reset(); setDrafts(change); };
   const update = (i: number, change: Partial<Draft>) =>
     edit((prev) => prev.map((d, j) => (j === i ? { ...d, ...change } : d)));
 
