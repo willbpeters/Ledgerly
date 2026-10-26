@@ -37,6 +37,11 @@ describe("displayName", () => {
     expect(displayName({ payee: "  Netflix ", description: "NETFLIX.COM" })).toBe("Netflix");
     expect(displayName({ payee: null, description: "  Spotify USA  " })).toBe("Spotify USA");
   });
+
+  it("uses the description when the payee has no name left, as recurringKey does", () => {
+    expect(displayName({ payee: "12345", description: "NETFLIX" })).toBe("NETFLIX");
+    expect(displayName({ payee: "7-Eleven", description: "x" })).toBe("7-Eleven");
+  });
 });
 
 describe("stepDate", () => {
@@ -74,6 +79,7 @@ const cats: Category[] = [
   { id: 1, name: "Subscriptions", kind: "spending", colour: "chart-1", sort: 10, is_builtin: true },
   { id: 2, name: "Income", kind: "income", colour: "chart-2", sort: 20, is_builtin: true },
   { id: 3, name: "Transfer", kind: "transfer", colour: "chart-6", sort: 30, is_builtin: true },
+  { id: 4, name: "Groceries", kind: "spending", colour: "chart-3", sort: 40, is_builtin: true },
 ];
 
 let n = 0;
@@ -164,12 +170,74 @@ describe("detectRecurring", () => {
 
   it("counts two charges on the same day as one bill", () => {
     const txns = [
-      ...monthly("Netflix", "05", ["2026-08", "2026-09", "2026-10"], -15.49),
+      ...monthly("Netflix", "05", ["2026-07", "2026-08", "2026-09", "2026-10"], -15.49),
       charge("Netflix", "2026-10-05", -15.49),
     ];
     const [s] = detectRecurring(txns, cats, TODAY);
-    expect(s.count).toBe(3);
-    expect(s.transactionIds).toHaveLength(4);
+    expect(s.count).toBe(4);
+    expect(s.transactionIds).toHaveLength(5);
+  });
+
+  it("adds up the lines of one day into one charge", () => {
+    const txns = ["2026-07", "2026-08", "2026-09", "2026-10"].flatMap((m, i) => {
+      const big = charge("Costco", `${m}-05`, -15.49);
+      const small = charge("Costco", `${m}-05`, -7.99);
+      return i % 2 === 0 ? [big, small] : [small, big];
+    });
+    const found = detectRecurring(txns, cats, TODAY);
+    expect(found).toHaveLength(1);
+    expect(found[0].amount).toBe(23.48);
+    expect(found[0].charges.map((c) => c.amount)).toEqual([23.48, 23.48, 23.48, 23.48]);
+    expect(found[0].count).toBe(4);
+    expect(found[0].transactionIds).toHaveLength(8);
+  });
+
+  it("judges the amount on recent charges, so an old price does not count against a rise", () => {
+    const txns = [
+      ...monthly("Streamer", "05", ["2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05"], -7.99),
+      ...monthly("Streamer", "05", ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"], -10.99),
+    ];
+    const found = detectRecurring(txns, cats, TODAY);
+    expect(found).toHaveLength(1);
+    expect(found[0].amount).toBe(10.99);
+  });
+
+  it("forgives one skipped month among five charges", () => {
+    // Gaps 31, 61, 31, 30: median 31 is monthly, and three of four gaps fit.
+    const txns = monthly("Gym", "05", ["2026-05", "2026-06", "2026-08", "2026-09", "2026-10"], -40);
+    expect(detectRecurring(txns, cats, TODAY).map((s) => s.cadence)).toEqual(["monthly"]);
+  });
+
+  it("does not forgive a skipped month among only four charges", () => {
+    // Gaps 61, 31, 30: the median 31 is monthly, but only two of three gaps fit, under the share.
+    const txns = monthly("Gym", "05", ["2026-06", "2026-08", "2026-09", "2026-10"], -40);
+    expect(detectRecurring(txns, cats, TODAY)).toEqual([]);
+  });
+
+  it("skips a split whose every piece is a transfer or income", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].map((m, i) => charge("Card Payment", `${m}-02`, -500, {
+      category_id: null,
+      splits: [
+        { id: 10 + i * 2, category_id: 3, amount: -300, note: null },
+        { id: 11 + i * 2, category_id: 2, amount: -200, note: null },
+      ],
+    }));
+    expect(detectRecurring(txns, cats, TODAY)).toEqual([]);
+  });
+
+  it("keeps a split with any spending piece, filed under its largest piece", () => {
+    const split = (m: string, a: number, b: number) => charge("Costco", `${m}-05`, -(a + b), {
+      category_id: null,
+      splits: [
+        { id: 0, category_id: 1, amount: -a, note: null },
+        { id: 0, category_id: 4, amount: -b, note: null },
+      ],
+    });
+    // Subscriptions was the larger piece until the latest charge, where Groceries is.
+    const txns = [split("2026-08", 30, 10), split("2026-09", 30, 10), split("2026-10", 10, 30)];
+    const found = detectRecurring(txns, cats, TODAY);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ amount: 40, categoryId: 4 });
   });
 
   it("skips a key the owner dismissed", () => {

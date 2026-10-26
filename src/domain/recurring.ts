@@ -1,4 +1,5 @@
 import type { BankTransaction, Category } from "./types";
+import { piecesOf } from "./splits";
 
 /**
  * Recurring bills and subscriptions, spotted from history. Everything here is
@@ -40,7 +41,9 @@ export function cadenceLabel(cadence: Cadence): string {
 
 /** The name a person would recognise: the payee, or the description without one. */
 export function displayName(t: Pick<BankTransaction, "payee" | "description">): string {
-  return t.payee?.trim() || t.description.trim();
+  // The same test recurringKey applies, so a name and its key never disagree.
+  const payee = t.payee?.trim() ?? "";
+  return normalise(payee) ? payee : t.description.trim();
 }
 
 function normalise(s: string): string {
@@ -111,6 +114,12 @@ const STEADY_SHARE = 0.75;
 /** How far an amount may stray from the median: a quarter, or $2 on a small bill. */
 const AMOUNT_SLACK = 0.25;
 const AMOUNT_FLOOR = 2;
+/**
+ * How many of the latest charges the amount is judged on. A price rise settles
+ * in within half a year, however long the history: judging every charge would
+ * count the old price against a bill for years after the rise.
+ */
+const RECENT_CHARGES = 6;
 
 function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
@@ -145,8 +154,12 @@ export function detectRecurring(
   const groups = new Map<string, BankTransaction[]>();
   for (const t of txns) {
     if (t.amount >= 0 || t.pending || t.removed) continue;
-    const kind = t.category_id == null ? null : kindOf.get(t.category_id);
-    if (kind === "transfer" || kind === "income") continue;
+    // A split is a bill unless every piece is a transfer or income.
+    const notABill = (p: { category_id: number | null }) => {
+      const kind = p.category_id == null ? null : kindOf.get(p.category_id);
+      return kind === "transfer" || kind === "income";
+    };
+    if (piecesOf(t).every(notABill)) continue;
     const key = recurringKey(t);
     if (key === "" || skip.has(key)) continue;
     const group = groups.get(key);
@@ -159,45 +172,57 @@ export function detectRecurring(
     const series = seriesFrom(key, rows, today);
     if (series) found.push(series);
   }
-  return found.sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.name.localeCompare(b.name));
+  return found.sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
 }
 
 function seriesFrom(key: string, rows: BankTransaction[], today: string): RecurringSeries | null {
   const sorted = [...rows].sort((a, b) => a.posted.localeCompare(b.posted) || a.id - b.id);
-  // A second charge on the same day (a retry, two lines of one order) is one bill.
-  const charges: BankTransaction[] = [];
+  // Rows on the same day (a retry, two lines of one order) are one charge made
+  // of several lines: their amounts add up, and every row stays in `rows`.
+  const charges: { date: string; cents: number; rows: BankTransaction[] }[] = [];
   for (const t of sorted) {
-    if (charges.length === 0 || charges[charges.length - 1].posted !== t.posted) charges.push(t);
+    const cents = Math.round(-t.amount * 100);
+    const prev = charges[charges.length - 1];
+    if (prev && prev.date === t.posted) {
+      prev.cents += cents;
+      prev.rows.push(t);
+    } else {
+      charges.push({ date: t.posted, cents, rows: [t] });
+    }
   }
   if (charges.length < MIN_CHARGES) return null;
 
-  const gaps = charges.slice(1).map((t, i) => daysBetween(charges[i].posted, t.posted));
+  const gaps = charges.slice(1).map((c, i) => daysBetween(charges[i].date, c.date));
   const rule = cadenceFor(median(gaps));
   if (!rule) return null;
   // The median alone would accept wild gaps either side of one good one.
   const fitting = gaps.filter((g) => g >= rule.min && g <= rule.max).length;
   if (fitting < gaps.length * STEADY_SHARE) return null;
 
-  const amounts = charges.map((t) => -t.amount);
-  const typical = median(amounts);
+  const amounts = charges.map((c) => c.cents / 100);
+  const recent = amounts.slice(-RECENT_CHARGES);
+  const typical = median(recent);
   const slack = Math.max(typical * AMOUNT_SLACK, AMOUNT_FLOOR);
-  const steady = amounts.filter((a) => Math.abs(a - typical) <= slack).length;
-  if (steady < amounts.length * STEADY_SHARE) return null;
+  const steady = recent.filter((a) => Math.abs(a - typical) <= slack).length;
+  if (steady < recent.length * STEADY_SHARE) return null;
 
   const last = charges[charges.length - 1];
-  const nextDate = stepDate(last.posted, rule.cadence);
+  const first = last.rows[0];
+  const nextDate = stepDate(last.date, rule.cadence);
+  // A split charge is filed under its largest piece.
+  const largest = last.rows.flatMap(piecesOf).reduce((best, p) => (Math.abs(p.amount) > Math.abs(best.amount) ? p : best));
   return {
     key,
-    name: displayName(last),
+    name: displayName(first),
     cadence: rule.cadence,
     // The last three, so a price rise shows the new price.
     amount: median(amounts.slice(-3)),
-    charges: charges.map((t) => ({ date: t.posted, amount: -t.amount })),
-    lastDate: last.posted,
+    charges: charges.map((c, i) => ({ date: c.date, amount: amounts[i] })),
+    lastDate: last.date,
     nextDate,
     count: charges.length,
-    categoryId: last.category_id,
-    accountId: last.account_id,
+    categoryId: largest.category_id,
+    accountId: first.account_id,
     active: today <= addDays(nextDate, rule.grace),
     transactionIds: sorted.map((t) => t.id),
   };
