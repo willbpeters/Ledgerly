@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { recurringKey, stepDate, cadenceLabel } from "./recurring";
+import { recurringKey, displayName, stepDate, cadenceLabel, detectRecurring } from "./recurring";
+import type { BankTransaction, Category } from "./types";
 
 describe("recurringKey", () => {
   it("ignores case and spacing", () => {
@@ -20,6 +21,21 @@ describe("recurringKey", () => {
 
   it("falls back to the description when the payee is blank", () => {
     expect(recurringKey({ payee: "   ", description: "Spotify USA" })).toBe("spotify usa");
+  });
+
+  it("falls back to the description when the payee is only digits", () => {
+    expect(recurringKey({ payee: "12345", description: "Netflix" })).toBe("netflix");
+  });
+
+  it("is empty when neither the payee nor the description has a name left", () => {
+    expect(recurringKey({ payee: "12345", description: "67890" })).toBe("");
+  });
+});
+
+describe("displayName", () => {
+  it("prefers the trimmed payee, then the trimmed description", () => {
+    expect(displayName({ payee: "  Netflix ", description: "NETFLIX.COM" })).toBe("Netflix");
+    expect(displayName({ payee: null, description: "  Spotify USA  " })).toBe("Spotify USA");
   });
 });
 
@@ -51,5 +67,136 @@ describe("cadenceLabel", () => {
   it("names each cadence for a person", () => {
     expect(cadenceLabel("monthly")).toBe("Monthly");
     expect(cadenceLabel("biweekly")).toBe("Every two weeks");
+  });
+});
+
+const cats: Category[] = [
+  { id: 1, name: "Subscriptions", kind: "spending", colour: "chart-1", sort: 10, is_builtin: true },
+  { id: 2, name: "Income", kind: "income", colour: "chart-2", sort: 20, is_builtin: true },
+  { id: 3, name: "Transfer", kind: "transfer", colour: "chart-6", sort: 30, is_builtin: true },
+];
+
+let n = 0;
+const charge = (payee: string, posted: string, amount: number, over: Partial<BankTransaction> = {}): BankTransaction => ({
+  id: ++n, account_id: 1, external_id: `e${n}`, posted, amount, description: payee.toUpperCase(),
+  payee, memo: null, mcc: null, pending: false, category_id: 1, category_source: "auto",
+  reviewed: true, note: null, removed: false, splits: [], ...over,
+});
+/** One charge on `day` of each month listed. */
+const monthly = (payee: string, day: string, months: string[], amount: number, over: Partial<BankTransaction> = {}) =>
+  months.map((m) => charge(payee, `${m}-${day}`, amount, over));
+
+const TODAY = "2026-10-20";
+
+describe("detectRecurring", () => {
+  it("finds a monthly subscription with its amount, last and next dates", () => {
+    const found = detectRecurring(
+      monthly("Netflix", "05", ["2026-07", "2026-08", "2026-09", "2026-10"], -15.49), cats, TODAY);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      key: "netflix", name: "Netflix", cadence: "monthly", amount: 15.49,
+      lastDate: "2026-10-05", nextDate: "2026-11-05", count: 4, categoryId: 1, accountId: 1, active: true,
+    });
+    expect(found[0].transactionIds).toHaveLength(4);
+  });
+
+  it("needs three charges before calling something a bill", () => {
+    expect(detectRecurring(monthly("Netflix", "05", ["2026-09", "2026-10"], -15.49), cats, TODAY)).toEqual([]);
+  });
+
+  it("ignores a payee charged at irregular times", () => {
+    const txns = ["2026-01-01", "2026-01-20", "2026-03-15", "2026-03-18"].map((d) => charge("Hardware Store", d, -20));
+    expect(detectRecurring(txns, cats, TODAY)).toEqual([]);
+  });
+
+  it("ignores a payee whose amounts jump around", () => {
+    const txns = [
+      charge("Amazon", "2026-06-02", -12), charge("Amazon", "2026-07-02", -250),
+      charge("Amazon", "2026-08-02", -40), charge("Amazon", "2026-09-02", -8),
+    ];
+    expect(detectRecurring(txns, cats, TODAY)).toEqual([]);
+  });
+
+  it("forgives one missed month", () => {
+    const found = detectRecurring(
+      monthly("Gym", "05", ["2026-03", "2026-04", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"], -40), cats, TODAY);
+    expect(found.map((s) => s.cadence)).toEqual(["monthly"]);
+  });
+
+  it("forgives a price rise and quotes the recent price", () => {
+    const txns = [
+      ...monthly("Spotify", "12", ["2026-06", "2026-07"], -11.99),
+      ...monthly("Spotify", "12", ["2026-08", "2026-09", "2026-10"], -12.99),
+    ];
+    expect(detectRecurring(txns, cats, TODAY)[0].amount).toBe(12.99);
+  });
+
+  it("allows a couple of dollars either way on a small bill", () => {
+    const txns = [charge("Parking", "2026-08-01", -3), charge("Parking", "2026-09-01", -4.5), charge("Parking", "2026-10-01", -3.5)];
+    expect(detectRecurring(txns, cats, TODAY)).toHaveLength(1);
+  });
+
+  it("tells the cadences apart", () => {
+    const weekly = ["2026-09-22", "2026-09-29", "2026-10-06", "2026-10-13"].map((d) => charge("Meal Kit", d, -60));
+    const biweekly = ["2026-08-25", "2026-09-08", "2026-09-22", "2026-10-06"].map((d) => charge("Cleaner", d, -90));
+    const quarterly = ["2026-01-10", "2026-04-10", "2026-07-10", "2026-10-10"].map((d) => charge("Water", d, -75));
+    const yearly = ["2023-11-01", "2024-11-01", "2025-11-01"].map((d) => charge("Domain", d, -20));
+    const byKey = new Map(detectRecurring([...weekly, ...biweekly, ...quarterly, ...yearly], cats, TODAY)
+      .map((s) => [s.key, s.cadence]));
+    expect(byKey.get("meal kit")).toBe("weekly");
+    expect(byKey.get("cleaner")).toBe("biweekly");
+    expect(byKey.get("water")).toBe("quarterly");
+    expect(byKey.get("domain")).toBe("yearly");
+  });
+
+  it("looks only at money out that is posted, kept, and not a transfer or income", () => {
+    const months = ["2026-07", "2026-08", "2026-09"];
+    const txns = [
+      ...monthly("Payroll", "01", months, 2400, { category_id: null }),
+      ...monthly("Card Payment", "02", months, -500, { category_id: 3 }),
+      ...monthly("Side Gig", "03", months, -10, { category_id: 2 }),
+      ...monthly("Pending Co", "04", months, -10, { pending: true }),
+      ...monthly("Paid Back", "06", months, -10, { removed: true }),
+      ...monthly("New Thing", "07", months, -10, { category_id: null }),
+    ];
+    expect(detectRecurring(txns, cats, TODAY).map((s) => s.name)).toEqual(["New Thing"]);
+  });
+
+  it("counts two charges on the same day as one bill", () => {
+    const txns = [
+      ...monthly("Netflix", "05", ["2026-08", "2026-09", "2026-10"], -15.49),
+      charge("Netflix", "2026-10-05", -15.49),
+    ];
+    const [s] = detectRecurring(txns, cats, TODAY);
+    expect(s.count).toBe(3);
+    expect(s.transactionIds).toHaveLength(4);
+  });
+
+  it("skips a key the owner dismissed", () => {
+    const txns = monthly("Netflix", "05", ["2026-08", "2026-09", "2026-10"], -15.49);
+    expect(detectRecurring(txns, cats, TODAY, ["netflix"])).toEqual([]);
+  });
+
+  it("stops counting a bill as active once it is well past due", () => {
+    const txns = monthly("Old Gym", "05", ["2026-04", "2026-05", "2026-06"], -40);
+    // Next expected 2026-07-05, monthly grace is 10 days.
+    expect(detectRecurring(txns, cats, "2026-07-15")[0].active).toBe(true);
+    expect(detectRecurring(txns, cats, "2026-07-16")[0].active).toBe(false);
+  });
+
+  it("takes the name, category and account from the latest charge", () => {
+    const txns = [
+      ...monthly("NETFLIX", "05", ["2026-07", "2026-08"], -15.49, { category_id: null, account_id: 1 }),
+      charge("Netflix", "2026-09-05", -15.49, { category_id: 1, account_id: 2 }),
+    ];
+    expect(detectRecurring(txns, cats, TODAY)[0]).toMatchObject({ name: "Netflix", categoryId: 1, accountId: 2 });
+  });
+
+  it("lists the soonest next charge first", () => {
+    const txns = [
+      ...monthly("Later", "25", ["2026-08", "2026-09", "2026-10"], -10),
+      ...monthly("Sooner", "02", ["2026-08", "2026-09", "2026-10"], -10),
+    ];
+    expect(detectRecurring(txns, cats, TODAY).map((s) => s.name)).toEqual(["Sooner", "Later"]);
   });
 });
