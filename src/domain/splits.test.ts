@@ -68,6 +68,23 @@ describe("validateSplits", () => {
 
   it("needs at least two pieces", () => {
     expect(validateSplits(-85.5, [p(1, -85.5)]).problem).toBe("too-few");
+    expect(validateSplits(-85.5, []).problem).toBe("too-few");
+  });
+
+  it("says when a refund is split into more than it was", () => {
+    expect(validateSplits(100, [p(1, 70), p(2, 40)])).toEqual({ left: -10, problem: "over" });
+  });
+
+  it("rounds half a cent away from zero, as Rust does", () => {
+    // Rust: -13 + 13 = 0, not the 1 cent the transaction is. Math.round would say -12 + 13 = 1.
+    expect(validateSplits(0.01, [p(1, -0.125), p(2, 0.125)]).problem).toBe("short");
+    // -0.005 is one cent, not nothing.
+    expect(validateSplits(-0.01, [p(1, -0.005), p(2, -0.005)]).problem).toBe("over");
+  });
+
+  it("treats an amount that is not a number as missing", () => {
+    expect(validateSplits(-85.5, [p(1, -85.5), p(2, NaN)]).problem).toBe("no-amount");
+    expect(validateSplits(-85.5, [p(1, -85.5), p(2, Infinity)]).problem).toBe("no-amount");
   });
 });
 
@@ -82,6 +99,12 @@ describe("inCategory", () => {
     expect(inCategory(costco, 2)).toBe(true);
     expect(inCategory(costco, 3)).toBe(false);
     expect(inCategory(costco, "uncategorised")).toBe(false);
+  });
+
+  it("finds a split transaction with an uncategorised piece under uncategorised", () => {
+    const t = txn({ category_id: null, splits: [piece(1, 1, -60), piece(2, null, -25.5)] });
+    expect(inCategory(t, "uncategorised")).toBe(true);
+    expect(inCategory(t, 1)).toBe(true);
   });
 
   it("counts an uncovered remainder as uncategorised", () => {
