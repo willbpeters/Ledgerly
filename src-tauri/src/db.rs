@@ -575,7 +575,7 @@ mod tests {
         assert!(table_exists(&conn, "goals").unwrap());
         assert!(!migration_pending(&conn).unwrap());
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, TARGET_VERSION);
     }
 
     #[test]
