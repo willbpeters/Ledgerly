@@ -239,6 +239,22 @@ export function useSetBudget() {
     onSuccess: () => qc.invalidateQueries({ queryKey: budgetKeys.budgets }),
   });
 }
+export const recurringKeys = { dismissed: ["recurring", "dismissed"] as const };
+
+export const useRecurringDismissed = () =>
+  useQuery({ queryKey: recurringKeys.dismissed, queryFn: api.recurring.dismissed });
+
+/** Dismiss a bill (not recurring) or put it back. Detection runs in the UI
+ *  over transactions already loaded, so only the dismissed list refetches. */
+export function useSetRecurringDismissed() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { key: string; dismissed: boolean }) =>
+      v.dismissed ? api.recurring.dismiss(v.key) : api.recurring.undismiss(v.key),
+    onSuccess: () => qc.invalidateQueries({ queryKey: recurringKeys.dismissed }),
+  });
+}
+
 export function useSetAccountType() {
   const qc = useQueryClient();
   return useMutation({

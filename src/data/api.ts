@@ -115,6 +115,12 @@ export const api = {
     set: (categoryId: number, month: string | null, amount: number) =>
       invoke<void>("budget_set", { categoryId, month, amount }),
   },
+  recurring: {
+    /** Payee keys the owner said are not bills; see `recurringKey`. */
+    dismissed: () => invoke<string[]>("recurring_dismissed_list"),
+    dismiss: (key: string) => invoke<void>("recurring_dismiss", { key }),
+    undismiss: (key: string) => invoke<void>("recurring_undismiss", { key }),
+  },
   accountTypes: {
     set: (id: number, kind: string) => invoke<void>("accounts_set_type", { id, kind }),
   },
