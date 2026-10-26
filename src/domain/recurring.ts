@@ -242,7 +242,7 @@ export type RecurringStatus =
 export function statusOf(s: RecurringSeries, today: string): RecurringStatus {
   if (s.nextDate < today) return { kind: "late", since: s.nextDate };
   const { from, to } = monthWindow(today.slice(0, 7));
-  if (s.lastDate >= from && s.nextDate > to) return { kind: "paid" };
+  if (s.lastDate >= from && s.lastDate <= to && s.nextDate > to) return { kind: "paid" };
   return { kind: "due", date: s.nextDate };
 }
 
@@ -266,40 +266,47 @@ export function monthOutlook(series: RecurringSeries[], today: string): MonthOut
   const { from, to } = monthWindow(today.slice(0, 7));
   const due: ExpectedCharge[] = [];
   let paidCount = 0;
-  let paidTotal = 0;
+  // Summed in whole cents: 0.1 + 0.2 must come to 0.3, not 0.30000000000000004.
+  let paidCents = 0;
   for (const s of series) {
     if (!s.active) continue;
     if (s.lastDate >= from && s.lastDate <= to) {
       paidCount += 1;
       // Every charge in the month: a weekly bill may already have made three.
-      for (const c of s.charges) if (c.date >= from && c.date <= to) paidTotal += c.amount;
+      for (const c of s.charges) if (c.date >= from && c.date <= to) paidCents += Math.round(c.amount * 100);
     }
     // Every expected date after the last charge that lands in this month.
     for (let k = 1; ; k++) {
       const date = stepDate(s.lastDate, s.cadence, k);
       if (date > to) break;
-      if (date >= from) due.push({ key: s.key, name: s.name, date, amount: s.amount });
+      // The first expected date may fall before this month: a bill that missed it
+      // is late (statusOf says so), and a late bill is still owed. `active`
+      // already bounds how long ago that can be.
+      if (date >= from || k === 1) due.push({ key: s.key, name: s.name, date, amount: s.amount });
     }
   }
   due.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
   return {
     due,
     dueCount: due.length,
-    dueTotal: due.reduce((sum, d) => sum + d.amount, 0),
+    dueTotal: due.reduce((sum, d) => sum + Math.round(d.amount * 100), 0) / 100,
     paidCount,
-    paidTotal,
+    paidTotal: paidCents / 100,
   };
 }
 
 /**
  * A name for each dismissed key, for the Dismissed list. A key is lowercased
- * and stripped of numbers, so the latest charge's own name reads better; a key
- * with no charge left (its account was removed) shows as itself.
+ * and stripped of runs of three or more digits, so the latest charge's own name
+ * reads better; a key with no charge left (its account was removed) shows as
+ * itself. Only rows detectRecurring would look at count: money out, not pending,
+ * not removed.
  */
 export function namesForKeys(txns: BankTransaction[], keys: string[]): { key: string; name: string }[] {
   const wanted = new Set(keys);
   const latest = new Map<string, BankTransaction>();
   for (const t of txns) {
+    if (t.amount >= 0 || t.pending || t.removed) continue;
     const key = recurringKey(t);
     if (!wanted.has(key)) continue;
     const seen = latest.get(key);
@@ -310,5 +317,5 @@ export function namesForKeys(txns: BankTransaction[], keys: string[]): { key: st
       const t = latest.get(key);
       return { key, name: t ? displayName(t) : key };
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
 }
