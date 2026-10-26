@@ -95,6 +95,10 @@ pub fn run() {
             commands::backup::reveal_path,
             commands::copilot::copilot_preview,
             commands::copilot::copilot_import,
+            commands::goals::goals_list,
+            commands::goals::goals_create,
+            commands::goals::goals_update,
+            commands::goals::goals_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
