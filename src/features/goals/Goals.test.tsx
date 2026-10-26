@@ -4,6 +4,7 @@ import type { Account, Goal } from "../../domain/types";
 
 const remove = vi.fn();
 const ask = vi.fn();
+const push = vi.fn();
 let goals: Goal[] = [];
 
 function account(id: number, name: string, type: Account["type"]): Account {
@@ -28,6 +29,7 @@ vi.mock("../../data/usePortfolio", () => ({
     isLoading: false,
   }),
 }));
+vi.mock("../../ui/toast", () => ({ useToast: () => ({ push }) }));
 vi.mock("../../ui/confirm", () => ({ askToConfirm: (...args: unknown[]) => ask(...args) }));
 // Pin only today's date; the calendar maths in goals.ts stays real.
 vi.mock("../../domain/dates", async (importOriginal) => ({
@@ -43,7 +45,7 @@ const goal = (over: Partial<Goal> = {}): Goal => ({
 });
 
 describe("Goals screen", () => {
-  beforeEach(() => { remove.mockClear(); ask.mockReset(); goals = []; });
+  beforeEach(() => { remove.mockClear(); ask.mockReset(); push.mockClear(); goals = []; });
 
   it("invites the first goal when there are none", () => {
     render(<Goals />);
@@ -58,7 +60,7 @@ describe("Goals screen", () => {
     expect(screen.getByText("$1,250.00")).toBeInTheDocument();
     expect(screen.getByText("of $2,000.00")).toBeInTheDocument();
     // $750 left over the 5 months to 25 March 2027.
-    expect(screen.getByText("$150.00 a month to reach it by March 2027")).toBeInTheDocument();
+    expect(screen.getByText("$150.00 a month to reach it by March 25, 2027")).toBeInTheDocument();
     expect(screen.getByText("Following Savings")).toBeInTheDocument();
   });
 
@@ -73,7 +75,8 @@ describe("Goals screen", () => {
   it("explains a goal whose account is hidden", () => {
     goals = [goal({ account_id: 9, saved_amount: 300 })];
     render(<Goals />);
-    expect(screen.getByText("Its account is hidden, so this shows the amount you last entered")).toBeInTheDocument();
+    expect(screen.getByText("Its account is hidden, so this shows an amount kept by hand. Use Edit to change it.")).toBeInTheDocument();
+    expect(screen.getByText("$300.00")).toBeInTheDocument();
   });
 
   it("treats a followed account with no value yet as nothing saved, not hidden", () => {
@@ -82,6 +85,30 @@ describe("Goals screen", () => {
     expect(screen.getByText("Following Brokerage")).toBeInTheDocument();
     expect(screen.getByText("$0.00")).toBeInTheDocument();
     expect(screen.queryByText(/is hidden/)).toBeNull();
+  });
+
+  it("says when a goal is reached", () => {
+    goals = [goal({ saved_amount: 2000 })];
+    render(<Goals />);
+    expect(screen.getByText("Reached")).toBeInTheDocument();
+  });
+
+  it("says when the date has passed", () => {
+    goals = [goal({ saved_amount: 300, target_date: "2026-09-01" })];
+    render(<Goals />);
+    expect(screen.getByText("The date has passed — $1,700.00 to go")).toBeInTheDocument();
+  });
+
+  it("says when a goal is due today", () => {
+    goals = [goal({ saved_amount: 300, target_date: "2026-10-25" })];
+    render(<Goals />);
+    expect(screen.getByText("Due today — $1,700.00 to go")).toBeInTheDocument();
+  });
+
+  it("hides the progress bar from assistive technology", () => {
+    goals = [goal({ saved_amount: 300 })];
+    const { container } = render(<Goals />);
+    expect(container.querySelector(".bar-track")).toHaveAttribute("aria-hidden", "true");
   });
 
   it("offers only cash and investment accounts to follow", () => {
@@ -104,8 +131,18 @@ describe("Goals screen", () => {
     ask.mockResolvedValue(true);
     render(<Goals />);
     fireEvent.click(screen.getByRole("button", { name: "Delete Trip" }));
-    await waitFor(() => expect(remove).toHaveBeenCalledWith(5));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(5, expect.anything()));
     expect(ask.mock.calls[0][0]).toContain("Trip");
+  });
+
+  it("says so when a goal could not be deleted", async () => {
+    goals = [goal()];
+    ask.mockResolvedValue(true);
+    render(<Goals />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Trip" }));
+    await waitFor(() => expect(remove).toHaveBeenCalled());
+    remove.mock.calls[0][1].onError("disk full");
+    expect(push).toHaveBeenCalledWith({ tone: "neg", title: "Couldn't delete the goal", body: "disk full" });
   });
 
   it("keeps the goal when the owner says no", async () => {
@@ -120,6 +157,17 @@ describe("Goals screen", () => {
 
 describe("goalLine", () => {
   const p = { saved: 500, target: 2000, remaining: 1500, fraction: 0.25, done: false, monthsLeft: null, perMonth: null, overdue: false };
+
+  it("names the day, not just the month", () => {
+    expect(goalLine({ ...p, monthsLeft: 3, perMonth: 500 }, "2027-03-01"))
+      .toBe("$500.00 a month to reach it by March 1, 2027");
+  });
+
+  it("says when the date is today", () => {
+    expect(goalLine({ ...p, monthsLeft: 0, perMonth: 1500 }, "2026-10-25"))
+      .toBe("Due today — $1,500.00 to go");
+  });
+
 
   it("says when a goal is reached", () => {
     expect(goalLine({ ...p, done: true, remaining: 0 }, null)).toBe("Reached");
