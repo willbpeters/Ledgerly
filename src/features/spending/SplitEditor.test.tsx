@@ -37,6 +37,8 @@ const amount = (n: number) => screen.getByLabelText(`Amount for piece ${n}`) as 
 const category = (n: number) => screen.getByLabelText(`Category for piece ${n}`) as HTMLSelectElement;
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 
+const lastSetSplitsOrder = () => { const o = setSplits.mock.invocationCallOrder; return o[o.length - 1]; };
+
 beforeEach(() => { setSplits.mockClear(); restore.mockClear(); });
 
 describe("SplitEditor", () => {
@@ -78,6 +80,20 @@ describe("SplitEditor", () => {
       { id: 7, category_id: 1, category_source: "auto", reviewed: false, removed: false },
     ]));
     expect(setSplits).toHaveBeenLastCalledWith(7, []);
+    // The pieces are cleared before the row's own state goes back.
+    expect(lastSetSplitsOrder()).toBeLessThan(restore.mock.invocationCallOrder[0]);
+  });
+
+  it("saves a refund's pieces as positive amounts", async () => {
+    const onDone = renderEditor(txn({ amount: 30, category_id: null }));
+    type(amount(1), "20");
+    type(amount(2), "10");
+    fireEvent.click(screen.getByRole("button", { name: "Save split" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(setSplits).toHaveBeenCalledWith(7, [
+      { category_id: null, amount: 20, note: null },
+      { category_id: null, amount: 10, note: null },
+    ]);
   });
 
   it("adds a piece, and removes one once there are more than two", () => {
@@ -103,11 +119,46 @@ describe("SplitEditor", () => {
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(setSplits).toHaveBeenCalledWith(7, []);
+    expect(await screen.findByText("Split removed")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
     await waitFor(() => expect(setSplits).toHaveBeenLastCalledWith(7, [
       { category_id: 1, amount: -60, note: null },
       { category_id: 2, amount: -25.5, note: null },
     ]));
+    await waitFor(() => expect(restore).toHaveBeenCalled());
+    expect(lastSetSplitsOrder()).toBeLessThan(restore.mock.invocationCallOrder[0]);
+  });
+
+  it("undoing an unsplit puts back what the pieces no longer covered", async () => {
+    const onDone = renderEditor({ ...alreadySplit, amount: -90 });
+    fireEvent.click(screen.getByRole("button", { name: "Unsplit" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(setSplits).toHaveBeenLastCalledWith(7, [
+      { category_id: 1, amount: -60, note: null },
+      { category_id: 2, amount: -25.5, note: null },
+      { category_id: null, amount: -4.5, note: null },
+    ]));
+  });
+
+  it("shows a failed save as plain text, and clears it once a piece is edited", async () => {
+    setSplits.mockImplementationOnce(() => Promise.reject(new Error("That category no longer exists.")));
+    renderEditor();
+    type(amount(1), "60");
+    type(amount(2), "25.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save split" }));
+    expect(await screen.findByText("That category no longer exists.")).toBeInTheDocument();
+    type(amount(2), "25");
+    await waitFor(() => expect(screen.queryByText("That category no longer exists.")).toBeNull());
+  });
+
+  it("cannot be cancelled while a save is in flight", async () => {
+    setSplits.mockImplementationOnce(() => new Promise<void>(() => {}));
+    renderEditor();
+    type(amount(1), "60");
+    type(amount(2), "25.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save split" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
   });
 
   it("cancels without saving", () => {

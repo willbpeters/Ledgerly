@@ -57,8 +57,10 @@ export function SplitEditor({ txn, categories, onDone }: {
   const sign = txn.amount < 0 ? -1 : 1;
   const pieces: Piece[] = drafts.map((d) => ({ category_id: d.category_id, amount: sign * dollarsOf(d.amount) }));
   const { left, problem } = validateSplits(txn.amount, pieces);
+  // Any edit makes an earlier failed save stale.
+  const edit = (change: (prev: Draft[]) => Draft[]) => { setSplits.reset(); setDrafts(change); };
   const update = (i: number, change: Partial<Draft>) =>
-    setDrafts(drafts.map((d, j) => (j === i ? { ...d, ...change } : d)));
+    edit((prev) => prev.map((d, j) => (j === i ? { ...d, ...change } : d)));
 
   function save(next: Piece[], title: string) {
     // txn is the row as it was before: exactly what Undo puts back.
@@ -92,27 +94,27 @@ export function SplitEditor({ txn, categories, onDone }: {
             style={{ width: 96 }}
           />
           {drafts.length > 2 && (
-            <button className="btn btn-ghost btn-sm" aria-label={`Remove piece ${i + 1}`}
-              onClick={() => setDrafts(drafts.filter((_, j) => j !== i))}>×</button>
+            <Button variant="ghost" size="sm" aria-label={`Remove piece ${i + 1}`}
+              onClick={() => edit((prev) => prev.filter((_, j) => j !== i))}>×</Button>
           )}
         </div>
       ))}
       <div className="row center" style={{ gap: 10, flexWrap: "wrap" }}>
-        <button className="btn btn-ghost btn-sm"
-          onClick={() => setDrafts([...drafts, { category_id: null, amount: "" }])}>Add piece</button>
-        <span className={problem == null ? "muted" : "neg"} style={{ fontSize: 12 }}>
+        <Button variant="ghost" size="sm"
+          onClick={() => edit((prev) => [...prev, { category_id: null, amount: "" }])}>Add piece</Button>
+        <span className={problem == null ? "muted" : "neg"} style={{ fontSize: 12 }} aria-live="polite">
           {statusLine(problem, left, txn.amount)}
         </span>
       </div>
-      {setSplits.error && <div className="neg" style={{ fontSize: 12 }}>{String(setSplits.error)}</div>}
+      {setSplits.error && <div className="neg" style={{ fontSize: 12 }}>{setSplits.error instanceof Error ? setSplits.error.message : String(setSplits.error)}</div>}
       <div className="row center" style={{ gap: 8 }}>
         <Button size="sm" disabled={problem != null} loading={setSplits.isPending}
           onClick={() => save(pieces, "Split saved")}>Save split</Button>
         {txn.splits.length > 0 && (
           <Button size="sm" variant="secondary" disabled={setSplits.isPending}
-            onClick={() => save([], "Unsplit")}>Unsplit</Button>
+            onClick={() => save([], "Split removed")}>Unsplit</Button>
         )}
-        <Button size="sm" variant="ghost" onClick={onDone}>Cancel</Button>
+        <Button size="sm" variant="ghost" disabled={setSplits.isPending} onClick={onDone}>Cancel</Button>
       </div>
     </div>
   );

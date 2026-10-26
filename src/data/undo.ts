@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useToast } from "../ui/toast";
+import { splitRemainder } from "../domain/splits";
 import type { BankTransaction } from "../domain/types";
 
 /** The parts of a transaction an action in Spending can change — what Undo
@@ -50,10 +51,14 @@ export function useOfferUndo() {
  *  own category, source and review state. The pieces must come first, because
  *  saving pieces empties the row's category. */
 async function undoSplit(before: BankTransaction): Promise<void> {
-  await api.bankTransactions.setSplits(
-    before.id,
-    before.splits.map(({ category_id, amount, note }) => ({ category_id, amount, note })),
-  );
+  const pieces = before.splits.map(({ category_id, amount, note }) => ({ category_id, amount, note }));
+  // A sync may have changed the amount since the split, leaving the pieces short
+  // of it. Rust only accepts pieces that add up, so put the difference back as an
+  // uncategorised piece. Totals are unchanged: `piecesOf` already counted that
+  // remainder as uncategorised.
+  const remainder = splitRemainder(before);
+  if (remainder !== 0) pieces.push({ category_id: null, amount: remainder, note: null });
+  await api.bankTransactions.setSplits(before.id, pieces);
   await api.bankTransactions.restore([stateOf(before)]);
 }
 
@@ -73,8 +78,9 @@ export function useOfferSplitUndo() {
         label: "Undo",
         onClick: () => {
           undoSplit(before)
-            .then(() => qc.invalidateQueries({ queryKey: ["bankTxns"] }))
-            .catch((e) => toast.push({ tone: "neg", title: "Couldn't undo", body: String(e) }));
+            .catch((e) => toast.push({ tone: "neg", title: "Couldn't undo", body: String(e) }))
+            // Reload either way: the pieces may have been put back even if restore failed.
+            .finally(() => qc.invalidateQueries({ queryKey: ["bankTxns"] }));
         },
       },
     });
