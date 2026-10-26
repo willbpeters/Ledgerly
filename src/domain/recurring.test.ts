@@ -435,10 +435,20 @@ describe("namesForKeys", () => {
     ]);
   });
 
-  it("orders names that read alike by key, whatever order the keys come in", () => {
-    const txns = [charge("12345", "2026-09-05", -5, { description: "Zed" })];
-    const want = [{ key: "zed", name: "Zed" }, { key: "Zed", name: "Zed" }];
-    expect(namesForKeys(txns, ["zed", "Zed"])).toEqual(want);
-    expect(namesForKeys(txns, ["Zed", "zed"])).toEqual(want);
+  it("orders names that collate alike by key, in plain code-unit order whatever the locale", () => {
+    // "é" as one character and as "e" plus an accent: the same name to a locale
+    // comparison, two different keys to the code.
+    const precomposed = "caf\u00e9";
+    const decomposed = "cafe\u0301";
+    const txns = [
+      charge(precomposed, "2026-09-05", -5),
+      charge(decomposed, "2026-09-06", -5),
+    ];
+    const want = [
+      { key: decomposed, name: decomposed },
+      { key: precomposed, name: precomposed },
+    ];
+    expect(namesForKeys(txns, [precomposed, decomposed])).toEqual(want);
+    expect(namesForKeys(txns, [decomposed, precomposed])).toEqual(want);
   });
 });

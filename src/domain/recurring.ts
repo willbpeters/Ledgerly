@@ -173,7 +173,7 @@ export function detectRecurring(
     const series = seriesFrom(key, rows, today);
     if (series) found.push(series);
   }
-  return found.sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
+  return found.sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.name.localeCompare(b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 function seriesFrom(key: string, rows: BankTransaction[], today: string): RecurringSeries | null {
@@ -317,5 +317,5 @@ export function namesForKeys(txns: BankTransaction[], keys: string[]): { key: st
       const t = latest.get(key);
       return { key, name: t ? displayName(t) : key };
     })
-    .sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
+    .sort((a, b) => a.name.localeCompare(b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
