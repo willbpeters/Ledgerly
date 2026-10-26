@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recurringKey, displayName, stepDate, cadenceLabel, detectRecurring } from "./recurring";
+import { recurringKey, displayName, stepDate, cadenceLabel, detectRecurring, statusOf, monthOutlook, namesForKeys, type RecurringSeries } from "./recurring";
 import type { BankTransaction, Category } from "./types";
 
 describe("recurringKey", () => {
@@ -266,5 +266,89 @@ describe("detectRecurring", () => {
       ...monthly("Sooner", "02", ["2026-08", "2026-09", "2026-10"], -10),
     ];
     expect(detectRecurring(txns, cats, TODAY).map((s) => s.name)).toEqual(["Sooner", "Later"]);
+  });
+});
+
+const series = (over: Partial<RecurringSeries>): RecurringSeries => ({
+  key: "k", name: "Bill", cadence: "monthly", amount: 10, charges: [],
+  lastDate: "2026-09-25", nextDate: "2026-10-25", count: 4, categoryId: null, accountId: 1,
+  active: true, transactionIds: [], ...over,
+});
+
+describe("statusOf", () => {
+  it("is due on the next date when that is still ahead", () => {
+    expect(statusOf(series({}), "2026-10-20")).toEqual({ kind: "due", date: "2026-10-25" });
+  });
+
+  it("is paid when charged this month and next due after it", () => {
+    expect(statusOf(series({ lastDate: "2026-10-05", nextDate: "2026-11-05" }), "2026-10-20")).toEqual({ kind: "paid" });
+  });
+
+  it("is still due when charged this month but due again before it ends", () => {
+    const weekly = series({ cadence: "weekly", lastDate: "2026-10-13", nextDate: "2026-10-20" });
+    expect(statusOf(weekly, "2026-10-20")).toEqual({ kind: "due", date: "2026-10-20" });
+  });
+
+  it("is late once the next date has passed", () => {
+    expect(statusOf(series({ nextDate: "2026-10-15" }), "2026-10-20")).toEqual({ kind: "late", since: "2026-10-15" });
+  });
+});
+
+describe("monthOutlook", () => {
+  it("adds up what is still due and what was paid this month", () => {
+    const o = monthOutlook([
+      series({ key: "due", amount: 12, lastDate: "2026-09-25", nextDate: "2026-10-25" }),
+      series({ key: "paid", amount: 15, charges: [{ date: "2026-09-05", amount: 14.99 }, { date: "2026-10-05", amount: 15.49 }],
+        lastDate: "2026-10-05", nextDate: "2026-11-05" }),
+    ], "2026-10-20");
+    expect(o.due.map((d) => [d.key, d.date])).toEqual([["due", "2026-10-25"]]);
+    expect(o.dueCount).toBe(1);
+    expect(o.dueTotal).toBe(12);
+    expect(o.paidCount).toBe(1);
+    expect(o.paidTotal).toBe(15.49);
+  });
+
+  it("adds every charge a weekly bill already made this month to what was paid", () => {
+    const o = monthOutlook([
+      series({ cadence: "weekly", amount: 60, lastDate: "2026-10-13", nextDate: "2026-10-20",
+        charges: [{ date: "2026-09-29", amount: 60 }, { date: "2026-10-06", amount: 60 }, { date: "2026-10-13", amount: 61 }] }),
+    ], "2026-10-15");
+    expect(o.paidCount).toBe(1);
+    expect(o.paidTotal).toBe(121);
+  });
+
+  it("counts every charge a weekly bill still has to make this month", () => {
+    const o = monthOutlook([
+      series({ cadence: "weekly", amount: 60, lastDate: "2026-10-13", nextDate: "2026-10-20" }),
+    ], "2026-10-20");
+    expect(o.due.map((d) => d.date)).toEqual(["2026-10-20", "2026-10-27"]);
+    expect(o.dueTotal).toBe(120);
+  });
+
+  it("still counts a late bill as due", () => {
+    const o = monthOutlook([series({ lastDate: "2026-09-12", nextDate: "2026-10-12" })], "2026-10-20");
+    expect(o.due.map((d) => d.date)).toEqual(["2026-10-12"]);
+  });
+
+  it("leaves out bills no longer seen and bills not due until next month", () => {
+    const o = monthOutlook([
+      series({ key: "gone", active: false }),
+      series({ key: "later", lastDate: "2026-10-01", nextDate: "2026-11-01" }),
+    ], "2026-10-20");
+    expect(o.due).toEqual([]);
+    expect(o.dueTotal).toBe(0);
+  });
+});
+
+describe("namesForKeys", () => {
+  it("gives each key the latest name seen, and the key itself when none is", () => {
+    const txns = [
+      charge("NETFLIX", "2026-08-05", -15.49),
+      charge("Netflix", "2026-09-05", -15.49),
+    ];
+    expect(namesForKeys(txns, ["zzz gone", "netflix"])).toEqual([
+      { key: "netflix", name: "Netflix" },
+      { key: "zzz gone", name: "zzz gone" },
+    ]);
   });
 });
