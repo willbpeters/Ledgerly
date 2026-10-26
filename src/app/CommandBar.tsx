@@ -11,10 +11,12 @@ const TITLES: { path: string; title: string }[] = [
   { path: "/accounts", title: "Accounts" },
   { path: "/activity", title: "Activity" },
   { path: "/spending", title: "Spending" },
+  { path: "/goals", title: "Goals" },
+  { path: "/markets", title: "Markets" },
   { path: "/settings", title: "Settings" },
 ];
 
-function titleFor(pathname: string): string {
+export function titleFor(pathname: string): string {
   return TITLES.find((t) => pathname.startsWith(t.path))?.title ?? "Dashboard";
 }
 

@@ -11,6 +11,7 @@ import { Accounts } from "./features/accounts/Accounts";
 import { Activity } from "./features/activity/Activity";
 import { Settings } from "./features/settings/Settings";
 import { Spending } from "./features/spending/Spending";
+import { Goals } from "./features/goals/Goals";
 import { ThemeProvider } from "./ui/theme";
 import { ToastProvider } from "./ui/toast";
 import { ErrorBoundary } from "./ui/ErrorBoundary";
@@ -27,6 +28,7 @@ const router = createBrowserRouter([
       { path: "accounts", element: <Accounts /> },
       { path: "activity", element: <Activity /> },
       { path: "spending", element: <Spending /> },
+      { path: "goals", element: <Goals /> },
       { path: "settings", element: <Settings /> },
     ],
   },
