@@ -50,6 +50,7 @@ it on your own computer. There are no accounts, no cloud and no subscription.
 - Transactions sorted automatically by merchant, with transfers between your
   own accounts matched up
 - A "To review" list for anything new, and rules that learn from your choices
+- Split one purchase across several categories
 - Undo after every change
 - A one-time import of your history and categories from Copilot
 

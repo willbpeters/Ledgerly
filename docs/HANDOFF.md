@@ -95,6 +95,23 @@ budgeting and spending module.
   and a category change each show a toast with **Undo**, which puts the rows
   back exactly as they were (`bank_transactions_restore`). The remove question
   has "Remove, don't ask again"; Settings → Spending turns it back on.
+- **Split transactions** (Spending): Split on a row opens `SplitEditor`
+  beneath it; the pieces (category + amount, carrying the transaction's sign)
+  must add up to the cent, and Rust checks again (`store::set_splits`), storing
+  each piece rounded to the cent and rejecting an unknown category with "That
+  category no longer exists." They live in `bank_transaction_splits` (v9) and
+  arrive on every listed row as `splits`. While split, the row's own
+  `category_id` is NULL and `category_source` is `manual`, so syncs, re-sorts,
+  transfer pairing and the Copilot import (a repeat import included) leave it
+  alone. If a later sync changes the amount, whatever the pieces no longer
+  cover counts under "Needs a category" (once per transaction), whichever way
+  the amount moved, and the row says so: "$X not assigned — the bank changed
+  the amount" when it grew, "The pieces are $X more than the bank's amount —
+  edit the split" when it shrank. Unsplit and Undo both work (undoing an
+  Unsplit adds an uncategorised piece for any remainder so the sum check
+  passes); choosing one category for the row ends a split, inside one
+  database transaction. The CSV export includes the pieces in
+  `transaction-splits.csv`.
 - **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
   the type editable because SimpleFIN never says which accounts are cards.
   Each account can be **hidden**: a hidden account keeps syncing and keeps its
@@ -174,8 +191,8 @@ budgeting and spending module.
   kept and every other kind is kept for good. An optional extra folder gets a
   copy of each. **Restore** stages the chosen file as
   `finance.sqlite.restore-pending`, lets go of the database and restarts; the
-  swap happens at launch, before `db::open`. **Export to CSV** writes seven
-  spreadsheet-ready files. Settings → Backups. Spec:
+  swap happens at launch, before `db::open`. **Export to CSV** writes eight
+  spreadsheet-ready files, among them `transaction-splits.csv`. Settings → Backups. Spec:
   `docs/superpowers/specs/2026-10-14-backup-and-export-design.md`
 
 ### Reliability pass (2026-09-08)
@@ -263,6 +280,10 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **A pending SimpleFIN transaction arrives with `posted: 0`**; it is dated
   from `transacted_at` (it used to land on 1970-01-01).
 
+- **Never total or filter bank transactions by `category_id` alone.** A split
+  row's own category is NULL; its pieces are what count. Read rows through
+  `piecesOf()` / `inCategory()` in `src/domain/splits.ts`, as
+  `summariseMonth`, search and Spending's category focus do.
 - **Never call the browser's `confirm()`; `await askToConfirm()` from
   `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an
   async version whose Promise is always truthy, so `if (confirm(...))` deletes
@@ -389,7 +410,7 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **5**; migrations are
+  **unencrypted**. The schema is at `user_version` **9** (v9 adds `bank_transaction_splits`); migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept

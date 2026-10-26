@@ -85,8 +85,9 @@ These are the gaps a former Copilot user would notice first.
       the last 6–12 months, and income against spending (cash flow).
 - [ ] **14. Budget rollover** (optional per category): unspent money carries
       into next month, overspending reduces it.
-- [ ] **15. Split a transaction** across categories (one Costco trip →
-      groceries + household). **(spec)**
+- [x] **15. Split a transaction** across categories. Done 2026-10-25: Split
+      on any row in Spending divides it into pieces with their own categories;
+      budgets, search and the category filter count each piece.
 
 ## Phase 4 — Correct numbers for a real portfolio
 
