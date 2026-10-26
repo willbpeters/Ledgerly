@@ -17,8 +17,11 @@ pub fn validate(g: &NewGoal) -> Result<(), String> {
         return Err("The amount saved can't be below $0.".into());
     }
     if let Some(date) = &g.target_date {
-        // The length check refuses "2027-3-1", which chrono would accept.
-        if date.len() != 10 || chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+        // chrono also accepts "2027-3-1", " 2027-03-01" and "+2027-03-01", so the
+        // date must read back exactly as written.
+        let exact = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .is_ok_and(|d| d.format("%Y-%m-%d").to_string() == *date);
+        if !exact {
             return Err("That date isn't a real day.".into());
         }
     }
@@ -47,14 +50,16 @@ mod tests {
 
     #[test]
     fn the_amount_saved_cannot_be_below_zero() {
-        let mut g = goal("Trip", 100.0);
-        g.saved_amount = -1.0;
-        assert_eq!(validate(&g), Err("The amount saved can't be below $0.".to_string()));
+        for bad in [-1.0, f64::NAN, f64::INFINITY] {
+            let mut g = goal("Trip", 100.0);
+            g.saved_amount = bad;
+            assert_eq!(validate(&g), Err("The amount saved can't be below $0.".to_string()), "{bad}");
+        }
     }
 
     #[test]
     fn a_date_must_be_a_real_day() {
-        for bad in ["2027-02-30", "2027-3-1", "March", ""] {
+        for bad in ["2027-02-30", "2027-3-1", "March", "", " 2027-3-01", "+2027-3-01", "2027- 3-01"] {
             let mut g = goal("Trip", 100.0);
             g.target_date = Some(bad.into());
             assert_eq!(validate(&g), Err("That date isn't a real day.".to_string()), "{bad}");
@@ -62,6 +67,7 @@ mod tests {
         let mut leap = goal("Trip", 100.0);
         leap.target_date = Some("2028-02-29".into());
         assert_eq!(validate(&leap), Ok(()));
+        assert_eq!(validate(&goal("Trip", 100.0)), Ok(()));
     }
 
     #[test]
