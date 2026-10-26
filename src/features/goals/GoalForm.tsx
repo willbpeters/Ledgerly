@@ -59,13 +59,23 @@ export function GoalForm({ goal, accounts, onDone }: {
   const [saved, setSaved] = useState(goal && goal.saved_amount > 0 ? String(goal.saved_amount) : "");
   const [error, setError] = useState<string | null>(null);
 
+  // A goal can follow an account that is now hidden or gone, which is not among
+  // `accounts`. Say so, and let its amount be seen and changed, as that amount
+  // is what the goal shows while it can't read the account.
+  const orphaned = track !== "" && !accounts.some((a) => String(a.id) === track);
+  const showSaved = track === "" || orphaned;
+  /** Edit a field, and drop an explanation that may no longer apply. */
+  const edit = (set: (v: string) => void) => (v: string) => { set(v); setError(null); };
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const checked = readGoal({ name, target, date, track, saved });
-    if (typeof checked === "string") {
-      setError(checked);
+    // The amount is checked whenever it is shown, so an orphaned account is read as "by hand" here.
+    const read = readGoal({ name, target, date, track: orphaned ? "" : track, saved });
+    if (typeof read === "string") {
+      setError(read);
       return;
     }
+    const checked = orphaned ? { ...read, account_id: Number(track) } : read;
     setError(null);
     const options = { onSuccess: onDone, onError: (err: unknown) => setError(String(err)) };
     if (goal) update.mutate({ id: goal.id, goal: checked }, options);
@@ -75,23 +85,27 @@ export function GoalForm({ goal, accounts, onDone }: {
   return (
     <form className="row" onSubmit={submit}>
       <Field label="Name">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Emergency fund" />
+        <input value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder="Emergency fund" />
       </Field>
-      <Field label="Target">
-        <input value={target} onChange={(e) => setTarget(e.target.value)} inputMode="decimal" placeholder="10000" style={{ width: 110 }} />
+      <Field label="Target amount">
+        <input value={target} onChange={(e) => edit(setTarget)(e.target.value)} inputMode="decimal" placeholder="10000" style={{ width: 110 }} />
       </Field>
-      <Field label="By (optional)">
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <Field label="Target date (optional)">
+        <input type="date" value={date} onChange={(e) => edit(setDate)(e.target.value)} />
       </Field>
+      {date !== "" && (
+        <Button type="button" variant="ghost" onClick={() => edit(setDate)("")}>No date</Button>
+      )}
       <Field label="Track it with">
-        <select value={track} onChange={(e) => setTrack(e.target.value)}>
+        <select value={track} onChange={(e) => edit(setTrack)(e.target.value)}>
           <option value="">I'll update it myself</option>
+          {orphaned && <option value={track}>An account you've hidden</option>}
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </Field>
-      {track === "" && (
-        <Field label="Saved so far">
-          <input value={saved} onChange={(e) => setSaved(e.target.value)} inputMode="decimal" placeholder="0" style={{ width: 110 }} />
+      {showSaved && (
+        <Field label="Saved so far" hint={orphaned ? "This goal shows this amount while its account is hidden." : undefined}>
+          <input value={saved} onChange={(e) => edit(setSaved)(e.target.value)} inputMode="decimal" placeholder="0" style={{ width: 110 }} />
         </Field>
       )}
       <Button type="submit" loading={create.isPending || update.isPending}>{goal ? "Save" : "Add goal"}</Button>
