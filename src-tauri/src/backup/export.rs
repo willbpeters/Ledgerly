@@ -71,9 +71,12 @@ pub const EXPORTS: [(&str, &str); 9] = [
          LEFT JOIN categories c ON c.id = s.category_id
          ORDER BY b.posted, b.id, s.sort",
     ),
+    // A goal that follows an account takes its progress from that account's
+    // balance, which only the app can work out, so saved_by_hand is the
+    // hand-entered figure only.
     (
         "goals.csv",
-        "SELECT g.name, g.target_amount, g.target_date, a.name AS account, g.saved_amount, g.created_at
+        "SELECT g.name, g.target_amount, g.target_date, a.name AS account, g.saved_amount AS saved_by_hand, g.created_at
          FROM goals g LEFT JOIN accounts a ON a.id = g.account_id
          ORDER BY g.target_date IS NULL, g.target_date, g.id",
     ),
@@ -223,11 +226,13 @@ mod tests {
     #[test]
     fn goals_are_exported_with_the_account_name() {
         let conn = crate::db::open_in_memory().unwrap();
+        // Rainy day goes in first and has no date or account (the state a deleted
+        // account leaves), so the order below proves dated goals come first.
         conn.execute_batch(
             "INSERT INTO accounts (id, name, type, created_at) VALUES (1, 'Savings', 'cash', '2026-10-01');
              INSERT INTO goals (name, target_amount, target_date, account_id, saved_amount, created_at)
-               VALUES ('Trip', 2000, '2027-03-01', 1, 0, '2026-10-25'),
-                      ('Rainy day', 500, NULL, NULL, 125.5, '2026-10-25');",
+               VALUES ('Rainy day', 500, NULL, NULL, 125.5, '2026-10-25'),
+                      ('Trip', 2000, '2027-03-01', 1, 0, '2026-10-25');",
         )
         .unwrap();
         let out = tempfile::tempdir().unwrap();
@@ -237,7 +242,7 @@ mod tests {
         let goals = std::fs::read_to_string(folder.join("goals.csv")).unwrap();
         assert_eq!(
             goals,
-            "\u{FEFF}name,target_amount,target_date,account,saved_amount,created_at\r\n\
+            "\u{FEFF}name,target_amount,target_date,account,saved_by_hand,created_at\r\n\
              Trip,2000,2027-03-01,Savings,0,2026-10-25\r\n\
              Rainy day,500,,,125.5,2026-10-25\r\n"
         );
