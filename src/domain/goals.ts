@@ -1,4 +1,5 @@
 import type { Goal } from "./types";
+import { daysBetween, monthsUntil } from "./dates";
 
 export type SavedSource = "account" | "manual" | "missing-account";
 
@@ -8,15 +9,20 @@ export type SavedSource = "account" | "manual" | "missing-account";
  * A goal following an account reads that account's value — cash plus
  * holdings, from `derivePortfolio` — so it moves with every sync without the
  * owner touching it. An overdrawn account counts as nothing saved rather than
- * as negative progress. A hidden account has no value in the map (hidden
- * accounts are left out of every figure); the goal then falls back to the
- * amount last kept by hand and says so, because a bar dropping to zero reads
- * as lost money.
+ * as negative progress. A visible account with no value yet (a new, empty one
+ * has no entry in the map) is nothing saved, from the account. Only a followed
+ * account that is not visible, which is to say hidden, since hidden accounts
+ * are left out of every figure, falls back to the amount last kept by hand and
+ * says so, because a bar dropping to zero reads as lost money.
  */
-export function savedFor(goal: Goal, accountValues: Map<number, number>): { saved: number; source: SavedSource } {
+export function savedFor(
+  goal: Goal,
+  accountValues: Map<number, number>,
+  visibleAccountIds: ReadonlySet<number>,
+): { saved: number; source: SavedSource } {
   if (goal.account_id == null) return { saved: goal.saved_amount, source: "manual" };
-  const value = accountValues.get(goal.account_id);
-  if (value == null) return { saved: goal.saved_amount, source: "missing-account" };
+  if (!visibleAccountIds.has(goal.account_id)) return { saved: goal.saved_amount, source: "missing-account" };
+  const value = accountValues.get(goal.account_id) ?? 0;
   return { saved: Math.max(0, value), source: "account" };
 }
 
@@ -30,22 +36,10 @@ export interface GoalProgress {
   done: boolean;
   /** Months until the date, rounded up; null for a goal with no date. */
   monthsLeft: number | null;
-  /** What to set aside each month to make the date; null with no date, or once done. */
+  /** What to set aside each month to make the date; null with no date, once done, or once overdue. */
   perMonth: number | null;
   /** The date has passed and the target has not been reached. */
   overdue: boolean;
-}
-
-/** The average month across the Gregorian calendar's 400-year cycle. */
-const DAYS_PER_MONTH = 30.4375;
-
-/** Whole days from one `YYYY-MM-DD` to another. UTC, so a clock change never moves it. */
-function daysBetween(from: string, to: string): number {
-  const at = (iso: string) => {
-    const [y, m, d] = iso.split("-").map(Number);
-    return Date.UTC(y, m - 1, d);
-  };
-  return Math.round((at(to) - at(from)) / 86_400_000);
 }
 
 const cents = (x: number) => Math.round(x * 100);
@@ -54,18 +48,21 @@ const cents = (x: number) => Math.round(x * 100);
 export function goalProgress(goal: Goal, saved: number, today: string): GoalProgress {
   const target = goal.target_amount;
   // Compared in cents: 1999.999 saved towards 2000 is reached, not $0.00 short.
-  const done = cents(saved) >= cents(target);
-  const remaining = done ? 0 : target - saved;
-  const fraction = done ? 1 : target > 0 ? Math.min(1, Math.max(0, saved / target)) : 0;
+  const left = cents(target) - cents(saved);
+  const done = left <= 0;
+  const remaining = done ? 0 : left / 100;
+  // A target of nothing has no bar to fill, whatever has been saved.
+  const fraction = target > 0 ? (done ? 1 : Math.min(1, Math.max(0, saved / target))) : 0;
   if (goal.target_date == null) {
     return { saved, target, remaining, fraction, done, monthsLeft: null, perMonth: null, overdue: false };
   }
-  const days = daysBetween(today, goal.target_date);
-  const monthsLeft = Math.max(0, Math.ceil(days / DAYS_PER_MONTH));
+  const overdue = daysBetween(today, goal.target_date) < 0 && !done;
+  const monthsLeft = Math.max(0, monthsUntil(today, goal.target_date));
   return {
     saved, target, remaining, fraction, done, monthsLeft,
-    // At least one month: on the day itself, what is left is due now.
-    perMonth: done ? null : remaining / Math.max(1, monthsLeft),
-    overdue: days < 0 && !done,
+    // At least one month: on the day itself, what is left is due now. Once
+    // the date has passed there is no month left to spread it over.
+    perMonth: done || overdue ? null : remaining / Math.max(1, monthsLeft),
+    overdue,
   };
 }

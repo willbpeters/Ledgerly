@@ -1,6 +1,7 @@
 import type { BankTransaction, Category } from "./types";
 import { piecesOf } from "./splits";
 import { monthWindow } from "./spending";
+import { daysBetween } from "./dates";
 
 /**
  * Recurring bills and subscriptions, spotted from history. Everything here is
@@ -151,10 +152,6 @@ const AMOUNT_FLOOR = 2;
  * count the old price against a bill for years after the rise.
  */
 const RECENT_CHARGES = 6;
-
-function daysBetween(from: string, to: string): number {
-  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
-}
 
 function median(xs: number[]): number {
   const s = [...xs].sort((a, b) => a - b);
