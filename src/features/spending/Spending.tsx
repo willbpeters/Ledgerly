@@ -17,12 +17,18 @@ import { RecurringPanel } from "./RecurringPanel";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
+import type { Account, BankTransaction, Category } from "../../domain/types";
 
 type View = "month" | "review" | "search" | "recurring";
 
 // One array for "no dismissed bills yet", so the panel's detection (which
 // depends on this list) isn't re-run over the whole history on every render.
 const NO_KEYS: string[] = [];
+// The same for the query data the every-month list is filtered from: a fresh
+// `= []` each render would make that list a new array each render.
+const NO_TXNS: BankTransaction[] = [];
+const NO_ACCOUNTS: Account[] = [];
+const NO_CATEGORIES: Category[] = [];
 
 export function Spending() {
   // The command bar's search sends you here with ?q=…, straight into Search.
@@ -35,22 +41,24 @@ export function Spending() {
   const { from, to } = monthWindow(month);
 
   const { data: allTxns = [], isLoading } = useBankTransactions(from, to);
-  const { data: categories = [] } = useCategories();
+  const { data: categories = NO_CATEGORIES } = useCategories();
   const { data: budgets = [] } = useBudgets();
-  const { data: allAccounts = [] } = useAccounts();
+  const { data: allAccounts = NO_ACCOUNTS } = useAccounts();
   // A hidden account is out of every total, and spending is a total.
   const accounts = allAccounts.filter((a) => !a.hidden);
   const txns = fromVisibleAccounts(allTxns, allAccounts);
-  const { data: range } = useBankTransactionRange();
+  const { data: range, isLoading: loadingRange } = useBankTransactionRange();
   const colours = useChartColors();
 
   // Search and Recurring cover every month, so they load the whole range,
   // but only once one of them is opened. Both read the same cached query.
   const [first, last] = range ?? [null, null];
   const everyMonth = view === "search" || view === "recurring";
-  const { data: everyTxn = [], isLoading: loadingEvery } =
+  const { data: everyTxn = NO_TXNS, isLoading: loadingEvery } =
     useBankTransactions(first ?? "", last ?? "", everyMonth && first != null && last != null);
-  const searchable = fromVisibleAccounts(everyTxn, allAccounts);
+  const searchable = useMemo(() => fromVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
+  // The every-month list is not ready until the range is known and then loaded.
+  const loadingAll = everyMonth && (loadingRange || loadingEvery);
 
   const { data: dismissedKeys, isLoading: loadingDismissed } = useRecurringDismissed();
   const dismissed = dismissedKeys ?? NO_KEYS;
@@ -105,7 +113,7 @@ export function Spending() {
   // A split purchase shows under every category it was split into.
   const shown = txns.filter((t) => focus == null || inCategory(t, focus));
 
-  const nothingImported = (range?.[0] ?? null) == null;
+  const nothingImported = range !== undefined && range[0] == null;
 
   if (nothingImported && !isLoading) {
     return (
@@ -150,7 +158,7 @@ export function Spending() {
           key={q}
           initialText={q}
           transactions={searchable}
-          loading={loadingEvery}
+          loading={loadingAll}
           categories={categories}
           accounts={accounts}
           colourOf={colourOf}
@@ -159,7 +167,7 @@ export function Spending() {
       ) : view === "recurring" ? (
         <RecurringPanel
           transactions={searchable}
-          loading={loadingEvery || loadingDismissed}
+          loading={loadingAll || loadingDismissed}
           categories={categories}
           accounts={accounts}
           dismissed={dismissed}
