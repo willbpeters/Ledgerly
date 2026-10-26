@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// Each file and the query that fills it. Columns are named for a person
 /// reading the file in Excel, and IDs are joined to names for the same reason.
 /// Market caches and snapshots are left out: they are re-fetchable or derived.
-pub const EXPORTS: [(&str, &str); 8] = [
+pub const EXPORTS: [(&str, &str); 9] = [
     (
         "accounts.csv",
         "SELECT name, type, institution, currency, source, hidden, synced_balance,
@@ -70,6 +70,12 @@ pub const EXPORTS: [(&str, &str); 8] = [
          JOIN accounts a ON a.id = b.account_id
          LEFT JOIN categories c ON c.id = s.category_id
          ORDER BY b.posted, b.id, s.sort",
+    ),
+    (
+        "goals.csv",
+        "SELECT g.name, g.target_amount, g.target_date, a.name AS account, g.saved_amount, g.created_at
+         FROM goals g LEFT JOIN accounts a ON a.id = g.account_id
+         ORDER BY g.target_date IS NULL, g.target_date, g.id",
     ),
 ];
 
@@ -212,6 +218,29 @@ mod tests {
         assert!(splits.starts_with("\u{FEFF}date,account,payee,transaction_amount,category,amount,note\r\n"));
         assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,Test category,-3,\r\n"));
         assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,,-1.5,\r\n"));
+    }
+
+    #[test]
+    fn goals_are_exported_with_the_account_name() {
+        let conn = crate::db::open_in_memory().unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (id, name, type, created_at) VALUES (1, 'Savings', 'cash', '2026-10-01');
+             INSERT INTO goals (name, target_amount, target_date, account_id, saved_amount, created_at)
+               VALUES ('Trip', 2000, '2027-03-01', 1, 0, '2026-10-25'),
+                      ('Rainy day', 500, NULL, NULL, 125.5, '2026-10-25');",
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let folder = export_all(&conn, out.path(), day()).unwrap();
+
+        let goals = std::fs::read_to_string(folder.join("goals.csv")).unwrap();
+        assert_eq!(
+            goals,
+            "\u{FEFF}name,target_amount,target_date,account,saved_amount,created_at\r\n\
+             Trip,2000,2027-03-01,Savings,0,2026-10-25\r\n\
+             Rainy day,500,,,125.5,2026-10-25\r\n"
+        );
     }
 
     #[test]
