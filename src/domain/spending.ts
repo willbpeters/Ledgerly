@@ -75,6 +75,7 @@ export interface MonthSummary {
   transferred: number;
   budgeted: number;
   uncategorisedCount: number;
+  /** Can be negative: a split purchase that later settled for less than its pieces leaves money back. */
   uncategorisedTotal: number;
   categories: CategorySpend[];
 }

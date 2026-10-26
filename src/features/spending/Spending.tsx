@@ -5,6 +5,7 @@ import {
   useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
 } from "../../data/queries";
 import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
+import { inCategory } from "../../domain/splits";
 import { money } from "../../ui/format";
 import { Card, Button, EmptyState, Segmented } from "../../ui/components";
 import { useChartColors } from "../../ui/chartColors";
@@ -90,8 +91,8 @@ export function Spending() {
     return colours.series[Number.isFinite(i) && i >= 0 ? i % colours.series.length : 0];
   };
 
-  const shown = txns.filter((t) =>
-    focus == null ? true : focus === "uncategorised" ? t.category_id == null : t.category_id === focus);
+  // A split purchase shows under every category it was split into.
+  const shown = txns.filter((t) => focus == null || inCategory(t, focus));
 
   const nothingImported = (range?.[0] ?? null) == null;
 

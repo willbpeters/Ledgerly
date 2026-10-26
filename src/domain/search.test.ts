@@ -88,6 +88,18 @@ describe("searchTransactions", () => {
     expect(searchTransactions([groceries, none], { ...all, accountId: 2 }, ctx)).toEqual([none]);
   });
 
+  it("finds a split transaction by any piece's category or note", () => {
+    const costco = txn({ amount: -85.5, splits: [
+      { id: 1, category_id: 1, amount: -60, note: null },
+      { id: 2, category_id: 2, amount: -25.5, note: "pizza" },
+    ] });
+    const dinner = txn({ category_id: 2 });
+    expect(searchTransactions([costco, dinner], { ...all, categoryId: 1 }, ctx)).toEqual([costco]);
+    expect(searchTransactions([costco, dinner], { ...all, text: "groceries" }, ctx)).toEqual([costco]);
+    expect(searchTransactions([costco, dinner], { ...all, text: "pizza" }, ctx)).toEqual([costco]);
+    expect(searchTransactions([costco], { ...all, categoryId: "uncategorised" }, ctx)).toEqual([]);
+  });
+
   it("puts the newest first", () => {
     const old = txn({ posted: "2025-01-02" });
     const recent = txn({ posted: "2026-10-01" });

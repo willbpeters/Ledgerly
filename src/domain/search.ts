@@ -1,4 +1,5 @@
 import type { Account, BankTransaction, Category } from "./types";
+import { inCategory, piecesOf } from "./splits";
 
 /**
  * `~` is a bare number: it matches that amount to the cent, or the same text in
@@ -60,13 +61,14 @@ export function searchTransactions(
   return txns
     .filter((t) => {
       if (search.accountId != null && t.account_id !== search.accountId) return false;
-      if (search.categoryId === "uncategorised" ? t.category_id != null
-        : search.categoryId != null && t.category_id !== search.categoryId) return false;
+      // A split purchase belongs to every category it was split into.
+      if (search.categoryId != null && !inCategory(t, search.categoryId)) return false;
       if (!sizes.every((s) => sizeMatches(t.amount, s.op, s.value))) return false;
       if (words.length === 0) return true;
       const haystack = [
         t.payee, t.description, t.memo, t.note,
-        t.category_id == null ? null : categoryName.get(t.category_id),
+        ...piecesOf(t).map((p) => (p.category_id == null ? null : categoryName.get(p.category_id))),
+        ...t.splits.map((s) => s.note),
         accountName.get(t.account_id),
       ].filter(Boolean).join("\n").toLowerCase();
       return words.every((w) => {
