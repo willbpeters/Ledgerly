@@ -15,7 +15,7 @@ let n = 0;
 const txn = (over: Partial<BankTransaction>): BankTransaction => ({
   id: ++n, account_id: 1, external_id: `e${n}`, posted: "2026-09-10", amount: -10,
   description: "x", payee: null, memo: null, mcc: null, pending: false,
-  category_id: null, category_source: "auto", reviewed: true, note: null, removed: false,
+  category_id: null, category_source: "auto", reviewed: true, note: null, removed: false, splits: [],
   ...over,
 });
 

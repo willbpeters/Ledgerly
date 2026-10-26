@@ -86,7 +86,19 @@ export interface BankTransaction {
   note: string | null;
   /** Left out of Spending and budgets (paid back); restorable. */
   removed: boolean;
+  /** The pieces, when split across categories; empty otherwise. While split,
+   *  `category_id` is null and the pieces are what count — read them through
+   *  `piecesOf()` in `splits.ts`, never `category_id` alone. */
+  splits: TxnSplit[];
 }
+
+/** One piece of a split transaction. The amount carries the transaction's
+ *  sign: a purchase splits into negative pieces. */
+export interface TxnSplit {
+  id: number; category_id: number | null; amount: number; note: string | null;
+}
+/** A piece on its way to the database, before it has an id. */
+export type NewSplit = Omit<TxnSplit, "id">;
 
 /** What an import from Copilot would do. See `budget/copilot.rs`. */
 export interface CopilotPlan {

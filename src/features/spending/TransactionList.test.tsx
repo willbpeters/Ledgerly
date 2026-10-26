@@ -10,7 +10,7 @@ const account = { id: 1, name: "Card", hidden: false, type: "credit" } as Accoun
 const txn = (over: Partial<BankTransaction> = {}): BankTransaction => ({
   id: 7, account_id: 1, external_id: "t", posted: "2026-10-01", amount: -9, description: "TARGET",
   payee: "Target", memo: null, mcc: null, pending: false, category_id: 1, category_source: "auto",
-  reviewed: false, note: null, removed: false, ...over,
+  reviewed: false, note: null, removed: false, splits: [], ...over,
 });
 
 function renderList(props: Partial<Parameters<typeof TransactionList>[0]> = {}) {

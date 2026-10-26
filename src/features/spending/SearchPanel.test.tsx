@@ -10,7 +10,7 @@ const account = { id: 1, name: "Card", hidden: false, type: "credit" } as Accoun
 const txn = (id: number, payee: string, amount: number, posted: string): BankTransaction => ({
   id, account_id: 1, external_id: `t${id}`, posted, amount, description: payee.toUpperCase(),
   payee, memo: null, mcc: null, pending: false, category_id: 1, category_source: "auto",
-  reviewed: true, note: null, removed: false,
+  reviewed: true, note: null, removed: false, splits: [],
 });
 
 function renderPanel(transactions: BankTransaction[]) {

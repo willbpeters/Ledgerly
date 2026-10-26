@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, Security, Transaction, Snapshot,
   SyncedHolding, SyncReport, SimplefinStatus, SimplefinSample,
-  Category, BankTransaction, CategoryRule, Budget,
+  Category, BankTransaction, CategoryRule, Budget, NewSplit,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
@@ -96,6 +96,9 @@ export const api = {
     range: () => invoke<[string | null, string | null]>("bank_transactions_range"),
     setCategory: (id: number, categoryId: number | null, applyToPayee: boolean) =>
       invoke<number>("bank_transaction_set_category", { id, categoryId, applyToPayee }),
+    /** Split across categories; no pieces unsplits. Refused unless they add up. */
+    setSplits: (id: number, splits: NewSplit[]) =>
+      invoke<void>("bank_transaction_set_splits", { id, splits }),
     toReview: () => invoke<BankTransaction[]>("bank_transactions_to_review"),
     approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
     /** Remove from Spending (paid back), or restore. Never deletes. */

@@ -34,7 +34,7 @@ describe("accountOverview", () => {
 function bank(id: number, account_id: number, posted: string, amount: number, p: Partial<BankTransaction> = {}): BankTransaction {
   return { id, account_id, external_id: `e${id}`, posted, amount, description: "POS 1234 WHOLEFDS",
     payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto",
-    reviewed: true, note: null, removed: false, ...p };
+    reviewed: true, note: null, removed: false, splits: [], ...p };
 }
 function txn(id: number, account_id: number, date: string, type: Transaction["type"], p: Partial<Transaction> = {}): Transaction {
   return { id, account_id, security_id: null, type, date, quantity: 0, price: 0, amount: 0, fees: 0, note: null, ...p };

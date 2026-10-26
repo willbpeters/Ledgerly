@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
+import type { NewSplit } from "../domain/types";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
@@ -189,6 +190,14 @@ export function useSetTransactionCategory() {
   return useMutation({
     mutationFn: (v: { id: number; categoryId: number | null; applyToPayee: boolean }) =>
       api.bankTransactions.setCategory(v.id, v.categoryId, v.applyToPayee),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+/** Splitting changes what each category holds, like a category change. */
+export function useSetSplits() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; splits: NewSplit[] }) => api.bankTransactions.setSplits(v.id, v.splits),
     onSuccess: () => invalidateSpending(qc),
   });
 }

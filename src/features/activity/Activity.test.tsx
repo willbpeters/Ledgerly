@@ -14,7 +14,7 @@ function bankTxn(id: number, accountId: number, description: string, amount: num
   return {
     id, account_id: accountId, external_id: `e${id}`, posted: "2026-09-05", amount,
     description, payee: description, memo: null, mcc: null, pending: false,
-    category_id: 1, category_source: "auto", reviewed: true, note: null, removed: false,
+    category_id: 1, category_source: "auto", reviewed: true, note: null, removed: false, splits: [],
   };
 }
 
