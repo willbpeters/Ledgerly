@@ -29,11 +29,11 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// `credit` account type; v4 adds the `hidden` flag on accounts; v5 adds the
 /// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
 /// once; v7 adds a `note` and v8 a `removed` flag to bank transactions; v9 adds
-/// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. To add a change later: bump
+/// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. v11 adds the `goals` table. To add a change later: bump
 /// TARGET_VERSION, add another `if current < N` block, and give it a
 /// completeness check so a mis-stamped database can still repair itself. Add
 /// the new completeness check to `migration_pending` too.
-const TARGET_VERSION: i64 = 10;
+const TARGET_VERSION: i64 = 11;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -302,6 +302,30 @@ fn apply_v10(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(MIGRATION_10)
 }
 
+/// v11: savings goals. A goal follows one account's balance, or holds an amount
+/// the owner keeps up to date by hand. Deleting the account keeps the goal and
+/// turns it into a by-hand one, rather than losing what the owner set up.
+const MIGRATION_11: &str = "
+CREATE TABLE IF NOT EXISTS goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  target_amount REAL NOT NULL,
+  target_date TEXT,
+  account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+  saved_amount REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+";
+
+fn v11_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    table_exists(conn, "goals")
+}
+
+/// IF NOT EXISTS throughout, so this is safe to re-run.
+fn apply_v11(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_11)
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -455,6 +479,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v10_is_complete(conn)? {
         apply_v10(conn)?;
     }
+    if !v11_is_complete(conn)? {
+        apply_v11(conn)?;
+    }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
@@ -473,7 +500,8 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v7_is_complete(conn)?
         || !v8_is_complete(conn)?
         || !v9_is_complete(conn)?
-        || !v10_is_complete(conn)?)
+        || !v10_is_complete(conn)?
+        || !v11_is_complete(conn)?)
 }
 
 #[cfg(test)]
@@ -530,7 +558,24 @@ mod tests {
         );
         assert!(!migration_pending(&conn).unwrap());
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, TARGET_VERSION);
+    }
+
+    #[test]
+    fn v11_adds_the_goals_table_and_running_it_twice_changes_nothing() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        // Stand in for a v10 database: everything but the goals table.
+        conn.execute_batch("DROP TABLE goals;").unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+
+        assert!(table_exists(&conn, "goals").unwrap());
+        assert!(!migration_pending(&conn).unwrap());
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 11);
     }
 
     #[test]
