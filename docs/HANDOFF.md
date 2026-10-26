@@ -43,8 +43,8 @@ budgeting and spending module.
   unsigned `-setup.exe` + `.msi` under `src-tauri/target/release/bundle/`.
 
 ### What's built
-- **Markets**: a screen answering "what happened to what I own?" and "is this
-  me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
+- **Markets**: a screen (titled "Markets"; it used to say "Dashboard") answering
+  "what happened to what I own?" and "is this me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
   Russell 2000, International via VXUS, VIX, 10- and 5-year yields; level,
   move and a one-month sparkline; VIX and yields uncoloured, yields in basis
   points) with your own day change in its header; an **S&P sector heatmap** (the
@@ -77,6 +77,22 @@ budgeting and spending module.
   Investment accounts are left out of Spending. Every sync re-sorts all
   automatic rows, so a list change reaches history. Spec:
   `docs/superpowers/specs/2026-10-14-copilot-style-categories-design.md`
+- **Goals** (`/goals`, on the rail below Spending): savings targets with an
+  optional date (exactly `YYYY-MM-DD`, a real day). A goal **follows an
+  account** — its progress is that account's value from `derivePortfolio()`
+  (at least $0; a visible account with no value yet counts as $0), so it moves
+  with each sync — or holds an amount the owner updates by hand ("Saved so
+  far"). Only visible cash and brokerage accounts can be followed (a card
+  balance is a debt). The screen shows saved of target, a bar, and what to set
+  aside each month to make the date: what is left divided by the months to go.
+  Months are counted by the calendar (`monthsUntil` in `src/domain/dates.ts`;
+  a part month counts as a whole one), and the line names the day ("by March
+  1, 2027"). On the target day it says "Due today — $Z to go"; once the date
+  has passed it says "The date has passed — $Z to go" and gives no monthly
+  figure. Done is decided in cents. Maths is pure in `src/domain/goals.ts`;
+  storage and the rules in `src-tauri/src/commands/goals.rs`, mirrored by
+  `readGoal` in `src/features/goals/GoalForm.tsx` so mistakes are explained
+  beside the form.
 - **Import from Copilot** (Settings): reads Copilot's CSV export, matches
   rows to transactions SimpleFIN already has (same account by mask, same
   amount, within 3 days) and gives them the owner's Copilot category and note;
@@ -241,8 +257,8 @@ budgeting and spending module.
   kept and every other kind is kept for good. An optional extra folder gets a
   copy of each. **Restore** stages the chosen file as
   `finance.sqlite.restore-pending`, lets go of the database and restarts; the
-  swap happens at launch, before `db::open`. **Export to CSV** writes eight
-  spreadsheet-ready files, among them `transaction-splits.csv`. Settings → Backups. Spec:
+  swap happens at launch, before `db::open`. **Export to CSV** writes nine
+  spreadsheet-ready files, among them `transaction-splits.csv` and `goals.csv`. Settings → Backups. Spec:
   `docs/superpowers/specs/2026-10-14-backup-and-export-design.md`
 
 ### Reliability pass (2026-09-08)
@@ -334,6 +350,15 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   row's own category is NULL; its pieces are what count. Read rows through
   `piecesOf()` / `inCategory()` in `src/domain/splits.ts`, as
   `summariseMonth`, search and Spending's category focus do.
+- **v11 adds `goals`.** `account_id` is `ON DELETE SET NULL`: deleting the
+  followed account keeps the goal as a by-hand one with its last
+  `saved_amount`, and the Goals query is refetched after an account delete or
+  a sync for that reason. **A goal following a hidden account** has no value in
+  `derivePortfolio()` (hidden accounts are filtered there) and falls back to
+  `saved_amount`, saying so on the card — showing $0 would read as lost money.
+  (A *visible* account with no value yet is the opposite case: $0, from the
+  account.) `goals.csv`'s `saved_by_hand` is the hand-entered figure only; a
+  followed account's progress is worked out by the app, not stored.
 - **Never call the browser's `confirm()`; `await askToConfirm()` from
   `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an
   async version whose Promise is always truthy, so `if (confirm(...))` deletes
@@ -464,8 +489,8 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **10** (v9 adds `bank_transaction_splits`, v10 adds
-  `recurring_dismissed`); migrations are
+  **unencrypted**. The schema is at `user_version` **11** (v9 adds `bank_transaction_splits`, v10 adds
+  `recurring_dismissed`, v11 adds `goals`); migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept

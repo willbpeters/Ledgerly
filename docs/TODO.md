@@ -92,6 +92,11 @@ These are the gaps a former Copilot user would notice first.
       on any row in Spending divides it into pieces with their own categories;
       budgets, search and the category filter count each piece.
 
+- [x] **15b. Savings goals.** Done 2026-10-25: a Goals screen (on the rail
+      below Spending) with a target, an optional date, and either an account
+      to follow or an amount kept by hand; shows what to put aside each month
+      to make the date. In the CSV export as `goals.csv`.
+
 ## Phase 4 — Correct numbers for a real portfolio
 
 - [ ] **16. Stock splits.** There is no `split` transaction type, so a split

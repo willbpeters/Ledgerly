@@ -56,6 +56,11 @@ it on your own computer. There are no accounts, no cloud and no subscription.
 - Undo after every change
 - A one-time import of your history and categories from Copilot
 
+**Goals**
+- Savings goals with a target and an optional date
+- Follow a savings account automatically, or update the amount yourself
+- What to put aside each month to get there in time
+
 **Bank sync**
 - Balances, holdings and transactions from your banks and brokerages through
   [SimpleFIN](https://www.simplefin.org/)
