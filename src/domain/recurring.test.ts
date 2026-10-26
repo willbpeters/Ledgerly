@@ -311,7 +311,6 @@ describe("monthOutlook", () => {
         lastDate: "2026-10-05" }),
     ], "2026-10-20");
     expect(o.due.map((d) => [d.key, d.date])).toEqual([["due", "2026-10-25"]]);
-    expect(o.dueCount).toBe(1);
     expect(o.dueTotal).toBe(12);
     expect(o.paidCount).toBe(1);
     expect(o.paidTotal).toBe(15.49);

@@ -251,7 +251,6 @@ export interface ExpectedCharge { key: string; name: string; date: string; amoun
 export interface MonthOutlook {
   /** Charges still to come this month, a late one included, soonest first. */
   due: ExpectedCharge[];
-  dueCount: number;
   dueTotal: number;
   /** Bills charged this month, and the sum of every charge they made in it. */
   paidCount: number;
@@ -288,7 +287,6 @@ export function monthOutlook(series: RecurringSeries[], today: string): MonthOut
   due.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
   return {
     due,
-    dueCount: due.length,
     dueTotal: due.reduce((sum, d) => sum + Math.round(d.amount * 100), 0) / 100,
     paidCount,
     paidTotal: paidCents / 100,

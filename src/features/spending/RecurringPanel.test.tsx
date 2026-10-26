@@ -21,11 +21,11 @@ const spotify = monthly("Spotify", "25", ["2026-07", "2026-08", "2026-09"], -11.
 
 function renderPanel(
   transactions: BankTransaction[],
-  { dismissed = [] as string[], onSetDismissed = vi.fn().mockResolvedValue(undefined) } = {},
+  { dismissed = [] as string[], onSetDismissed = vi.fn().mockResolvedValue(undefined), loading = false } = {},
 ) {
   render(
     <ToastProvider>
-      <RecurringPanel transactions={transactions} loading={false} categories={[category]} accounts={[account]}
+      <RecurringPanel transactions={transactions} loading={loading} categories={[category]} accounts={[account]}
         dismissed={dismissed} onSetDismissed={onSetDismissed} today={TODAY} />
     </ToastProvider>,
   );
@@ -115,7 +115,104 @@ describe("RecurringPanel", () => {
     expect(screen.queryByRole("row", { name: /Old Gym/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Not seen lately (1)" }));
     const row = screen.getByRole("row", { name: /Old Gym/ });
-    expect(within(row).getByText("Last seen May 5")).toBeInTheDocument();
+    expect(within(row).getByText("May 5")).toBeInTheDocument();
+    expect(within(row).getByText("Probably cancelled")).toBeInTheDocument();
     expect(within(row).queryByText(/^Late/)).toBeNull();
+    expect(within(row).queryByText(/Last seen/)).toBeNull();
+  });
+
+  it("names the year of a date outside this year", () => {
+    renderPanel(monthly("Old Gym", "05", ["2025-03", "2025-04", "2025-05"], -40));
+    fireEvent.click(screen.getByRole("button", { name: "Not seen lately (1)" }));
+    expect(within(screen.getByRole("row", { name: /Old Gym/ })).getByText("May 5, 2025")).toBeInTheDocument();
+  });
+
+  it("marks the two collapsed lists as expanded or not", () => {
+    renderPanel([...netflix, ...monthly("Old Gym", "05", ["2026-03", "2026-04", "2026-05"], -40), ...spotify],
+      { dismissed: ["spotify"] });
+    for (const [closed, open] of [["Not seen lately (1)", "Hide not seen lately"], ["Dismissed (1)", "Hide dismissed"]]) {
+      const toggle = screen.getByRole("button", { name: closed });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(toggle);
+      expect(screen.getByRole("button", { name: open })).toHaveAttribute("aria-expanded", "true");
+    }
+  });
+
+  it("shows dashes, not figures, while loading", () => {
+    const { container } = render(
+      <ToastProvider>
+        <RecurringPanel transactions={[]} loading categories={[category]} accounts={[account]}
+          dismissed={[]} onSetDismissed={vi.fn()} today={TODAY} />
+      </ToastProvider>,
+    );
+    expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("—");
+    expect(screen.getByText("Paid this month", { selector: ".stat-label" }).parentElement).toHaveTextContent("—");
+    expect(container.querySelectorAll(".stat-hint")).toHaveLength(0);
+    expect(container).not.toHaveTextContent("$0.00");
+  });
+
+  it("disables a row's button while its dismiss is in flight", () => {
+    const onSetDismissed = vi.fn().mockReturnValue(new Promise(() => {}));
+    renderPanel(netflix, { onSetDismissed });
+    const button = screen.getByRole("button", { name: "Not recurring: Netflix" });
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onSetDismissed).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables a restore button while it is in flight", () => {
+    const onSetDismissed = vi.fn().mockReturnValue(new Promise(() => {}));
+    renderPanel(netflix, { dismissed: ["netflix"], onSetDismissed });
+    fireEvent.click(screen.getByRole("button", { name: "Dismissed (1)" }));
+    const button = screen.getByRole("button", { name: "Restore Netflix" });
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onSetDismissed).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so when Undo fails", async () => {
+    const undoFails = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("disk full"));
+    renderPanel(netflix, { onSetDismissed: undoFails });
+    fireEvent.click(screen.getByRole("button", { name: "Not recurring: Netflix" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("Couldn't undo")).toBeInTheDocument();
+  });
+
+  it("says so when a restore fails", async () => {
+    renderPanel(netflix, { dismissed: ["netflix"], onSetDismissed: vi.fn().mockRejectedValue(new Error("disk full")) });
+    fireEvent.click(screen.getByRole("button", { name: "Dismissed (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore Netflix" }));
+    expect(await screen.findByText("Couldn't restore")).toBeInTheDocument();
+  });
+
+  it("counts several bills still due in the plural", () => {
+    const gym = monthly("Gym", "28", ["2026-07", "2026-08", "2026-09"], -40);
+    renderPanel([...spotify, ...gym]);
+    expect(screen.getByText("Still due this month").parentElement).toHaveTextContent("2 bills to come");
+  });
+
+  it("says the list is empty, not that nothing was spotted, when every bill is dismissed", () => {
+    renderPanel(netflix, { dismissed: ["netflix"] });
+    expect(screen.getByText("No bills on the list")).toBeInTheDocument();
+    expect(screen.getByText("You dismissed the ones Tally spotted.")).toBeInTheDocument();
+    expect(screen.queryByText("No bills spotted yet")).toBeNull();
+  });
+
+  it("still explains the rules when a dismissed key matches nothing", () => {
+    renderPanel([charge("Corner Shop", "2026-10-01", -4)], { dismissed: ["ghost"] });
+    expect(screen.getByText("No bills spotted yet")).toBeInTheDocument();
+  });
+
+  it("says plainly when every spotted bill has stopped", () => {
+    renderPanel(monthly("Old Gym", "05", ["2026-03", "2026-04", "2026-05"], -40));
+    expect(screen.getByText("None of the bills Tally spotted are still being charged.")).toBeInTheDocument();
+  });
+
+  it("labels the amount and the actions column", () => {
+    renderPanel(netflix);
+    expect(screen.getByRole("columnheader", { name: "Usual amount" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
   });
 });
