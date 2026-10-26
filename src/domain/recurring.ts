@@ -92,9 +92,12 @@ export function stepDate(date: string, cadence: Cadence, times = 1): string {
 
 /**
  * `times` steps on from a series' last charge. For calendar-month cadences the
- * day of the month is the largest among the last three charges, then clamped to
- * the target month: a bill on the 31st that paid on Feb 28 is expected on Mar 31,
- * not Mar 28. Weekly and fortnightly bills just add days.
+ * day of the month is the last charge's own day, clamped to the target month.
+ * Only when that charge fell on the last day of its month (so its day may have
+ * been clamped) is the largest day among the last three charges used instead: a
+ * bill on the 31st that paid on Feb 28 is expected on Mar 31, not Mar 28, while
+ * a billing day that moved to the 5th stays on the 5th. Weekly and fortnightly
+ * bills just add days.
  */
 export function stepSeries(
   s: Pick<RecurringSeries, "lastDate" | "cadence" | "charges">,
@@ -102,8 +105,12 @@ export function stepSeries(
 ): string {
   const rule = ruleFor(s.cadence);
   if (rule.days != null) return addDays(s.lastDate, rule.days * times);
-  const days = [s.lastDate, ...s.charges.slice(-3).map((c) => c.date)].map((d) => Number(d.slice(8)));
-  return addMonths(s.lastDate, rule.months! * times, Math.max(...days));
+  const [y, m, lastDay] = s.lastDate.split("-").map(Number);
+  const endOfMonth = lastDay === new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const day = endOfMonth
+    ? Math.max(lastDay, ...s.charges.slice(-3).map((c) => Number(c.date.slice(8))))
+    : lastDay;
+  return addMonths(s.lastDate, rule.months! * times, day);
 }
 
 export interface RecurringSeries {
@@ -295,6 +302,8 @@ function seriesFrom(key: string, rows: BankTransaction[], today: string): Recurr
 
 export type RecurringStatus =
   | { kind: "paid" }
+  /** Charged this month, but every charge this month was removed: the owner was paid back. */
+  | { kind: "paidBack" }
   | { kind: "due"; date: string }
   | { kind: "late"; since: string };
 
@@ -313,7 +322,11 @@ export const LATE_AFTER_DAYS = 2;
 export function statusOf(s: RecurringSeries, today: string): RecurringStatus {
   if (today > addDays(s.nextDate, LATE_AFTER_DAYS)) return { kind: "late", since: s.nextDate };
   const { from, to } = monthWindow(today.slice(0, 7));
-  if (s.lastDate >= from && s.lastDate <= to && s.nextDate > to) return { kind: "paid" };
+  if (s.lastDate >= from && s.lastDate <= to && s.nextDate > to) {
+    // The same charges monthOutlook counts: a bill nobody paid for this month is not "paid".
+    const thisMonth = s.charges.filter((c) => c.date >= from && c.date <= to);
+    return thisMonth.length > 0 && thisMonth.every((c) => c.removed) ? { kind: "paidBack" } : { kind: "paid" };
+  }
   return { kind: "due", date: s.nextDate };
 }
 

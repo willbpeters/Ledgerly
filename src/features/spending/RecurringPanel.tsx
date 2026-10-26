@@ -21,8 +21,10 @@ function shortDate(iso: string, today: string): string {
 function StatusBadge({ series, today }: { series: RecurringSeries; today: string }) {
   const status = statusOf(series, today);
   if (status.kind === "paid") return <Badge tone="pos">Paid this month</Badge>;
+  if (status.kind === "paidBack") return <Badge tone="neutral">Paid back this month</Badge>;
   if (status.kind === "late") return <Badge tone="warn">Late · expected {shortDate(status.since, today)}</Badge>;
-  return <Badge tone="neutral">Due {shortDate(status.date, today)}</Badge>;
+  // Past its date but within the late slack: not late yet, so say what is true.
+  return <Badge tone="neutral">{status.date < today ? "Expected" : "Due"} {shortDate(status.date, today)}</Badge>;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

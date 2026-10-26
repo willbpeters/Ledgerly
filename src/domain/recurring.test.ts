@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recurringKey, displayName, stepDate, cadenceLabel, detectRecurring, statusOf, monthOutlook, namesForKeys, LATE_AFTER_DAYS, type RecurringSeries } from "./recurring";
+import { recurringKey, displayName, stepDate, cadenceLabel, detectRecurring, statusOf, monthOutlook, namesForKeys, LATE_AFTER_DAYS, stepSeries, type RecurringSeries } from "./recurring";
 import type { BankTransaction, Category } from "./types";
 
 describe("recurringKey", () => {
@@ -65,6 +65,28 @@ describe("stepDate", () => {
     // One step at a time would go Jan 31 → Feb 28 → Mar 28.
     expect(stepDate("2026-01-31", "monthly", 2)).toBe("2026-03-31");
     expect(stepDate("2026-10-01", "weekly", 3)).toBe("2026-10-22");
+  });
+});
+
+describe("stepSeries", () => {
+  const at = (lastDate: string, dates: string[]) =>
+    stepSeries({ lastDate, cadence: "monthly", charges: dates.map((date) => ({ date, amount: 10 })) });
+
+  it("keeps a month-end bill on its largest recent day after a clamped month", () => {
+    expect(at("2026-04-30", ["2026-02-28", "2026-03-31", "2026-04-30"])).toBe("2026-05-31");
+    expect(at("2026-02-28", ["2025-12-31", "2026-01-31", "2026-02-28"])).toBe("2026-03-31");
+  });
+
+  it("follows a billing day that moved from the 28th to the 5th", () => {
+    expect(at("2026-11-05", ["2026-09-28", "2026-10-28", "2026-11-05"])).toBe("2026-12-05");
+  });
+
+  it("steps from the 1st when a month-end charge posted on the 1st", () => {
+    expect(at("2026-12-01", ["2026-09-30", "2026-10-31", "2026-12-01"])).toBe("2027-01-01");
+  });
+
+  it("steps from the 1st when the charges were on the 1st, 3rd and 1st", () => {
+    expect(at("2026-10-01", ["2026-08-01", "2026-09-03", "2026-10-01"])).toBe("2026-11-01");
   });
 });
 
@@ -312,7 +334,7 @@ describe("detectRecurring", () => {
     ];
     const [s] = detectRecurring(txns, cats, TODAY);
     expect(s).toMatchObject({ lastDate: "2026-10-03", nextDate: "2026-11-03", active: true, count: 4 });
-    expect(statusOf(s, TODAY)).toEqual({ kind: "paid" });
+    expect(statusOf(s, TODAY)).toEqual({ kind: "paidBack" });
     expect(monthOutlook([s], TODAY)).toMatchObject({ paidCount: 0, paidTotal: 0, due: [] });
   });
 
@@ -390,6 +412,17 @@ describe("statusOf", () => {
     expect(statusOf(s, "2026-10-15")).toEqual({ kind: "due", date: "2026-10-15" });
     expect(statusOf(s, "2026-10-17")).toEqual({ kind: "due", date: "2026-10-15" });
     expect(statusOf(s, "2026-10-18")).toEqual({ kind: "late", since: "2026-10-15" });
+  });
+
+  it("is paid back when every charge this month was removed", () => {
+    const s = series({ lastDate: "2026-10-05", charges: [{ date: "2026-10-05", amount: 10, removed: true }] });
+    expect(statusOf(s, "2026-10-20")).toEqual({ kind: "paidBack" });
+  });
+
+  it("is paid when only some of this month's charges were removed", () => {
+    const s = series({ lastDate: "2026-10-05",
+      charges: [{ date: "2026-10-03", amount: 10, removed: true }, { date: "2026-10-05", amount: 10 }] });
+    expect(statusOf(s, "2026-10-20")).toEqual({ kind: "paid" });
   });
 
   it("is due next month, not paid, for a quarterly bill charged before this month", () => {
@@ -500,24 +533,27 @@ describe("monthOutlook", () => {
   it("agrees with statusOf about every bill", () => {
     const today = "2026-10-10";
     const all = [
-      series({ key: "paid", lastDate: "2026-10-05" }),
+      series({ key: "paid", lastDate: "2026-10-05", charges: [{ date: "2026-10-05", amount: 10 }] }),
       series({ key: "ahead", lastDate: "2026-09-25" }),
       series({ key: "late", lastDate: "2026-09-05" }),
       series({ key: "weekly", cadence: "weekly", lastDate: "2026-10-06" }),
       series({ key: "quarterly-late", cadence: "quarterly", lastDate: "2026-06-25" }),
       series({ key: "quarterly-next", cadence: "quarterly", lastDate: "2026-08-20" }),
-      series({ key: "yearly-paid", cadence: "yearly", lastDate: "2026-10-02" }),
+      series({ key: "yearly-paid", cadence: "yearly", lastDate: "2026-10-02", charges: [{ date: "2026-10-02", amount: 10 }] }),
       series({ key: "slack", lastDate: "2026-09-09" }),
+      series({ key: "paid-back", lastDate: "2026-10-05", charges: [{ date: "2026-10-05", amount: 10, removed: true }] }),
     ];
     const o = monthOutlook(all, today);
     const inDue = (key: string) => o.due.some((d) => d.key === key);
     for (const s of all) {
       const status = statusOf(s, today);
-      if (status.kind === "paid") expect(inDue(s.key), s.key).toBe(false);
+      if (status.kind === "paid" || status.kind === "paidBack") expect(inDue(s.key), s.key).toBe(false);
       else if (status.kind === "late") expect(inDue(s.key), s.key).toBe(true);
       else expect(inDue(s.key), s.key).toBe(status.date <= "2026-10-31");
     }
-    expect(all.map((s) => statusOf(s, today).kind)).toEqual(["paid", "due", "late", "due", "late", "due", "paid", "due"]);
+    expect(all.map((s) => statusOf(s, today).kind)).toEqual(["paid", "due", "late", "due", "late", "due", "paid", "due", "paidBack"]);
+    // Only a bill with a charge the owner paid for this month is counted as charging.
+    expect(o.paidCount).toBe(2);
   });
 });
 

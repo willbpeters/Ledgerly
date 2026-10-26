@@ -231,6 +231,21 @@ describe("RecurringPanel", () => {
     expect(screen.queryByText(/^Late/)).toBeNull();
   });
 
+  it("says Expected, not Due, for a bill a day or two past its date", () => {
+    renderPanel(monthly("Water", "18", ["2026-07", "2026-08", "2026-09"], -30));
+    const row = screen.getByRole("row", { name: /Water/ });
+    expect(within(row).getByText("Expected Oct 18")).toBeInTheDocument();
+    expect(within(row).queryByText(/^Late/)).toBeNull();
+  });
+
+  it("says Paid back this month when this month's only charge was removed", () => {
+    renderPanel([
+      ...monthly("Phone", "03", ["2026-07", "2026-08", "2026-09"], -50),
+      { ...charge("Phone", "2026-10-03", -50), removed: true },
+    ]);
+    expect(within(screen.getByRole("row", { name: /Phone/ })).getByText("Paid back this month")).toBeInTheDocument();
+  });
+
   it("labels the amount and the actions column", () => {
     renderPanel(netflix);
     expect(screen.getByRole("columnheader", { name: "Usual amount" })).toBeInTheDocument();
