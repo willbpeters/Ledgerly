@@ -29,11 +29,11 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// `credit` account type; v4 adds the `hidden` flag on accounts; v5 adds the
 /// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
 /// once; v7 adds a `note` and v8 a `removed` flag to bank transactions; v9 adds
-/// `bank_transaction_splits`. To add a change later: bump
+/// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. To add a change later: bump
 /// TARGET_VERSION, add another `if current < N` block, and give it a
 /// completeness check so a mis-stamped database can still repair itself. Add
 /// the new completeness check to `migration_pending` too.
-const TARGET_VERSION: i64 = 9;
+const TARGET_VERSION: i64 = 10;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -283,6 +283,25 @@ fn apply_v9(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(MIGRATION_9)
 }
 
+/// v10: bills the owner said are not recurring. Detection is pure TypeScript;
+/// this only remembers which keys to skip, as the text `recurringKey` in
+/// `src/domain/recurring.ts` makes from a payee. Rust never builds a key.
+const MIGRATION_10: &str = "
+CREATE TABLE IF NOT EXISTS recurring_dismissed (
+  payee_key TEXT PRIMARY KEY,
+  dismissed_at TEXT NOT NULL
+);
+";
+
+fn v10_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    table_exists(conn, "recurring_dismissed")
+}
+
+/// IF NOT EXISTS, so this is safe to re-run.
+fn apply_v10(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_10)
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -433,6 +452,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v9_is_complete(conn)? {
         apply_v9(conn)?;
     }
+    if !v10_is_complete(conn)? {
+        apply_v10(conn)?;
+    }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
@@ -450,7 +472,8 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v6_is_complete(conn)?
         || !v7_is_complete(conn)?
         || !v8_is_complete(conn)?
-        || !v9_is_complete(conn)?)
+        || !v9_is_complete(conn)?
+        || !v10_is_complete(conn)?)
 }
 
 #[cfg(test)]
@@ -486,6 +509,28 @@ mod tests {
 
         let left: i64 = conn.query_row("SELECT count(*) FROM bank_transaction_splits", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0, "deleting a transaction must delete its pieces");
+    }
+
+    #[test]
+    fn v10_adds_the_dismissed_bills_table_and_is_idempotent() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        // Stand in for a v9 database.
+        conn.execute_batch("DROP TABLE recurring_dismissed;").unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+
+        assert!(table_exists(&conn, "recurring_dismissed").unwrap());
+        conn.execute("INSERT INTO recurring_dismissed (payee_key, dismissed_at) VALUES ('netflix','2026-10-25')", []).unwrap();
+        assert!(
+            conn.execute("INSERT INTO recurring_dismissed (payee_key, dismissed_at) VALUES ('netflix','2026-10-26')", []).is_err(),
+            "one row per key",
+        );
+        assert!(!migration_pending(&conn).unwrap());
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 10);
     }
 
     #[test]
