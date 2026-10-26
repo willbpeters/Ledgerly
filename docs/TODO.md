@@ -77,10 +77,13 @@ These are the gaps a former Copilot user would notice first.
       "exclude from budget". Still to do: editing a note in Tally, and a
       friendlier display name. Keep the sync from overwriting what you set,
       the way `category_source = 'manual'` already protects categories.
-- [ ] **12. Recurring bills and subscriptions.** Detect repeating payees with a
-      steady amount and cadence, list them with the next expected date, and show
-      what is still due this month. The maths is pure and belongs in
-      `src/domain/`. **(spec)**
+- [x] **12. Recurring bills and subscriptions.** Done 2026-10-25: Spending →
+      Recurring lists bills spotted from the history (three or more charges
+      from one payee at a steady amount and rhythm) with the next expected
+      date, and shows what is still due and what was paid this month. A bill
+      that has stopped is moved aside as "Not seen lately". "Not recurring"
+      dismisses a wrong guess, and Restore brings it back. Income and
+      paychecks are not listed.
 - [ ] **13. Spending trends.** A month-by-month view: spending per category over
       the last 6–12 months, and income against spending (cash flow).
 - [ ] **14. Budget rollover** (optional per category): unspent money carries

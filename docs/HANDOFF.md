@@ -95,6 +95,32 @@ budgeting and spending module.
   and a category change each show a toast with **Undo**, which puts the rows
   back exactly as they were (`bank_transactions_restore`). The remove question
   has "Remove, don't ask again"; Settings → Spending turns it back on.
+- **Recurring** (Spending → Recurring): bills and subscriptions spotted from
+  every month's history by `detectRecurring` in `src/domain/recurring.ts`
+  (pure, tested). Money out only; pending and removed rows are left out, as
+  are transfer and income rows (a split is skipped only when every piece is
+  one); uncategorised ones are kept. A split counts whole, and its series is
+  filed under the largest piece of its latest charge. Charges are grouped by
+  `recurringKey` (payee, or the description when the payee is blank or only
+  digits; lowercased, runs of 3+ digits removed, spaces collapsed; the display
+  name falls back the same way). Same-day rows from one payee are one bill:
+  their amounts are summed into one charge. A bill needs **3+ charges**; the
+  median gap picks the cadence (weekly 6–8 days, every two weeks 13–16,
+  monthly 27–33, every three months 84–98, yearly 350–380) and **75%** of
+  gaps must fit it. Amount steadiness is judged on the **last six charges**
+  (**75%** within **25% or $2** of their median), so a price rise settles in
+  within about half a year however long the history; the usual amount is the
+  median of the last three. The next date steps by days or calendar months
+  from the last charge (Jan 31 → Feb 28). Past the next date by more than its
+  grace (3/5/10/20/30 days) a bill is "Not seen lately" ("Probably
+  cancelled") and drops out of the month's figures. `monthOutlook`: "Still
+  due" lists every expected unpaid charge this month — a late bill's missed
+  date from last month included — and counts distinct bills; "Paid this
+  month" sums every charge this month from bills still being charged (a weekly
+  bill charged three times counts all three). Totals are summed in whole
+  cents. "Not recurring" stores the key in `recurring_dismissed` (v10), with
+  Undo once it has landed; dismissed bills are listed with Restore. Rust never
+  builds keys, it only stores what `recurringKey` made.
 - **Split transactions** (Spending): Split on a row opens `SplitEditor`
   beneath it; the pieces (category + amount, carrying the transaction's sign)
   must add up to the cent, and Rust checks again (`store::set_splits`), storing
@@ -365,6 +391,10 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **v5 adds the Markets tables** (`news_items`, `earnings_events`,
   `security_profile`, `index_quotes`). Every statement is `IF NOT EXISTS` and
   the completeness check is `v5_is_complete`.
+- **v10 adds `recurring_dismissed`** (`payee_key` primary key,
+  `dismissed_at`), `IF NOT EXISTS`, checked by `v10_is_complete`. Its keys
+  are made only by `recurringKey` in TypeScript: change that normalisation
+  and every dismissed bill reappears, so treat it like a stored format.
 - **Today and All time on the Dashboard describe the investments, not net
   worth.** `dayChangePct` divides by `priorInvested`, never by net worth —
   dividing by net worth lets a cash balance shrink the percentage, so a 2% day
@@ -410,7 +440,8 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **9** (v9 adds `bank_transaction_splits`); migrations are
+  **unencrypted**. The schema is at `user_version` **10** (v9 adds `bank_transaction_splits`, v10 adds
+  `recurring_dismissed`); migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept
