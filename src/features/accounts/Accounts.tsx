@@ -15,7 +15,7 @@ export function Accounts() {
   const del = useDeleteAccount();
   const setType = useSetAccountType();
   const setHidden = useSetAccountHidden();
-  const { data: goals = [] } = useGoals();
+  const { data: goals = [], isLoading: loadingGoals, isError: goalsFailed } = useGoals();
   const updateGoal = useUpdateGoal();
   const toast = useToast();
   const [showHidden, setShowHidden] = useState(false);
@@ -39,11 +39,17 @@ export function Accounts() {
   }
 
   async function deleteAccount(a: Account) {
+    // Without the goals we cannot warn about them or keep their amounts, so do
+    // not delete on a guess.
+    if (goalsFailed) {
+      toast.push({ tone: "neg", title: "Couldn't check your goals, so nothing was deleted." });
+      return;
+    }
     const following = goals.filter((g) => g.account_id === a.id);
     const extra = a.source === "simplefin" ? " If you still share it with SimpleFIN it will come back on the next sync; if you have stopped sharing it, it is gone for good." : "";
     const keeps = following.map((g) =>
       ` Your goal “${g.name}” follows this account. Tally will keep its current amount, ${money(keptAmount(a, g.saved_amount))}, as an amount kept by hand.`).join("");
-    if (!(await askToConfirm(`Delete "${a.name}"? This removes its transactions.${extra}${keeps}`))) return;
+    if (!(await askToConfirm(`Delete “${a.name}”? This removes its transactions.${extra}${keeps}`))) return;
     try {
       for (const g of following) {
         await updateGoal.mutateAsync({ id: g.id, goal: {
@@ -87,7 +93,7 @@ export function Accounts() {
             onClick={() => setHidden.mutate({ id: a.id, hidden: !a.hidden })}>
             {a.hidden ? "Unhide" : "Hide"}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => deleteAccount(a)}>Delete</Button>
+          <Button variant="ghost" size="sm" disabled={loadingGoals} onClick={() => deleteAccount(a)}>Delete</Button>
         </div>) },
   ];
 

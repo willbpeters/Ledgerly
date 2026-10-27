@@ -8,6 +8,7 @@ const updateGoal = vi.fn();
 const ask = vi.fn();
 const push = vi.fn();
 let goals: Goal[] = [];
+let goalsState: { isLoading: boolean; isError: boolean } = { isLoading: false, isError: false };
 let values = new Map<number, number>();
 
 function account(id: number, name: string, hidden: boolean): Account {
@@ -22,7 +23,7 @@ let rows: Account[] = [];
 vi.mock("../../data/queries", () => ({
   useAccounts: () => ({ data: rows, isLoading: false }),
   useDeleteAccount: () => ({ mutate: deleteAccount }),
-  useGoals: () => ({ data: goals }),
+  useGoals: () => ({ data: goals, ...goalsState }),
   useUpdateGoal: () => ({ mutateAsync: updateGoal }),
   useSetAccountType: () => ({ mutate: vi.fn() }),
   useSetAccountHidden: () => ({ mutate: setHidden }),
@@ -92,6 +93,7 @@ describe("Accounts screen — deleting an account a goal follows", () => {
     rows = [account(1, "Everyday", false)];
     values = new Map([[1, 1250.5]]);
     goals = [goal()];
+    goalsState = { isLoading: false, isError: false };
   });
 
   const clickDelete = () => fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -101,7 +103,7 @@ describe("Accounts screen — deleting an account a goal follows", () => {
     clickDelete();
     await waitFor(() => expect(ask).toHaveBeenCalled());
     expect(ask.mock.calls[0][0]).toContain(
-      "Your goal “Trip” follows this account. Tally will keep its current amount, $1,250.50, as an amount kept by hand.");
+      "Delete “Everyday”? This removes its transactions. Your goal “Trip” follows this account. Tally will keep its current amount, $1,250.50, as an amount kept by hand.");
   });
 
   it("keeps the goal's progress as its hand-kept amount, then deletes the account", async () => {
@@ -148,6 +150,26 @@ describe("Accounts screen — deleting an account a goal follows", () => {
     clickDelete();
     await waitFor(() => expect(ask).toHaveBeenCalled());
     expect(updateGoal).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("disables Delete while the goals are still loading", () => {
+    goalsState = { isLoading: true, isError: false };
+    render(<Accounts />);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    clickDelete();
+    expect(ask).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete, and says so, when the goals could not be loaded", async () => {
+    goals = [];
+    goalsState = { isLoading: false, isError: true };
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(push.mock.calls[0][0]).toMatchObject({ tone: "neg", title: "Couldn't check your goals, so nothing was deleted." });
+    expect(ask).not.toHaveBeenCalled();
     expect(deleteAccount).not.toHaveBeenCalled();
   });
 

@@ -49,9 +49,9 @@ export function Goals() {
   const today = localIsoDate();
   // Money set aside lives in cash and investment accounts; a card balance is a
   // debt. `accounts` from usePortfolio already leaves hidden ones out.
-  const trackable = accounts.filter((a) => a.type !== "credit");
+  const trackable = useMemo(() => accounts.filter((a) => a.type !== "credit"), [accounts]);
   // The visible cards, which a goal may still point at but can no longer follow.
-  const cards = accounts.filter((a) => a.type === "credit");
+  const cards = useMemo(() => accounts.filter((a) => a.type === "credit"), [accounts]);
   // Followable accounts read as their value (or $0 when new and empty); of the
   // rest, a visible one was retyped to a card and a missing one is hidden.
   const followableIds = useMemo(() => new Set(trackable.map((a) => a.id)), [trackable]);

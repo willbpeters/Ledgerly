@@ -99,10 +99,15 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                                 background: c ? colourOf(c.colour) : "var(--line)",
                               }} />
                               <span>{c?.name ?? "Uncategorised"}</span>
-                              <span className="muted n">{money(Math.abs(s.amount))}</span>
+                              <span className="muted n">{s.amount > 0 ? "+" : ""}{money(Math.abs(s.amount))}</span>
                             </div>
                           );
                         })}
+                        {!t.reviewed && (
+                          <span title="To review" aria-label="To review" style={{
+                            width: 6, height: 6, borderRadius: 3, background: "var(--accent)", flexShrink: 0,
+                          }} />
+                        )}
                         {remainder !== 0 && (
                           <div className="cell-secondary">
                             {Math.sign(remainder) === Math.sign(t.amount)

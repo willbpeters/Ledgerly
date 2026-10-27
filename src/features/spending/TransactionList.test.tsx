@@ -82,6 +82,23 @@ describe("TransactionList splits", () => {
     expect(screen.getByText("$25.50")).toBeInTheDocument();
   });
 
+  it("puts a plus before a piece that is money back", () => {
+    renderList({ transactions: [split({
+      amount: -85.5,
+      splits: [{ id: 1, category_id: 1, amount: -100, note: null }, { id: 2, category_id: null, amount: 14.5, note: null }],
+    })] });
+    expect(screen.getByText("+$14.50")).toBeInTheDocument();
+    expect(screen.getByText("$100.00")).toBeInTheDocument();
+  });
+
+  it("marks a split row that has not been reviewed, and not one that has", () => {
+    const { unmount } = renderList({ transactions: [split({ reviewed: false })] });
+    expect(screen.getByTitle("To review")).toHaveAttribute("aria-label", "To review");
+    unmount();
+    renderList({ transactions: [split({ reviewed: true })] });
+    expect(screen.queryByTitle("To review")).toBeNull();
+  });
+
   it("edits a split from its Edit split button", () => {
     renderList({ transactions: [split()] });
     fireEvent.click(screen.getByRole("button", { name: "Edit split for Target" }));
