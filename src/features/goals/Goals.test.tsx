@@ -79,6 +79,34 @@ describe("Goals screen", () => {
     expect(screen.getByText("$300.00")).toBeInTheDocument();
   });
 
+  it("explains a goal whose account has become a credit card", () => {
+    goals = [goal({ account_id: 2, saved_amount: 300 })];
+    render(<Goals />);
+    expect(screen.getByText("Card is now a credit card, so this shows an amount kept by hand. Use Edit to change it.")).toBeInTheDocument();
+    expect(screen.getByText("$300.00")).toBeInTheDocument();
+    expect(screen.queryByText(/is hidden/)).toBeNull();
+  });
+
+  it("tells the form a followed credit card is not a hidden account", () => {
+    goals = [goal({ account_id: 2, saved_amount: 300 })];
+    render(<Goals />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Trip" }));
+    expect(screen.getByLabelText("Track it with")).toHaveDisplayValue("Card (now a credit card)");
+  });
+
+  it("never reads 100% for a goal that is not reached", () => {
+    goals = [goal({ saved_amount: 1999 })];
+    render(<Goals />);
+    expect(screen.getByText("99.9%")).toBeInTheDocument();
+    expect(screen.getByText("$1.00 to go")).toBeInTheDocument();
+  });
+
+  it("reads 100% once the goal is reached", () => {
+    goals = [goal({ saved_amount: 2000 })];
+    render(<Goals />);
+    expect(screen.getByText("100.0%")).toBeInTheDocument();
+  });
+
   it("treats a followed account with no value yet as nothing saved, not hidden", () => {
     goals = [goal({ account_id: 3, saved_amount: 300 })];
     render(<Goals />);

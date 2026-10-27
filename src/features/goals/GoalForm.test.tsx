@@ -32,6 +32,13 @@ describe("readGoal", () => {
     expect(readGoal({ ...blank, name: "Trip", target: "10" })).toMatchObject({ saved_amount: 0 });
   });
 
+  it("refuses a target below one cent", () => {
+    for (const target of ["0", "-5", "0.001", "0.004", "lots", ""]) {
+      expect(readGoal({ ...blank, name: "Trip", target }), target).toBe("Set a target of at least $0.01.");
+    }
+    expect(readGoal({ ...blank, name: "Trip", target: "0.01" })).toMatchObject({ target_amount: 0.01 });
+  });
+
   it("refuses a day that does not exist", () => {
     expect(readGoal({ ...blank, name: "Trip", target: "10", date: "2027-02-30" })).toBe("That date isn't a real day.");
   });
@@ -78,7 +85,7 @@ describe("GoalForm", () => {
     type("Name", "Trip");
     type("Target amount", "0");
     fireEvent.click(screen.getByRole("button", { name: "Add goal" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Set a target above $0.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Set a target of at least $0.01.");
   });
 
   it("adds a goal updated by hand", () => {
@@ -165,6 +172,14 @@ describe("GoalForm", () => {
       type("Track it with", "");
       expect(saved()).toHaveValue("300");
       expect(screen.queryByText(hint)).toBeNull();
+    });
+
+    it("names a followed account that has become a credit card, and says what the amount is for", () => {
+      const card = { ...savings, id: 99, name: "Card", type: "credit" } as Account;
+      render(<GoalForm goal={orphaned} accounts={[savings]} otherAccounts={[card]} onDone={onDone} />);
+      expect(screen.getByLabelText("Track it with")).toHaveDisplayValue("Card (now a credit card)");
+      expect(screen.getByText("This goal shows this amount while it follows a credit card.")).toBeInTheDocument();
+      expect(screen.queryByText("An account you've hidden")).toBeNull();
     });
 
     it("offers no such choice when nothing is hidden", () => {

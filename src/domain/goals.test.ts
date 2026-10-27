@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { savedFor, goalProgress } from "./goals";
 import type { Goal } from "./types";
 
+// Followable: visible and not a credit card. Visible: every account that is not hidden.
 const VISIBLE = new Set([4, 9]);
 
 const goal = (over: Partial<Goal> = {}): Goal => ({
@@ -12,31 +13,37 @@ const TODAY = "2026-10-25";
 
 describe("savedFor", () => {
   it("uses the amount kept by hand when the goal follows no account", () => {
-    expect(savedFor(goal({ saved_amount: 300 }), new Map(), VISIBLE)).toEqual({ saved: 300, source: "manual" });
+    expect(savedFor(goal({ saved_amount: 300 }), new Map(), VISIBLE, VISIBLE)).toEqual({ saved: 300, source: "manual" });
   });
 
   it("uses the followed account's value", () => {
-    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[4, 1250.5]]), VISIBLE))
+    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[4, 1250.5]]), VISIBLE, VISIBLE))
       .toEqual({ saved: 1250.5, source: "account" });
   });
 
   it("counts an overdrawn account as nothing saved, not as going backwards", () => {
-    expect(savedFor(goal({ account_id: 4 }), new Map([[4, -40]]), VISIBLE)).toEqual({ saved: 0, source: "account" });
+    expect(savedFor(goal({ account_id: 4 }), new Map([[4, -40]]), VISIBLE, VISIBLE)).toEqual({ saved: 0, source: "account" });
   });
 
   it("reads an account worth exactly nothing as nothing, from the account", () => {
-    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[4, 0]]), VISIBLE))
+    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[4, 0]]), VISIBLE, VISIBLE))
       .toEqual({ saved: 0, source: "account" });
   });
 
   it("reads a visible account with no value yet, such as a new empty one, as nothing saved", () => {
-    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[9, 5000]]), VISIBLE))
+    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[9, 5000]]), VISIBLE, VISIBLE))
       .toEqual({ saved: 0, source: "account" });
   });
 
   it("falls back to the amount kept by hand when the account is hidden", () => {
-    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[9, 5000]]), new Set([9])))
+    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[9, 5000]]), new Set([9]), new Set([9])))
       .toEqual({ saved: 300, source: "missing-account" });
+  });
+
+  it("falls back to the amount kept by hand when the account is visible but can no longer be followed", () => {
+    // Account 4 is still shown, but has been retyped to a credit card.
+    expect(savedFor(goal({ account_id: 4, saved_amount: 300 }), new Map([[4, -900]]), new Set([9]), VISIBLE))
+      .toEqual({ saved: 300, source: "not-followable" });
   });
 });
 

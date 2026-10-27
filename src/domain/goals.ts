@@ -1,7 +1,7 @@
 import type { Goal } from "./types";
 import { daysBetween, monthsUntil } from "./dates";
 
-export type SavedSource = "account" | "manual" | "missing-account";
+export type SavedSource = "account" | "manual" | "missing-account" | "not-followable";
 
 /**
  * How much a goal has saved.
@@ -9,19 +9,25 @@ export type SavedSource = "account" | "manual" | "missing-account";
  * A goal following an account reads that account's value — cash plus
  * holdings, from `derivePortfolio` — so it moves with every sync without the
  * owner touching it. An overdrawn account counts as nothing saved rather than
- * as negative progress. A visible account with no value yet (a new, empty one
- * has no entry in the map) is nothing saved, from the account. Only a followed
- * account that is not visible, which is to say hidden, since hidden accounts
- * are left out of every figure, falls back to the amount last kept by hand and
- * says so, because a bar dropping to zero reads as lost money.
+ * as negative progress. A followable account (visible, and not a credit card)
+ * with no value yet (a new, empty one has no entry in the map) is nothing
+ * saved, from the account. A followed account that cannot be read falls back
+ * to the amount last kept by hand and says why, because a bar dropping to zero
+ * reads as lost money: "missing-account" when it is hidden, since hidden
+ * accounts are left out of every figure, and "not-followable" when it is still
+ * visible but has since become a credit card, whose balance is a debt.
  */
 export function savedFor(
   goal: Goal,
   accountValues: Map<number, number>,
+  followableAccountIds: ReadonlySet<number>,
   visibleAccountIds: ReadonlySet<number>,
 ): { saved: number; source: SavedSource } {
   if (goal.account_id == null) return { saved: goal.saved_amount, source: "manual" };
-  if (!visibleAccountIds.has(goal.account_id)) return { saved: goal.saved_amount, source: "missing-account" };
+  if (!followableAccountIds.has(goal.account_id)) {
+    const source = visibleAccountIds.has(goal.account_id) ? "not-followable" : "missing-account";
+    return { saved: goal.saved_amount, source };
+  }
   const value = accountValues.get(goal.account_id) ?? 0;
   return { saved: Math.max(0, value), source: "account" };
 }

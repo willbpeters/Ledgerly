@@ -13,9 +13,9 @@ pub fn validate(g: &NewGoal) -> Result<(), String> {
     if g.name.trim().is_empty() {
         return Err("Give the goal a name.".into());
     }
-    // "Not above zero" rather than "at or below zero", so NaN fails too.
-    if !(g.target_amount > 0.0) || !g.target_amount.is_finite() {
-        return Err("Set a target above $0.".into());
+    // "Not at least a cent" rather than "below a cent", so NaN fails too.
+    if !(g.target_amount >= 0.01) || !g.target_amount.is_finite() {
+        return Err("Set a target of at least $0.01.".into());
     }
     if !(g.saved_amount >= 0.0) || !g.saved_amount.is_finite() {
         return Err("The amount saved can't be below $0.".into());
@@ -132,9 +132,10 @@ mod tests {
 
     #[test]
     fn a_target_must_be_above_zero() {
-        for bad in [0.0, -5.0, f64::NAN, f64::INFINITY] {
-            assert_eq!(validate(&goal("Trip", bad)), Err("Set a target above $0.".to_string()), "{bad}");
+        for bad in [0.0, -5.0, 0.004, f64::NAN, f64::INFINITY] {
+            assert_eq!(validate(&goal("Trip", bad)), Err("Set a target of at least $0.01.".to_string()), "{bad}");
         }
+        assert_eq!(validate(&goal("Trip", 0.01)), Ok(()));
     }
 
     #[test]

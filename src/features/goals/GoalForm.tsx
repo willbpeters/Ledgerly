@@ -24,7 +24,7 @@ function isRealDay(iso: string): boolean {
 export function readGoal(d: GoalDraft): NewGoal | string {
   if (!d.name.trim()) return "Give the goal a name.";
   const target = amount(d.target);
-  if (d.target.trim() === "" || !Number.isFinite(target) || !(target > 0)) return "Set a target above $0.";
+  if (d.target.trim() === "" || !Number.isFinite(target) || !(target >= 0.01)) return "Set a target of at least $0.01.";
   const date = d.date.trim();
   if (date !== "" && !isRealDay(date)) return "That date isn't a real day.";
   const byHand = d.track === "";
@@ -43,11 +43,14 @@ export function readGoal(d: GoalDraft): NewGoal | string {
 
 /**
  * Add a goal, or change one. `accounts` are the ones a goal may follow: the
- * caller passes visible cash and brokerage accounts only.
+ * caller passes visible cash and brokerage accounts only. `otherAccounts` are
+ * visible ones it can't follow (credit cards), so a goal still pointing at one
+ * can say what happened to it instead of calling it hidden.
  */
-export function GoalForm({ goal, accounts, onDone }: {
+export function GoalForm({ goal, accounts, otherAccounts = [], onDone }: {
   goal?: Goal;
   accounts: Account[];
+  otherAccounts?: Account[];
   onDone: () => void;
 }) {
   const create = useCreateGoal();
@@ -63,6 +66,7 @@ export function GoalForm({ goal, accounts, onDone }: {
   // `accounts`. Say so, and let its amount be seen and changed, as that amount
   // is what the goal shows while it can't read the account.
   const orphaned = track !== "" && !accounts.some((a) => String(a.id) === track);
+  const retyped = orphaned ? otherAccounts.find((a) => String(a.id) === track) : undefined;
   const showSaved = track === "" || orphaned;
   /** Edit a field, and drop an explanation that may no longer apply. */
   const edit = (set: (v: string) => void) => (v: string) => { set(v); setError(null); };
@@ -99,12 +103,14 @@ export function GoalForm({ goal, accounts, onDone }: {
       <Field label="Track it with">
         <select value={track} onChange={(e) => edit(setTrack)(e.target.value)}>
           <option value="">I'll update it myself</option>
-          {orphaned && <option value={track}>An account you've hidden</option>}
+          {orphaned && <option value={track}>{retyped ? `${retyped.name} (now a credit card)` : "An account you've hidden"}</option>}
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </Field>
       {showSaved && (
-        <Field label="Saved so far" hint={orphaned ? "This goal shows this amount while its account is hidden." : undefined}>
+        <Field label="Saved so far" hint={orphaned
+          ? (retyped ? "This goal shows this amount while it follows a credit card." : "This goal shows this amount while its account is hidden.")
+          : undefined}>
           <input value={saved} onChange={(e) => edit(setSaved)(e.target.value)} inputMode="decimal" placeholder="0" style={{ width: 110 }} />
         </Field>
       )}

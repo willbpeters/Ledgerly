@@ -92,7 +92,15 @@ budgeting and spending module.
   figure. Done is decided in cents. Maths is pure in `src/domain/goals.ts`;
   storage and the rules in `src-tauri/src/commands/goals.rs`, mirrored by
   `readGoal` in `src/features/goals/GoalForm.tsx` so mistakes are explained
-  beside the form.
+  beside the form. A target must be at least $0.01. A goal whose account was
+  retyped to Credit card can't follow it any more: `savedFor` takes the
+  followable ids and the visible ids, and gives `not-followable` (hand-kept
+  amount, "is now a credit card" line, and `GoalForm`'s `otherAccounts`
+  names it) as opposed to `missing-account` for a hidden one. Deleting a
+  followed account in the Accounts screen first stores the amount the goal
+  shows (at least $0) as its `saved_amount`, and the confirmation says so; if
+  that fails the account is not deleted. A sync that removes a followed
+  account does not do this yet (TODO 15c).
 - **Import from Copilot** (Settings): reads Copilot's CSV export, matches
   rows to transactions SimpleFIN already has (same account by mask, same
   amount, within 3 days) and gives them the owner's Copilot category and note;

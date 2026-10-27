@@ -29,6 +29,9 @@ export function goalLine(p: GoalProgress, targetDate: string | null): string {
 /** Where the saved figure comes from, so a number that never moves is explained. */
 function sourceLine(source: SavedSource, account: Account | undefined): string {
   if (source === "account") return `Following ${account?.name ?? "its account"}`;
+  if (source === "not-followable") {
+    return `${account?.name ?? "Its account"} is now a credit card, so this shows an amount kept by hand. Use Edit to change it.`;
+  }
   if (source === "missing-account") return "Its account is hidden, so this shows an amount kept by hand. Use Edit to change it.";
   return "Updated by hand";
 }
@@ -47,8 +50,11 @@ export function Goals() {
   // Money set aside lives in cash and investment accounts; a card balance is a
   // debt. `accounts` from usePortfolio already leaves hidden ones out.
   const trackable = accounts.filter((a) => a.type !== "credit");
-  // Visible accounts, so a followed account with no value yet reads as $0
-  // saved and only a hidden one falls back to the amount kept by hand.
+  // The visible cards, which a goal may still point at but can no longer follow.
+  const cards = accounts.filter((a) => a.type === "credit");
+  // Followable accounts read as their value (or $0 when new and empty); of the
+  // rest, a visible one was retyped to a card and a missing one is hidden.
+  const followableIds = useMemo(() => new Set(trackable.map((a) => a.id)), [trackable]);
   const visibleIds = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts]);
 
   async function del(g: Goal) {
@@ -89,7 +95,7 @@ export function Goals() {
       )}
 
       {goals.map((g) => {
-        const { saved, source } = savedFor(g, accountValues, visibleIds);
+        const { saved, source } = savedFor(g, accountValues, followableIds, visibleIds);
         const p = goalProgress(g, saved, today);
         return (
           <Card
@@ -103,7 +109,7 @@ export function Goals() {
             )}
           >
             {editing === g.id ? (
-              <GoalForm goal={g} accounts={trackable} onDone={() => setEditing(null)} />
+              <GoalForm goal={g} accounts={trackable} otherAccounts={cards} onDone={() => setEditing(null)} />
             ) : (
               <div style={{ display: "grid", gap: 8 }}>
                 <div className="row center between">
@@ -111,7 +117,7 @@ export function Goals() {
                     <span className="n" style={{ fontWeight: 600, fontSize: 18 }}>{money(p.saved)}</span>{" "}
                     <span className="muted">of {money(p.target)}</span>
                   </div>
-                  <span className="n muted">{share(p.fraction)}</span>
+                  <span className="n muted">{share(p.done ? 1 : Math.min(p.fraction, 0.999))}</span>
                 </div>
                 <span className="bar-track" aria-hidden="true" style={{ width: "auto", height: 8 }}>
                   <span className="bar-fill" style={{

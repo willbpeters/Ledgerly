@@ -16,7 +16,9 @@ export function daysBetween(from: string, to: string): number {
 /**
  * Calendar months from one `YYYY-MM-DD` to another. A part month counts as a
  * whole one, so the last payment towards a date is never missed: 25 Oct to 28
- * Oct is one month, 25 Oct to 26 Nov is two. Negative once `to` is past.
+ * Oct is one month, 25 Oct to 26 Nov is two. Not a measure of lateness: a date
+ * that has just passed comes out 0 (an earlier day this month, or 30 Sep from
+ * 25 Oct), so callers use `daysBetween` to tell whether a date is overdue.
  */
 export function monthsUntil(from: string, to: string): number {
   const [fy, fm, fd] = from.split("-").map(Number);

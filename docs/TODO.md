@@ -96,6 +96,10 @@ These are the gaps a former Copilot user would notice first.
       below Spending) with a target, an optional date, and either an account
       to follow or an amount kept by hand; shows what to put aside each month
       to make the date. In the CSV export as `goals.csv`.
+- [ ] **15c. Goals when a sync removes an account.** When a sync removes an
+      account a goal follows, the goal drops to its hand-kept amount, which may
+      be stale. Keep its value the way deleting an account by hand now does:
+      store the last shown figure as `saved_amount` before the account goes.
 
 ## Phase 4 — Correct numbers for a real portfolio
 
