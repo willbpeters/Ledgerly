@@ -168,7 +168,7 @@ CREATE TRIGGER bank_transactions_sync_insert AFTER INSERT ON bank_transactions B
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'bank_transactions', b.sync_key, '_row',
       json_object('account', a.sync_key, 'external_id', b.external_id, 'posted', b.posted,
-        'amount', b.amount, 'description', b.description, 'payee', b.payee, 'memo', b.memo,
+        'amount', b.amount, 'description', b.description, 'payee', b.payee, 'name', b.name, 'memo', b.memo,
         'category', (SELECT c.sync_key FROM categories c WHERE c.id = b.category_id),
         'category_source', b.category_source, 'reviewed', b.reviewed, 'note', b.note,
         'removed', b.removed), {NOW}
@@ -178,7 +178,7 @@ CREATE TRIGGER bank_transactions_sync_insert AFTER INSERT ON bank_transactions B
 END;
 
 CREATE TRIGGER bank_transactions_sync_update
-AFTER UPDATE OF category_id, category_source, note, reviewed, removed ON bank_transactions
+AFTER UPDATE OF category_id, category_source, note, reviewed, removed, name ON bank_transactions
 WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'bank_transactions', NEW.sync_key, 'category',
@@ -197,6 +197,9 @@ WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'bank_transactions', NEW.sync_key, 'removed', json_quote(NEW.removed), {NOW}
     WHERE OLD.removed IS NOT NEW.removed;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', NEW.sync_key, 'name', json_quote(NEW.name), {NOW}
+    WHERE OLD.name IS NOT NEW.name;
 END;
 
 CREATE TRIGGER category_rules_sync_insert AFTER INSERT ON category_rules

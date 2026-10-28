@@ -35,9 +35,9 @@ and palette with the "command rail" direction on warm off-white, chosen by the
 owner from four mockups, later moved from indigo to green. Phase 4 added the
 budgeting and spending module.
 
-- **Tests:** 296 TypeScript (Vitest) + 284 Rust (`cargo test`), plus 10 tests marked
+- **Tests:** 682 TypeScript (Vitest) + 515 Rust (`cargo test`), plus 10 tests marked
   `#[ignore]` that touch the network, the OS credential store or the owner's
-  real files — all passing as of 2026-10-15. Run the live ones with `cargo test --lib live_ -- --ignored`.
+  real files — all passing as of 2026-10-28. Run the live ones with `cargo test --lib live_ -- --ignored`.
 - **Build:** releases are built on GitHub by the Release button (see
   [Releasing](#releasing)). A local `npm run tauri build` still makes an
   unsigned `-setup.exe` + `.msi` under `src-tauri/target/release/bundle/`.
@@ -117,19 +117,34 @@ budgeting and spending module.
   shows (at least $0) as its `saved_amount`, and the confirmation says so; if
   that fails the account is not deleted. A sync that removes a followed
   account does not do this yet (TODO 15c).
-- **Import from Copilot** (Settings): reads Copilot's CSV export and leaves
-  Tally's categories matching Copilot's (2026-10-28 rework; the original was
-  2026-10-15). It matches rows to transactions SimpleFIN already has (same
-  account by mask, same amount, same day or within 3 days; on a different day
-  the two names must share a word of three or more characters, so a $10 Polymarket
-  row never takes a $10 Chick-fil-a), and adds older rows as history — to
-  their own account, or to a manual **"Copilot history"** account for accounts
-  Copilot no longer has. What it does to categories:
-  - **Copilot's names, as they are.** `category_for` returns the export's name
-    exactly (`SAME_AS`, the old Eating Out → Dining table, is gone). An
-    internal transfer is always "Internal transfer"; income with no category
-    is "Income". Categories Tally lacks are created (Investments as kind
-    `transfer`, the rest `spending`).
+- **Import from Copilot** (Settings): makes Tally a **1:1 copy of Copilot**
+  up to the export's last day: every row, Copilot's names, and exactly
+  Copilot's categories (2026-10-28 rework, again the same day; the original
+  was 2026-10-15). Each Copilot row is matched to a transaction SimpleFIN
+  already has (same account by mask, same amount, same day or within 3 days;
+  on a different day the two names must share a word of three or more
+  characters, so a $10 Polymarket row never takes a $10 Chick-fil-a; a
+  removed row is never matched) or **added**: to its own account, or to a
+  manual **"Copilot history"** account for accounts Copilot no longer has.
+  There is no "skipped" any more: a row the bank's record lacks or has
+  differently (another amount, a date too far off) is added from Copilot,
+  and the bank's version is removed as one Copilot doesn't have. Pending
+  rows are left for the bank sync.
+  - **Copilot's names.** Matched and added rows get Copilot's name in
+    `bank_transactions.name` (v13). The bank sync rewrites `payee` every
+    time but never touches `name`, and every read shows
+    `COALESCE(name, payee)` as the payee (`TXN_COLUMNS`, the CSV export),
+    with the bank's description still under it. Device sync carries `name`
+    as a field and in a row.
+  - **Copilot's category names, as they are.** `category_for` returns the
+    export's name exactly. An excluded row is always **"Excluded"** (kind
+    `transfer`: it shows, but never counts as spending; the owner excluded
+    what they were paid back for); an internal transfer is always "Internal
+    transfer"; income with no category is "Income". Categories Tally lacks are
+    created (Investments and Excluded as kind `transfer`, the rest
+    `spending`). A category written on a transfer or an excluded row counts
+    as one of Copilot's, though the row itself goes elsewhere. Excluded rows
+    teach no rules.
   - **Old names merge first.** `OLD_NAMES` (Dining → Eating Out, Shopping →
     Shops, Transfer → Internal transfer) are folded into Copilot's name by
     `store::merge_category(from, to)` when the export uses it: transactions,
@@ -139,59 +154,51 @@ budgeting and spending module.
     in case is renamed to Copilot's.
   - **Copilot wins up to the cutoff.** The `cutoff` is the export's newest
     posted day. Every matched row dated on or before it takes Copilot's
-    category (made `manual` and reviewed, even over a choice made in Tally; no
-    category in Copilot sends it back to To review). Split rows keep their
-    pieces. **Nothing dated after the cutoff changes**, apart from a merge
-    renaming the category it points at; every write is guarded by
+    category, name and (into a blank) note: made `manual` and reviewed, even
+    over a choice made in Tally; no category in Copilot sends it back to To
+    review. Split rows keep their pieces. Rows dated after the cutoff keep
+    everything but their category; every row write is guarded by
     `posted <= cutoff`. A cutoff of "" (nothing posted in the export) is
     refused with `NO_POSTED`.
-  - **Nothing is ever deleted.** "Removal" is the restorable `removed` flag.
-    Tally rows Copilot does not have are listed, ticked by default under a
-    "Remove them / Keep them" switch, for the owner to confirm: those older
-    than the export's newest day for SimpleFIN rows (Copilot runs a few hours
-    behind), and up to and including it for rows an earlier Copilot import
-    added that this export no longer has (`earlier_export`, deleted in Copilot
-    since). An id the plan did not offer is ignored.
-  - **Tidied afterwards.** After the re-sort, `tidy_categories` deletes every
-    category that holds nothing (no live transaction, split piece or budget)
-    and that the export doesn't use. A category still holding a newer row
-    stays; one only rows being removed hold goes with them (`CategoryHold`
-    tells the preview which). The survivors are put in Copilot's order (most
-    used first, then Internal transfer / Income, then the rest) and given
-    `cat-1`, `cat-2`… in that order (`order_categories`).
-  - **"Only Copilot's" (the default, 2026-10-28).** `apply_copilot_plan(..,
-    replace: Some(keep))` also deletes every category the export doesn't use
-    even while it holds rows, splits or budgets (`drop_unwanted_categories`):
-    its rows go uncategorised and back to To review. The export only names
-    categories some transaction uses, so a Copilot category with nothing in
-    it can't be seen: the preview lists each category it would remove with a
-    Keep tick-box, and ticked names (`keep`) stay. A category written on a
-    transfer row (Copilot's "Car" on a smog payment) counts as one of
-    Copilot's, though the row itself is Internal transfer. "Keep ones still
-    in use" (`replace: None`) is the older tidy-only behaviour.
+  - **What Copilot doesn't have is removed, without asking.** "Removal" is
+    the restorable `removed` flag; nothing is ever deleted. Removed: SimpleFIN
+    rows older than the export's newest day (Copilot runs a few hours behind)
+    from the first day Copilot covers that account, and rows an earlier
+    Copilot import added that this export no longer has (`earlier_export`),
+    up to and including it. The preview lists them; there are no ticks. A
+    Copilot row the owner removed in Tally comes back on a re-import.
+  - **Exactly Copilot's categories.** After the rows are written,
+    `drop_unwanted_categories` deletes every category the export doesn't use,
+    whatever it holds: its rows go uncategorised and back to To review, split
+    pieces go uncategorised, rules and budgets go. Then every automatic row is
+    re-sorted into what is left, as a sync would, which pairs transfers into
+    Internal transfer afresh. The survivors are put in Copilot's order (most
+    used first, then Internal transfer / Income) and given `cat-1`, `cat-2`…
+    in that order (`order_categories`). The keep tick-boxes and "Keep ones
+    still in use" are gone. A Copilot category with nothing in it can't be
+    seen in the export, so it doesn't arrive.
   - **Remove all categories** (Settings → Categories, `categories_clear`):
     backs up, then deletes every category; all rows go uncategorised and back
     to To review, split pieces go uncategorised, rules and budgets go. No
     transaction is deleted.
   - **Rules follow Copilot.** Payee rules learned from the export (2+ uses,
-    90% one category, never for Apple Pay / Venmo / Zelle) now replace an
-    existing rule for that payee, then the automatic rows up to the cutoff are
-    re-sorted at once. Notes: Copilot's fills a blank, the owner's stays.
-  - **Transfer pairs** that straddle the cutoff keep their earlier leg a
-    transfer (`pair_transfers(.., until)`).
+    90% one category, never for Apple Pay / Venmo / Zelle) replace an
+    existing rule for that payee.
 
   A backup is taken first; it all lands in one transaction. **A second import
   of the same file changes nothing**, and its counts say so (they count rows
   actually changed). **The preview is exact:** `store::copilot_preview` plans
   from a snapshot, then runs the real import inside a transaction that is
   rolled back and reads the result (rows recategorised, categories deleted,
-  holds), twice if a planned merge turned out pointless because its target is
-  deleted anyway. `CopilotImportPanel` shows renames and merges, new
-  categories, the count that get Copilot's category, and "N transactions after
-  <cutoff> keep their categories". Pure planner in `budget/copilot.rs`;
-  writing in `store::apply_copilot_plan`. Original spec:
-  `docs/superpowers/specs/2026-10-15-copilot-import-design.md` (its "the
-  owner's choice wins" and name-translation rules no longer apply)
+  rows left uncategorised). `CopilotImportPanel` shows matched / added /
+  removed / pending, Copilot's category list, new, merged and removed
+  categories, and has one button. Pure planner in `budget/copilot.rs`;
+  writing in `store::apply_copilot_plan`. Check against a real export
+  (into a throwaway copy of the database, migrated first):
+  `LEDGERLY_DB=... COPILOT_CSV=... [COPILOT_APPLY=1] cargo test copilot_live -- --ignored --nocapture`.
+  Original spec: `docs/superpowers/specs/2026-10-15-copilot-import-design.md`
+  (its "the owner's choice wins", "skipped" and name-translation rules no
+  longer apply)
 - **Category pills** (2026-10-28): a category shows as a pill tinted in its
   colour with its name in a deeper shade of it; no category is a dashed,
   muted "Uncategorised" outline. Colours are twelve tokens `--cat-1`…

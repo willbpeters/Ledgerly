@@ -26,7 +26,7 @@ pub const EXPORTS: [(&str, &str); 9] = [
     ),
     (
         "bank-transactions.csv",
-        "SELECT b.posted AS date, a.name AS account, b.description, b.payee, b.memo, b.amount,
+        "SELECT b.posted AS date, a.name AS account, b.description, COALESCE(b.name, b.payee) AS payee, b.memo, b.amount,
                 CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.txn_id = b.id)
                      THEN 'Split' ELSE c.name END AS category,
                 b.category_source, b.mcc, b.pending
@@ -63,7 +63,7 @@ pub const EXPORTS: [(&str, &str); 9] = [
     // be rebuilt from bank-transactions.csv and this file alone.
     (
         "transaction-splits.csv",
-        "SELECT b.posted AS date, a.name AS account, COALESCE(b.payee, b.description) AS payee,
+        "SELECT b.posted AS date, a.name AS account, COALESCE(b.name, b.payee, b.description) AS payee,
                 b.amount AS transaction_amount, c.name AS category, s.amount, s.note
          FROM bank_transaction_splits s
          JOIN bank_transactions b ON b.id = s.txn_id

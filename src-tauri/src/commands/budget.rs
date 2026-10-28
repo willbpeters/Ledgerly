@@ -120,7 +120,9 @@ pub async fn categories_clear(app: tauri::AppHandle) -> Result<usize, String> {
 
 // ---------- transactions ----------
 
-const TXN_COLUMNS: &str = "id,account_id,external_id,posted,amount,description,payee,memo,mcc,pending,
+/// `payee` is the name Tally shows: Copilot's when the import gave one, which a
+/// bank sync never overwrites, otherwise the bank's.
+const TXN_COLUMNS: &str = "id,account_id,external_id,posted,amount,description,COALESCE(name,payee),memo,mcc,pending,
                            category_id,category_source,reviewed,note,removed";
 
 fn txn_from_row(r: &rusqlite::Row) -> rusqlite::Result<BankTransaction> {

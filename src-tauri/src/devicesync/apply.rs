@@ -220,7 +220,7 @@ fn bank_transactions(conn: &Connection, device: &str, c: &Change) -> rusqlite::R
             )?;
             Ok(n > 0)
         }
-        name @ ("note" | "reviewed" | "removed") => {
+        name @ ("note" | "reviewed" | "removed" | "name") => {
             let n = conn.execute(
                 &format!("UPDATE bank_transactions SET {name}=?1 WHERE sync_key=?2"),
                 params![sql(&c.value), c.key],
@@ -296,10 +296,11 @@ fn insert_bank_row(conn: &Connection, device: &str, c: &Change) -> rusqlite::Res
                    category_source = CASE WHEN category_source='manual' THEN 'manual' ELSE coalesce(?3,'manual') END,
                    reviewed = MAX(reviewed, coalesce(?4,0)),
                    note = COALESCE(note, ?5),
-                   removed = MAX(removed, coalesce(?6,0))
+                   removed = MAX(removed, coalesce(?6,0)),
+                   name = COALESCE(name, ?8)
                  WHERE id=?7",
                 params![c.key, category, field(v, "category_source"), field(v, "reviewed"),
-                        field(v, "note"), field(v, "removed"), id],
+                        field(v, "note"), field(v, "removed"), id, field(v, "name")],
             )?;
             rekey(conn, "bank_transactions", &old_key, &c.key)?;
             return Ok(true);
@@ -308,11 +309,11 @@ fn insert_bank_row(conn: &Connection, device: &str, c: &Change) -> rusqlite::Res
     conn.execute(
         "INSERT INTO bank_transactions
            (account_id, external_id, posted, amount, description, payee, memo,
-            category_id, category_source, reviewed, note, removed, sync_key)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'manual'), coalesce(?10, 0), ?11, coalesce(?12, 0), ?13)",
+            category_id, category_source, reviewed, note, removed, sync_key, name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'manual'), coalesce(?10, 0), ?11, coalesce(?12, 0), ?13, ?14)",
         params![account_id, external_id, field(v, "posted"), field(v, "amount"), field(v, "description"),
                 field(v, "payee"), field(v, "memo"), category, field(v, "category_source"),
-                field(v, "reviewed"), field(v, "note"), field(v, "removed"), c.key],
+                field(v, "reviewed"), field(v, "note"), field(v, "removed"), c.key, field(v, "name")],
     )?;
     Ok(true)
 }
@@ -528,6 +529,13 @@ mod tests {
         assert_eq!((name.as_str(), source.as_str()), ("Dining", "manual"));
         assert_eq!(conn.query_row("SELECT count(*) FROM sync_outbox", [], |r| r.get::<_, i64>(0)).unwrap(), 0,
             "applied changes are not echoed back");
+    }
+
+    #[test]
+    fn copilots_name_for_a_bank_row_travels() {
+        let conn = applying();
+        apply(&conn, "pc", &change("bank_transactions", "sf:ACT-1|TRN-1", "name", json!("Zqx Diner"), 20)).unwrap();
+        assert_eq!(one::<String>(&conn, "SELECT name FROM bank_transactions"), "Zqx Diner");
     }
 
     #[test]

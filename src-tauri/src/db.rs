@@ -30,11 +30,12 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
 /// once; v7 adds a `note` and v8 a `removed` flag to bank transactions; v9 adds
 /// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. v11 adds the `goals` table. v12 adds device sync
-/// (sync keys, the outbox and its triggers). To add a change later: bump
+/// (sync keys, the outbox and its triggers). v13 adds `name` to bank
+/// transactions: Copilot's name for a row, which a bank sync never overwrites. To add a change later: bump
 /// TARGET_VERSION, add another `if current < N` block, and give it a
 /// completeness check so a mis-stamped database can still repair itself. Add
 /// the new completeness check to `migration_pending` too.
-pub(crate) const TARGET_VERSION: i64 = 12;
+pub(crate) const TARGET_VERSION: i64 = 13;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -327,6 +328,18 @@ fn apply_v11(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(MIGRATION_11)
 }
 
+/// v13: the name Tally shows for a row in place of the bank's payee: Copilot's,
+/// from the import. The bank sync rewrites `payee` every time; never this.
+const V13_COLUMN: (&str, &str) = ("name", "name TEXT");
+
+fn v13_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    column_exists(conn, "bank_transactions", V13_COLUMN.0)
+}
+
+fn apply_v13(conn: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(conn, "bank_transactions", V13_COLUMN.0, V13_COLUMN.1)
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -489,6 +502,9 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v11_is_complete(conn)? {
         apply_v11(conn)?;
     }
+    if !v13_is_complete(conn)? {
+        apply_v13(conn)?;
+    }
     if !crate::devicesync::schema::is_complete(conn)? {
         crate::devicesync::schema::install(conn)?;
     }
@@ -512,6 +528,7 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v9_is_complete(conn)?
         || !v10_is_complete(conn)?
         || !v11_is_complete(conn)?
+        || !v13_is_complete(conn)?
         || !crate::devicesync::schema::is_complete(conn)?)
 }
 

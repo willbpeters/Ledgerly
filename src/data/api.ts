@@ -71,11 +71,9 @@ export const api = {
   copilot: {
     /** A dry run: what importing this Copilot export would do. */
     preview: (path: string) => invoke<CopilotPlan>("copilot_preview", { path }),
-    /** Backs up, then imports in one transaction. */
-    /** With `replaceAll`, every category the export doesn't use goes, apart
-     *  from those named in `keep`. */
-    import: (path: string, removeIds: number[], replaceAll: boolean, keep: string[]) =>
-      invoke<CopilotCounts>("copilot_import", { path, removeIds, replaceAll, keep }),
+    /** Backs up, then imports in one transaction: Tally becomes Copilot's
+     *  copy up to the export's last day, in exactly Copilot's categories. */
+    import: (path: string) => invoke<CopilotCounts>("copilot_import", { path }),
   },
   backup: {
     status: () => invoke<BackupStatus>("backup_status"),

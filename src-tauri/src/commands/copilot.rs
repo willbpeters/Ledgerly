@@ -23,18 +23,9 @@ pub async fn copilot_preview(app: tauri::AppHandle, path: String) -> Result<copi
 
 /// Backs up first, then writes the whole import in one transaction. The plan
 /// is made again here rather than trusted from the preview, so it reflects the
-/// database as it is at the moment of writing. `remove_ids` are the rows
-/// Copilot does not have that the owner left ticked. With `replace_all`, every
-/// category the export doesn't use goes, whatever it holds, apart from those
-/// named in `keep`.
+/// database as it is at the moment of writing.
 #[tauri::command]
-pub async fn copilot_import(
-    app: tauri::AppHandle,
-    path: String,
-    remove_ids: Vec<i64>,
-    replace_all: bool,
-    keep: Vec<String>,
-) -> Result<store::CopilotCounts, String> {
+pub async fn copilot_import(app: tauri::AppHandle, path: String) -> Result<store::CopilotCounts, String> {
     super::off_main_thread(move || {
         let state = app.state::<BackupState>();
         let db = app.state::<Db>();
@@ -45,8 +36,7 @@ pub async fn copilot_import(
         if let Some(e) = safety.error {
             return Err(format!("Didn't import, because the backup before it failed: {e}"));
         }
-        let replace = replace_all.then_some(keep.as_slice());
-        store::apply_copilot_plan(&conn, &plan, &remove_ids, replace).map_err(|e| e.to_string())
+        store::apply_copilot_plan(&conn, &plan).map_err(|e| e.to_string())
     })
     .await
 }
@@ -54,7 +44,8 @@ pub async fn copilot_import(
 #[cfg(test)]
 mod tests {
     /// Runs the planner on a real export against a copy of a real database,
-    /// read-only, and prints what an import would do. Ignored by default:
+    /// and prints what an import would do; with `COPILOT_APPLY=1` it imports
+    /// into the copy too. The original is never written. Ignored by default:
     /// `LEDGERLY_DB=... COPILOT_CSV=... cargo test copilot_live -- --ignored --nocapture`
     #[test]
     #[ignore]
@@ -65,19 +56,23 @@ mod tests {
         // writable database: a throwaway copy, never the original.
         let copy = std::env::temp_dir().join("tally-copilot-live-preview.sqlite");
         std::fs::copy(&db, &copy).unwrap();
-        let conn = rusqlite::Connection::open(&copy).unwrap();
+        // Opened as the app opens it, so an older copy is migrated first.
+        let conn = crate::db::open(&copy).unwrap();
         let plan = super::plan_from(&conn, &csv).unwrap();
         println!(
-            "matched {} | added {} | skipped {} | not in copilot {} | pending/excluded {} | new categories {:?} | rules {}",
-            plan.matches.len(), plan.additions.len(), plan.skipped.len(), plan.not_in_copilot.len(), plan.pending_or_excluded,
+            "matched {} | added {} | not in copilot {} | pending {} | new categories {:?} | rules {}",
+            plan.matches.len(), plan.additions.len(), plan.not_in_copilot.len(), plan.pending,
             plan.new_categories.iter().map(|c| &c.name).collect::<Vec<_>>(), plan.rules.len(),
         );
         println!("accounts {:?}", plan.accounts);
         println!(
-            "cutoff {} | merges {:?} | deletions {:?} | recategorised {} | untouched after cutoff {}",
-            plan.cutoff, plan.merges, plan.deletions, plan.recategorised, plan.untouched_after_cutoff,
+            "cutoff {} | merges {:?} | deletions {:?} | uncategorised {} | recategorised {} | untouched after cutoff {}",
+            plan.cutoff, plan.merges, plan.deletions, plan.uncategorised, plan.recategorised, plan.untouched_after_cutoff,
         );
-        println!("category holds {:?}", plan.category_holds);
         println!("export categories {:?}", plan.export_categories);
+        if std::env::var("COPILOT_APPLY").is_ok() {
+            let counts = crate::budget::store::apply_copilot_plan(&conn, &plan).unwrap();
+            println!("applied {counts:?} to {}", copy.display());
+        }
     }
 }

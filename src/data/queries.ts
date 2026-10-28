@@ -414,8 +414,7 @@ export function useCopilotPreview() {
 export function useCopilotImport() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { path: string; removeIds: number[]; replaceAll: boolean; keep: string[] }) =>
-      api.copilot.import(v.path, v.removeIds, v.replaceAll, v.keep),
+    mutationFn: (path: string) => api.copilot.import(path),
     onSuccess: () => {
       invalidateSpending(qc);
       qc.invalidateQueries({ queryKey: budgetKeys.budgets });
