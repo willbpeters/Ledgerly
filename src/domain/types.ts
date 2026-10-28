@@ -112,6 +112,19 @@ export interface CopilotPlan {
   rules: { pattern: string; category: string }[];
   /** Copilot account → the Tally account it maps to. */
   accounts: [string, string][];
+  /** The export's newest day (YYYY-MM-DD). Nothing in Tally after it changes,
+   *  apart from a rename in `merges`. */
+  cutoff: string;
+  /** Tally's old category name → Copilot's, merged or renamed first. */
+  merges: [string, string][];
+  /** Categories left holding nothing that the export doesn't use: deleted. */
+  deletions: string[];
+  /** Matched rows whose category changes to Copilot's. */
+  recategorised: number;
+  /** Rows in Tally dated after `cutoff`, left as they are. */
+  untouched_after_cutoff: number;
+  /** Every category name the export uses, most used first. */
+  export_categories: string[];
 }
 export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }
 export interface CategoryRule {

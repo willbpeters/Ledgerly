@@ -15,6 +15,12 @@ const plan: CopilotPlan = {
   new_categories: [{ name: "Golf", kind: "spending" }],
   rules: [{ pattern: "haggin oaks", category: "Golf" }],
   accounts: [["Adv SafeBalance Banking", "Card (9849)"], ["(no account)", "Copilot history"]],
+  cutoff: "2026-10-24",
+  merges: [["Dining", "Eating Out"], ["Shopping", "Shops"]],
+  deletions: ["Travel", "Poker"],
+  recategorised: 12,
+  untouched_after_cutoff: 5,
+  export_categories: ["Eating Out", "Shops", "Golf"],
 };
 const base = {
   plan: null, result: null, busy: false, removeIds: new Set<number>(), mode: "remove" as const, onModeChange: vi.fn(),
@@ -35,6 +41,22 @@ describe("CopilotImportPanel", () => {
     expect(screen.getByText(/Golf/)).toBeInTheDocument();
     expect(screen.getByText(/Mystery/)).toBeInTheDocument();
     expect(screen.getByText("Adv SafeBalance Banking → Card (9849)")).toBeInTheDocument();
+  });
+
+  it("says how the categories will change to match Copilot, in plain English", () => {
+    render(<CopilotImportPanel {...base} plan={plan} />);
+    expect(screen.getByText("Renames: Dining → Eating Out, Shopping → Shops")).toBeInTheDocument();
+    expect(screen.getByText("Removes categories no longer used: Travel, Poker")).toBeInTheDocument();
+    expect(screen.getByText("12 transactions get Copilot's category")).toBeInTheDocument();
+    expect(screen.getByText("5 transactions after Oct 24, 2026 are left as they are")).toBeInTheDocument();
+  });
+
+  it("leaves out category changes there aren't any of", () => {
+    render(<CopilotImportPanel {...base} plan={{ ...plan, merges: [], deletions: [], recategorised: 1, untouched_after_cutoff: 0 }} />);
+    expect(screen.queryByText(/Renames/)).toBeNull();
+    expect(screen.queryByText(/Removes categories/)).toBeNull();
+    expect(screen.queryByText(/left as they are/)).toBeNull();
+    expect(screen.getByText("1 transaction gets Copilot's category")).toBeInTheDocument();
   });
 
   it("imports from the preview", () => {

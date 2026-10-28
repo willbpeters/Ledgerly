@@ -65,5 +65,10 @@ mod tests {
             plan.new_categories.iter().map(|c| &c.name).collect::<Vec<_>>(), plan.rules.len(),
         );
         println!("accounts {:?}", plan.accounts);
+        println!(
+            "cutoff {} | merges {:?} | deletions {:?} | recategorised {} | untouched after cutoff {}",
+            plan.cutoff, plan.merges, plan.deletions, plan.recategorised, plan.untouched_after_cutoff,
+        );
+        println!("export categories {:?}", plan.export_categories);
     }
 }

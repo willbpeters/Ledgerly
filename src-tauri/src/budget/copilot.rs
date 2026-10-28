@@ -1,6 +1,7 @@
 //! Importing a Copilot Money CSV export. Pure: the caller hands over the CSV
 //! text and a snapshot of the database, and gets back a `Plan` it can preview
 //! and then apply. See docs/superpowers/specs/2026-10-15-copilot-import-design.md
+use super::seed::SystemKind;
 use chrono::Datelike;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
@@ -34,17 +35,27 @@ pub struct CopilotRow {
 pub struct AccountRef { pub id: i64, pub name: String }
 pub struct ExistingTxn {
     pub id: i64, pub account_id: i64, pub posted: String, pub amount: f64, pub from_copilot: bool,
+    pub external_id: String,
     /// Payee, or the description when there is none: what the preview shows.
     pub label: String,
     pub pending: bool,
     pub removed: bool,
+    pub category_id: Option<i64>,
+    /// Split into pieces, which the import never touches.
+    pub split: bool,
+}
+pub struct CategoryInfo {
+    pub id: i64,
+    pub name: String,
+    /// Has at least one budget row, any month.
+    pub has_budget: bool,
+    /// Split pieces filed under it.
+    pub pieces: usize,
 }
 pub struct Snapshot {
     pub accounts: Vec<AccountRef>,
     pub txns: Vec<ExistingTxn>,
-    pub category_names: Vec<String>,
-    /// Lower-cased payee patterns of rules that already exist.
-    pub rule_patterns: Vec<String>,
+    pub categories: Vec<CategoryInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -81,7 +92,28 @@ pub struct Plan {
     pub rules: Vec<LearnedRule>,
     /// Copilot account label → the Tally account it maps to.
     pub accounts: Vec<(String, String)>,
+    /// The export's newest day (pending and excluded rows aside). Nothing in
+    /// Tally dated after it is changed, apart from a rename in `merges`.
+    pub cutoff: String,
+    /// Tally's old name → Copilot's, merged (or renamed) before anything else.
+    pub merges: Vec<(String, String)>,
+    /// Categories that will hold nothing after the import and that the export
+    /// doesn't use: deleted.
+    pub deletions: Vec<String>,
+    /// Matched rows whose category changes to Copilot's.
+    pub recategorised: usize,
+    /// Rows in Tally dated after `cutoff`, left as they are.
+    pub untouched_after_cutoff: usize,
+    /// Every category name the export uses, most used first: Copilot's order.
+    pub export_categories: Vec<String>,
 }
+
+/// Tally's old names for categories Copilot calls something else. Merged into
+/// Copilot's name when the export uses it; transfer always, since "Internal
+/// transfer" is the system category.
+pub const OLD_NAMES: &[(&str, &str)] = &[
+    ("Dining", "Eating Out"), ("Shopping", "Shops"), ("Transfer", "Internal transfer"),
+];
 
 /// Split CSV text into records: quoted fields, doubled quotes, commas and
 /// line breaks inside quotes.
@@ -128,33 +160,26 @@ pub fn parse_csv(text: &str) -> Result<Vec<CopilotRow>, String> {
         .collect())
 }
 
-/// Copilot names that mean the same as one of Tally's.
-const SAME_AS: &[(&str, &str)] = &[
-    ("eating out", "Dining"), ("groceries", "Groceries"), ("shops", "Shopping"),
-    ("subscriptions", "Subscriptions"), ("entertainment", "Entertainment"),
-    ("travel", "Travel"), ("other", "Other"),
-];
-
-/// The Tally category name a row belongs in. An internal transfer is always
-/// Transfer, whatever its category says.
+/// The category a row belongs in: Copilot's own name, exactly. An internal
+/// transfer is always "Internal transfer", whatever its category says, and
+/// income with no category is "Income" — the two system categories.
 pub fn category_for(r: &CopilotRow) -> Option<String> {
     if r.kind == "internal transfer" {
-        return Some("Transfer".into());
+        return Some("Internal transfer".into());
     }
     let name = r.category.trim();
     if !name.is_empty() {
-        let lower = name.to_lowercase();
-        return Some(SAME_AS.iter().find(|(c, _)| *c == lower).map_or(name.to_string(), |(_, l)| l.to_string()));
+        return Some(name.to_string());
     }
     (r.kind == "income").then(|| "Income".to_string())
 }
 
 /// The system category kind a `category_for` name stands for, if any.
-pub fn system_kind(name: &str) -> Option<&'static str> {
-    if name.eq_ignore_ascii_case("Transfer") {
-        Some("transfer")
+pub fn system_kind(name: &str) -> Option<SystemKind> {
+    if name.eq_ignore_ascii_case("Internal transfer") || name.eq_ignore_ascii_case("Transfer") {
+        Some(SystemKind::Transfer)
     } else if name.eq_ignore_ascii_case("Income") {
-        Some("income")
+        Some(SystemKind::Income)
     } else {
         None
     }
@@ -172,6 +197,9 @@ fn fnv(s: &str) -> u64 {
 pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut p = Plan::default();
     let cents = |a: f64| (a * 100.0).round() as i64;
+    // The newest day of the whole file. Nothing in Tally after it is touched.
+    let newest = rows.iter().filter(|r| !r.pending && !r.excluded).map(|r| r.date.as_str()).max().unwrap_or("");
+    p.cutoff = newest.to_string();
 
     // Where SimpleFIN's own record of each account starts. Copilot rows from
     // that date on are matched, never added; imported rows do not count.
@@ -219,7 +247,13 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
                 match best {
                     Some((_, txn_id)) => {
                         used.insert(txn_id);
-                        p.matches.push(Match { txn_id, category, note: r.note.clone() });
+                        // Tally may date it a day or two after Copilot; past
+                        // the cutoff it is matched (so not offered for
+                        // removal) but left as it is.
+                        let posted = snap.txns.iter().find(|t| t.id == txn_id).map_or("", |t| t.posted.as_str());
+                        if posted <= newest {
+                            p.matches.push(Match { txn_id, category, note: r.note.clone() });
+                        }
                     }
                     None => p.skipped.push(Skipped { date: r.date.clone(), name: r.name.clone(), amount: r.amount, account: label }),
                 }
@@ -244,7 +278,6 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     // runs a few hours behind the bank, so a row from that day may simply not
     // have reached it yet. The newest day of the whole file, not the account's —
     // an account with nothing on that day would otherwise push its cutoff back.
-    let newest = rows.iter().filter(|r| !r.pending && !r.excluded).map(|r| r.date.as_str()).max().unwrap_or("");
     for t in &snap.txns {
         if t.from_copilot || t.pending || t.removed || used.contains(&t.id) { continue; }
         let Some((first, _)) = covers.get(&t.account_id) else { continue };
@@ -256,14 +289,43 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     }
     p.not_in_copilot.sort_by(|a, b| b.date.cmp(&a.date));
 
-    // Categories the owner used that Tally does not have yet.
-    let have: HashSet<String> = snap.category_names.iter().map(|c| c.to_lowercase()).collect();
-    let mut wanted: Vec<String> = p.matches.iter().map(|m| m.category.clone())
-        .chain(p.additions.iter().map(|a| a.category.clone())).flatten().collect();
+    // Every category the export uses, most used first, in Copilot's spelling.
+    let mut uses: BTreeMap<String, (String, usize)> = BTreeMap::new();
+    for c in rows.iter().filter(|r| !r.pending && !r.excluded).filter_map(category_for) {
+        uses.entry(c.to_lowercase()).or_insert_with(|| (c.clone(), 0)).1 += 1;
+    }
+    let mut order: Vec<(String, usize)> = uses.values().cloned().collect();
+    order.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    p.export_categories = order.into_iter().map(|(name, _)| name).collect();
+    let in_export = |name: &str| uses.contains_key(&name.to_lowercase());
+
+    // Tally's old names give way to Copilot's. `names` is each category's
+    // name once that is done, and `into` where a merged one's rows go.
+    let mut names: BTreeMap<i64, String> = snap.categories.iter().map(|c| (c.id, c.name.clone())).collect();
+    let mut into: BTreeMap<i64, i64> = BTreeMap::new();
+    // (from, the id it ends up as) for each merge, in `p.merges` order.
+    let mut merged: Vec<(i64, i64)> = Vec::new();
+    for (old, new) in OLD_NAMES {
+        let Some(from) = snap.categories.iter().find(|c| c.name.eq_ignore_ascii_case(old)) else { continue };
+        // Copilot uses the old name itself: it is the owner's, keep it.
+        if in_export(old) || !(in_export(new) || system_kind(new) == Some(SystemKind::Transfer)) {
+            continue;
+        }
+        let to = names.iter().find(|(id, n)| **id != from.id && n.eq_ignore_ascii_case(new)).map(|(id, _)| *id);
+        match to {
+            Some(to) => { names.remove(&from.id); into.insert(from.id, to); merged.push((from.id, to)); }
+            None => { names.insert(from.id, new.to_string()); merged.push((from.id, from.id)); }
+        }
+        p.merges.push((from.name.clone(), new.to_string()));
+    }
+    let after = |id: Option<i64>| id.map(|id| *into.get(&id).unwrap_or(&id));
+
+    // Categories the owner used that Tally does not have yet. Transfer and
+    // Income are Tally's system categories, made when first needed with the
+    // right kind, so they are never offered as new spending.
+    let have: HashSet<String> = names.values().map(|c| c.to_lowercase()).collect();
+    let mut wanted: Vec<String> = uses.values().map(|(name, _)| name.clone()).collect();
     wanted.sort();
-    wanted.dedup();
-    // Transfer and Income are Tally's system categories, made when first
-    // needed with the right kind, so they are never offered as new spending.
     p.new_categories = wanted.into_iter()
         .filter(|c| !have.contains(&c.to_lowercase()) && system_kind(c).is_none())
         .map(|name| NewCategory {
@@ -273,19 +335,65 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         })
         .collect();
 
-    // A payee used at least twice, 90% of the time in one category.
+    // What each Tally row will be filed under: Copilot's category for rows it
+    // covers (a split row aside), its own otherwise.
+    let split: HashSet<i64> = snap.txns.iter().filter(|t| t.split).map(|t| t.id).collect();
+    let matched: BTreeMap<i64, Option<String>> = p.matches.iter()
+        .filter(|m| !split.contains(&m.txn_id)).map(|m| (m.txn_id, m.category.clone())).collect();
+    let added: BTreeMap<&str, Option<String>> = p.additions.iter()
+        .map(|a| (a.external_id.as_str(), a.category.clone())).collect();
+    let mut holds: BTreeMap<i64, usize> = BTreeMap::new();
+    for t in &snap.txns {
+        let current = after(t.category_id);
+        let copilot = if t.split || t.posted.as_str() > newest { None } else {
+            matched.get(&t.id).or_else(|| added.get(t.external_id.as_str()))
+        };
+        match copilot {
+            Some(category) => {
+                let name = |id: i64| names.get(&id).map(|n| n.to_lowercase());
+                if matched.contains_key(&t.id)
+                    && current.and_then(name) != category.as_ref().map(|c| c.to_lowercase())
+                {
+                    p.recategorised += 1;
+                }
+            }
+            None => if let Some(id) = current { *holds.entry(id).or_default() += 1 },
+        }
+        if t.posted.as_str() > newest { p.untouched_after_cutoff += 1; }
+    }
+    for c in &snap.categories {
+        if let Some(id) = after(Some(c.id)) { *holds.entry(id).or_default() += c.pieces; }
+    }
+    let budgeted: HashSet<i64> = snap.categories.iter().filter(|c| c.has_budget).filter_map(|c| after(Some(c.id))).collect();
+    // A system category stays while the export has rows of its kind, under
+    // whichever of its names (as `store::tidy_categories`).
+    let kinds: Vec<SystemKind> = uses.values().filter_map(|(n, _)| system_kind(n)).collect();
+    let wanted = |n: &str| in_export(n) || system_kind(n).is_some_and(|k| kinds.contains(&k));
+    let doomed: HashSet<i64> = names.iter()
+        .filter(|(id, n)| holds.get(id).copied().unwrap_or(0) == 0 && !budgeted.contains(id) && !wanted(n))
+        .map(|(id, _)| *id)
+        .collect();
+    // A merge or rename into a category that ends up deleted is pointless:
+    // the old category is simply deleted under its own name instead.
+    let mut keep = merged.iter().map(|(_, end)| !doomed.contains(end));
+    let pointless: HashSet<i64> = merged.iter().filter(|(_, end)| doomed.contains(end)).map(|(from, _)| *from).collect();
+    p.merges.retain(|_| keep.next().unwrap_or(true));
+    p.deletions = snap.categories.iter()
+        .filter(|c| doomed.contains(&c.id) || pointless.contains(&c.id))
+        .map(|c| if pointless.contains(&c.id) { c.name.clone() } else { names[&c.id].clone() })
+        .collect();
+
+    // A payee used at least twice, 90% of the time in one category. It
+    // replaces any rule the payee already has: Copilot's choice wins.
     let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for r in rows.iter().filter(|r| !r.pending && !r.excluded) {
         if let Some(c) = category_for(r) {
             by_name.entry(r.name.trim().to_lowercase()).or_default().push(c);
         }
     }
-    let existing: HashSet<&str> = snap.rule_patterns.iter().map(String::as_str).collect();
     for (name, used_cats) in by_name {
         // Payments to people stay the owner's call each time, as in the ladder.
-        if name.is_empty() || used_cats.len() < 2 || existing.contains(name.as_str())
-            || super::merchants::is_person_to_person(Some(&name), "")
-        {
+        if name.is_empty() || used_cats.len() < 2 || super::merchants::is_person_to_person(Some(&name), "") {
             continue;
         }
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -317,7 +425,8 @@ mod tests {
     fn existing(id: i64, posted: &str, amount: f64) -> ExistingTxn {
         ExistingTxn {
             id, account_id: 1, posted: posted.into(), amount, from_copilot: false,
-            label: format!("Payee {id}"), pending: false, removed: false,
+            external_id: format!("sf{id}"), label: format!("Payee {id}"), pending: false, removed: false,
+            category_id: None, split: false,
         }
     }
 
@@ -393,9 +502,13 @@ mod tests {
                 existing(10, "2026-07-01", -12.5),
                 existing(11, "2026-07-05", -12.5),
             ],
-            category_names: vec!["Dining".into(), "Shopping".into(), "Groceries".into(), "Transfer".into(), "Income".into(), "Other".into()],
-            rule_patterns: vec![],
+            categories: ["Dining", "Shopping", "Groceries", "Transfer", "Income", "Other"].iter().enumerate()
+                .map(|(i, n)| cat(i as i64 + 1, n)).collect(),
         }
+    }
+
+    fn cat(id: i64, name: &str) -> CategoryInfo {
+        CategoryInfo { id, name: name.into(), has_budget: false, pieces: 0 }
     }
 
     #[test]
@@ -417,12 +530,12 @@ mod tests {
     }
 
     #[test]
-    fn categories_map_onto_ledgerlys_or_are_created() {
+    fn categories_keep_copilots_own_names() {
         let r = |cat: &str, kind: &str| CopilotRow { category: cat.into(), kind: kind.into(), ..CopilotRow::default() };
-        assert_eq!(category_for(&r("Eating Out", "regular")).as_deref(), Some("Dining"));
-        assert_eq!(category_for(&r("Shops", "regular")).as_deref(), Some("Shopping"));
+        assert_eq!(category_for(&r("Eating Out", "regular")).as_deref(), Some("Eating Out"));
+        assert_eq!(category_for(&r("Shops", "regular")).as_deref(), Some("Shops"));
         assert_eq!(category_for(&r("Gifts ", "regular")).as_deref(), Some("Gifts"));
-        assert_eq!(category_for(&r("Golf", "internal transfer")).as_deref(), Some("Transfer"));
+        assert_eq!(category_for(&r("Golf", "internal transfer")).as_deref(), Some("Internal transfer"));
         assert_eq!(category_for(&r("", "income")).as_deref(), Some("Income"));
         assert_eq!(category_for(&r("", "regular")), None);
     }
@@ -432,11 +545,13 @@ mod tests {
         let rows = parse_csv(&csv(&[
             &row("2026-07-04", "Diner", "12.50", "Eating Out", "regular", "9849"),
             &row("2026-07-02", "Diner", "12.50", "Eating Out", "regular", "9849"),
+            // Moves the cutoff past both Tally rows.
+            &row("2026-07-10", "Later", "1.00", "Other", "regular", "9849"),
         ])).unwrap();
         let p = plan(&rows, &snap());
         let ids: Vec<i64> = p.matches.iter().map(|m| m.txn_id).collect();
         assert_eq!(ids, vec![11, 10]);
-        assert_eq!(p.matches[0].category.as_deref(), Some("Dining"));
+        assert_eq!(p.matches[0].category.as_deref(), Some("Eating Out"));
         assert!(p.additions.is_empty());
     }
 
@@ -520,13 +635,108 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_rule_is_never_replaced() {
+    fn a_payee_with_a_rule_still_learns_copilots_category() {
+        // Copilot wins: applying the plan replaces the payee's rule.
         let rows = parse_csv(&csv(&[
             &row("2026-01-02", "Haggin Oaks", "20", "Golf", "regular", ""),
             &row("2026-01-09", "Haggin Oaks", "25", "Golf", "regular", ""),
         ])).unwrap();
+        assert_eq!(plan(&rows, &snap()).rules.len(), 1);
+    }
+
+    #[test]
+    fn the_cutoff_is_the_exports_newest_posted_day() {
+        let mut rows = covered(vec![]).0;
+        let pending = row("2026-07-25", "P", "1", "", "regular", "").replace("\"posted\"", "\"pending\"");
+        rows.push(parse_csv(&csv(&[&pending])).unwrap().remove(0));
         let mut s = snap();
-        s.rule_patterns = vec!["haggin oaks".into()];
-        assert!(plan(&rows, &s).rules.is_empty());
+        s.txns.extend([existing(30, "2026-07-21", 1.0), existing(31, "2026-07-22", 2.0), existing(32, "2026-07-20", 3.0)]);
+        let p = plan(&rows, &s);
+        assert_eq!(p.cutoff, "2026-07-20");
+        assert_eq!(p.untouched_after_cutoff, 2);
+    }
+
+    #[test]
+    fn a_match_tally_dates_after_the_cutoff_is_left_alone_and_not_offered() {
+        // Copilot's last row is 07-20; Tally has the same purchase on 07-21.
+        let rows = parse_csv(&csv(&[
+            &row("2026-07-01", "Diner", "12.50", "Eating Out", "regular", "9849"),
+            &row("2026-07-05", "Diner", "12.50", "Eating Out", "regular", "9849"),
+            &row("2026-07-20", "Late", "3.00", "Other", "regular", "9849"),
+        ])).unwrap();
+        let mut s = snap();
+        s.txns.push(existing(40, "2026-07-21", -3.0));
+        let p = plan(&rows, &s);
+        assert_eq!(p.matches.iter().map(|m| m.txn_id).collect::<Vec<_>>(), vec![10, 11]);
+        assert!(p.not_in_copilot.is_empty());
+        assert_eq!(p.untouched_after_cutoff, 1);
+    }
+
+    #[test]
+    fn old_names_merge_into_copilots_when_the_export_uses_them() {
+        let rows = parse_csv(&csv(&[&row("2026-01-02", "Diner", "5", "Eating Out", "regular", "")])).unwrap();
+        let mut s = snap();
+        s.txns[0].category_id = Some(4); // Transfer holds a row
+        let p = plan(&rows, &s);
+        // Shops is not in the export, so Shopping stays; Transfer always merges.
+        assert_eq!(p.merges, vec![
+            ("Dining".to_string(), "Eating Out".to_string()),
+            ("Transfer".to_string(), "Internal transfer".to_string()),
+        ]);
+        assert!(p.new_categories.is_empty(), "Dining is renamed, not joined by a new Eating Out");
+    }
+
+    #[test]
+    fn an_old_name_copilot_uses_itself_is_not_merged() {
+        let rows = parse_csv(&csv(&[
+            &row("2026-01-02", "Diner", "5", "Eating Out", "regular", ""),
+            &row("2026-01-03", "Bistro", "5", "Dining", "regular", ""),
+        ])).unwrap();
+        let p = plan(&rows, &snap());
+        assert!(!p.merges.iter().any(|(from, _)| from == "Dining"));
+    }
+
+    #[test]
+    fn categories_the_import_leaves_empty_are_listed_for_deletion() {
+        let rows = parse_csv(&csv(&[
+            &row("2026-07-01", "Diner", "12.50", "Eating Out", "regular", "9849"),
+            &row("2026-07-05", "Diner", "12.50", "Groceries", "regular", "9849"),
+        ])).unwrap();
+        let mut s = snap();
+        // Shopping's only row moves to Copilot's; Other keeps a row after the
+        // cutoff; Travel has a budget; Gifts a split piece; Poker nothing.
+        s.txns[0].category_id = Some(2);
+        let mut late = existing(50, "2026-08-01", -4.0);
+        late.category_id = Some(6);
+        s.txns.push(late);
+        s.categories.extend([cat(7, "Travel"), cat(8, "Gifts"), cat(9, "Poker")]);
+        s.categories[6].has_budget = true;
+        s.categories[7].pieces = 1;
+        let p = plan(&rows, &s);
+        // Dining becomes Eating Out. Transfer and Income hold nothing and the
+        // export has no transfers or income, so renaming Transfer is dropped.
+        assert_eq!(p.deletions, vec!["Shopping".to_string(), "Transfer".to_string(), "Income".to_string(), "Poker".to_string()]);
+        assert_eq!(p.merges, vec![("Dining".to_string(), "Eating Out".to_string())]);
+        assert_eq!(p.recategorised, 2, "Shopping → Eating Out, none → Groceries");
+    }
+
+    #[test]
+    fn a_split_match_is_not_recategorised() {
+        let (rows, mut s) = covered(vec![]);
+        s.txns[0].split = true;
+        s.txns[1].category_id = Some(1); // Dining, which becomes Eating Out
+        let p = plan(&rows, &s);
+        assert_eq!(p.recategorised, 0);
+    }
+
+    #[test]
+    fn export_categories_are_in_copilots_order_most_used_first() {
+        let rows = parse_csv(&csv(&[
+            &row("2026-01-02", "A", "5", "Golf", "regular", ""),
+            &row("2026-01-03", "B", "5", "Shops", "regular", ""),
+            &row("2026-01-04", "C", "5", "shops", "regular", ""),
+            &row("2026-01-05", "D", "5", "", "internal transfer", ""),
+        ])).unwrap();
+        assert_eq!(plan(&rows, &snap()).export_categories, vec!["Shops", "Golf", "Internal transfer"]);
     }
 }

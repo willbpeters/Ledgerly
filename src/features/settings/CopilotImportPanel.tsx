@@ -20,6 +20,17 @@ export interface CopilotImportPanelProps {
 
 export type NotInCopilotMode = "remove" | "keep";
 
+/** "Oct 24, 2026" for "2026-10-24". */
+function longDate(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+  });
+}
+
+const transactions = (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"}`;
+
 /** The "Import from Copilot" card's markup. Props only, so it can be tested
  *  without Tauri; `CopilotImportCard` wires it to the real calls. */
 export function CopilotImportPanel({
@@ -100,6 +111,20 @@ export function CopilotImportPanel({
             )}
             {plan.new_categories.length > 0 && (
               <div>New categories: {plan.new_categories.map((c) => c.name).join(", ")}</div>
+            )}
+            {plan.merges.length > 0 && (
+              <div>Renames: {plan.merges.map(([from, to]) => `${from} → ${to}`).join(", ")}</div>
+            )}
+            {plan.deletions.length > 0 && (
+              <div>Removes categories no longer used: {plan.deletions.join(", ")}</div>
+            )}
+            <div>
+              {transactions(plan.recategorised)} {plan.recategorised === 1 ? "gets" : "get"} Copilot's category
+            </div>
+            {plan.untouched_after_cutoff > 0 && (
+              <div className="muted">
+                {transactions(plan.untouched_after_cutoff)} after {longDate(plan.cutoff)} are left as they are
+              </div>
             )}
             <div>{plan.rules.length} payee rules learned from how you categorised in Copilot</div>
             <details>

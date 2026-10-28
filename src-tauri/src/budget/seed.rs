@@ -19,7 +19,10 @@ pub fn next_colour(conn: &Connection) -> rusqlite::Result<String> {
     let mut used = [0usize; COLOURS];
     let mut stmt = conn.prepare("SELECT colour FROM categories")?;
     for colour in stmt.query_map([], |r| r.get::<_, String>(0))? {
-        let n = colour?.strip_prefix("cat-").and_then(|n| n.parse::<usize>().ok());
+        // The old chart-N tokens draw as cat-N, so they count against it.
+        let colour = colour?;
+        let n = colour.strip_prefix("cat-").or_else(|| colour.strip_prefix("chart-"))
+            .and_then(|n| n.parse::<usize>().ok());
         if let Some(n) = n.filter(|n| (1..=COLOURS).contains(n)) {
             used[n - 1] += 1;
         }
@@ -28,37 +31,48 @@ pub fn next_colour(conn: &Connection) -> rusqlite::Result<String> {
     Ok(format!("cat-{}", least + 1))
 }
 
-/// The category for money moving between the owner's own accounts
-/// (`"transfer"`) or money coming in (`"income"`), made if there is none yet.
+/// The two categories Tally makes on its own, mirroring Copilot's transaction
+/// types: money moving between the owner's own accounts, and money coming in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemKind { Transfer, Income }
+
+impl SystemKind {
+    /// The `categories.kind` value.
+    pub fn kind(self) -> &'static str {
+        match self { SystemKind::Transfer => "transfer", SystemKind::Income => "income" }
+    }
+    /// Copilot's name, then Tally's old one.
+    fn names(self) -> (&'static str, &'static str) {
+        match self {
+            SystemKind::Transfer => ("Internal transfer", "Transfer"),
+            SystemKind::Income => ("Income", "Income"),
+        }
+    }
+}
+
+/// The system category of that kind, made if there is none yet.
 ///
 /// These mirror Copilot's own transaction types (internal transfer, income),
 /// not a preset list, so they are created only the first time a row needs one.
-/// An existing category of that kind is preferred in this order: Copilot's
-/// name, then Tally's old name, then the lowest sort — so the owner's own
-/// transfer-kind category (say "Investments") is never picked over a real
-/// "Internal transfer" or "Transfer".
-pub fn system_category(conn: &Connection, kind: &str) -> rusqlite::Result<i64> {
-    let (name, legacy) = match kind {
-        "transfer" => ("Internal transfer", "Transfer"),
-        "income" => ("Income", "Income"),
-        other => return Err(rusqlite::Error::InvalidParameterName(format!("no system category of kind {other}"))),
-    };
-    let found: Option<i64> = conn.query_row(
-        "SELECT id FROM categories WHERE kind=?1
-         ORDER BY CASE WHEN lower(name)=lower(?2) THEN 0 WHEN lower(name)=lower(?3) THEN 1 ELSE 2 END, sort, id
+/// Only the name counts, ignoring case: "Internal transfer" (or Tally's old
+/// "Transfer") for transfer, "Income" for income. Another category of the same
+/// kind is the owner's own — their "Investments" never receives paired
+/// transfers. Among same-named ones, the right kind wins, then Copilot's name;
+/// one of another kind is given the system kind, so transfers and income are
+/// never counted as spending.
+pub fn system_category(conn: &Connection, system: SystemKind) -> rusqlite::Result<i64> {
+    let ((name, legacy), kind) = (system.names(), system.kind());
+    let found: Option<(i64, String)> = conn.query_row(
+        "SELECT id, kind FROM categories WHERE lower(name) IN (lower(?2), lower(?3))
+         ORDER BY kind<>?1, lower(name)<>lower(?2), id
          LIMIT 1",
         rusqlite::params![kind, name, legacy],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     ).optional()?;
-    if let Some(id) = found {
-        return Ok(id);
-    }
-    // The name may already be taken by a category of another kind; reuse it
-    // rather than fail on the unique name.
-    let taken: Option<i64> = conn.query_row(
-        "SELECT id FROM categories WHERE lower(name)=lower(?1)", [name], |r| r.get(0),
-    ).optional()?;
-    if let Some(id) = taken {
+    if let Some((id, found_kind)) = found {
+        if found_kind != kind {
+            conn.execute("UPDATE categories SET kind=?1 WHERE id=?2", rusqlite::params![kind, id])?;
+        }
         return Ok(id);
     }
     let sort: i64 = conn.query_row("SELECT COALESCE(MAX(sort),0)+10 FROM categories", [], |r| r.get(0))?;
@@ -71,10 +85,10 @@ pub fn system_category(conn: &Connection, kind: &str) -> rusqlite::Result<i64> {
 
 /// The names the auto-sorter (merchant codes, known merchants) uses, which
 /// are Tally's old category names. Each is tried in order against what the
-/// owner actually has, ignoring case.
+/// owner actually has, ignoring case: Copilot's name first.
 const ALIASES: &[(&str, &[&str])] = &[
-    ("Dining", &["Dining", "Eating Out"]),
-    ("Shopping", &["Shopping", "Shops"]),
+    ("Dining", &["Eating Out", "Dining"]),
+    ("Shopping", &["Shops", "Shopping"]),
 ];
 
 /// The owner's category for one of the auto-sorter's names, if they have one.
@@ -85,7 +99,7 @@ const ALIASES: &[(&str, &[&str])] = &[
 /// uncategorised and waits in To review for the owner.
 pub fn sorter_category(conn: &Connection, name: &str) -> rusqlite::Result<Option<i64>> {
     if name.eq_ignore_ascii_case("Transfer") {
-        return system_category(conn, "transfer").map(Some);
+        return system_category(conn, SystemKind::Transfer).map(Some);
     }
     let names = ALIASES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, a)| *a);
     for candidate in names.unwrap_or(&[name]) {
@@ -150,18 +164,18 @@ mod tests {
     #[test]
     fn the_transfer_category_is_made_on_first_use_and_reused_after() {
         let conn = db::open_in_memory().unwrap();
-        let id = system_category(&conn, "transfer").unwrap();
+        let id = system_category(&conn, SystemKind::Transfer).unwrap();
         assert_eq!(name_kind(&conn, id), ("Internal transfer".into(), "transfer".into()));
-        assert_eq!(system_category(&conn, "transfer").unwrap(), id);
+        assert_eq!(system_category(&conn, SystemKind::Transfer).unwrap(), id);
         assert_eq!(count(&conn), 1);
     }
 
     #[test]
     fn the_income_category_is_made_on_first_use_and_reused_after() {
         let conn = db::open_in_memory().unwrap();
-        let id = system_category(&conn, "income").unwrap();
+        let id = system_category(&conn, SystemKind::Income).unwrap();
         assert_eq!(name_kind(&conn, id), ("Income".into(), "income".into()));
-        assert_eq!(system_category(&conn, "income").unwrap(), id);
+        assert_eq!(system_category(&conn, SystemKind::Income).unwrap(), id);
         assert_eq!(count(&conn), 1);
     }
 
@@ -169,7 +183,7 @@ mod tests {
     fn a_legacy_transfer_category_is_reused_not_duplicated() {
         let conn = db::open_in_memory().unwrap();
         let legacy = add(&conn, "Transfer", "transfer", "chart-6");
-        assert_eq!(system_category(&conn, "transfer").unwrap(), legacy);
+        assert_eq!(system_category(&conn, SystemKind::Transfer).unwrap(), legacy);
         assert_eq!(count(&conn), 1);
     }
 
@@ -178,16 +192,55 @@ mod tests {
         let conn = db::open_in_memory().unwrap();
         add(&conn, "Investments", "transfer", "cat-1");
         let legacy = add(&conn, "Transfer", "transfer", "cat-2");
-        assert_eq!(system_category(&conn, "transfer").unwrap(), legacy);
+        assert_eq!(system_category(&conn, SystemKind::Transfer).unwrap(), legacy);
         let copilot = add(&conn, "Internal transfer", "transfer", "cat-3");
-        assert_eq!(system_category(&conn, "transfer").unwrap(), copilot);
+        assert_eq!(system_category(&conn, SystemKind::Transfer).unwrap(), copilot);
     }
 
     #[test]
-    fn an_unknown_kind_is_an_error() {
+    fn an_owners_transfer_kind_category_is_never_the_system_one() {
+        // "Investments" is the owner's own, not where paired transfers go.
         let conn = db::open_in_memory().unwrap();
-        assert!(system_category(&conn, "spending").is_err());
-        assert_eq!(count(&conn), 0);
+        let investments = add(&conn, "Investments", "transfer", "cat-1");
+        let salary = add(&conn, "Salary", "income", "cat-2");
+        let transfer = system_category(&conn, SystemKind::Transfer).unwrap();
+        let income = system_category(&conn, SystemKind::Income).unwrap();
+        assert_ne!(transfer, investments);
+        assert_ne!(income, salary);
+        assert_eq!(name_kind(&conn, transfer), ("Internal transfer".into(), "transfer".into()));
+        assert_eq!(name_kind(&conn, income), ("Income".into(), "income".into()));
+        assert_eq!(count(&conn), 4);
+    }
+
+    #[test]
+    fn a_system_named_category_of_another_kind_becomes_the_system_kind() {
+        // Otherwise transfers and income would count as spending.
+        let conn = db::open_in_memory().unwrap();
+        let transfer = add(&conn, "Internal transfer", "spending", "cat-1");
+        let income = add(&conn, "Income", "spending", "cat-2");
+        assert_eq!(system_category(&conn, SystemKind::Transfer).unwrap(), transfer);
+        assert_eq!(system_category(&conn, SystemKind::Income).unwrap(), income);
+        assert_eq!(name_kind(&conn, transfer).1, "transfer");
+        assert_eq!(name_kind(&conn, income).1, "income");
+    }
+
+    #[test]
+    fn the_sorter_prefers_copilots_name_when_both_exist() {
+        let conn = db::open_in_memory().unwrap();
+        add(&conn, "Dining", "spending", "cat-1");
+        let eating_out = add(&conn, "Eating Out", "spending", "cat-2");
+        add(&conn, "Shopping", "spending", "cat-3");
+        let shops = add(&conn, "Shops", "spending", "cat-4");
+        assert_eq!(sorter_category(&conn, "Dining").unwrap(), Some(eating_out));
+        assert_eq!(sorter_category(&conn, "Shopping").unwrap(), Some(shops));
+    }
+
+    #[test]
+    fn the_system_names_are_matched_ignoring_case() {
+        let conn = db::open_in_memory().unwrap();
+        let lower = add(&conn, "internal TRANSFER", "transfer", "cat-1");
+        assert_eq!(system_category(&conn, SystemKind::Transfer).unwrap(), lower);
+        assert_eq!(count(&conn), 1);
     }
 
     #[test]
@@ -224,11 +277,11 @@ mod tests {
         assert_eq!(next_colour(&conn).unwrap(), "cat-2");
         add(&conn, "B", "spending", "cat-3");
         assert_eq!(next_colour(&conn).unwrap(), "cat-2");
-        // Old chart-N tokens and junk do not count against any cat-N.
+        // An old chart-N token is the same hue as cat-N; junk counts for none.
         add(&conn, "C", "spending", "chart-2");
         add(&conn, "D", "spending", "cat-99");
-        assert_eq!(next_colour(&conn).unwrap(), "cat-2");
-        for (i, n) in (2..=12).filter(|n| *n != 3).enumerate() {
+        assert_eq!(next_colour(&conn).unwrap(), "cat-4");
+        for (i, n) in (4..=12).enumerate() {
             add(&conn, &format!("E{i}"), "spending", &format!("cat-{n}"));
         }
         // Every token used once: back to the lowest.
@@ -239,7 +292,7 @@ mod tests {
     fn a_system_category_gets_a_distinct_colour() {
         let conn = db::open_in_memory().unwrap();
         add(&conn, "Groceries", "spending", "cat-1");
-        let id = system_category(&conn, "income").unwrap();
+        let id = system_category(&conn, SystemKind::Income).unwrap();
         let colour: String = conn.query_row("SELECT colour FROM categories WHERE id=?1", [id], |r| r.get(0)).unwrap();
         assert_eq!(colour, "cat-2");
     }
