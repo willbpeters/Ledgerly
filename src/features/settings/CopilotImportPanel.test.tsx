@@ -8,8 +8,8 @@ const plan: CopilotPlan = {
   additions: [{ external_id: "copilot:a", posted: "2025-01-01", amount: -8, name: "Old Diner", category: "Dining" }],
   skipped: [{ date: "2026-07-10", name: "Mystery", amount: -9.99, account: "Adv SafeBalance Banking" }],
   not_in_copilot: [
-    { txn_id: 41, date: "2026-07-04", name: "Transfer from Apple Pay", amount: 40, account: "Card (9849)" },
-    { txn_id: 42, date: "2026-07-05", name: "Target", amount: -12, account: "Card (9849)" },
+    { txn_id: 41, date: "2026-07-04", name: "Transfer from Apple Pay", amount: 40, account: "Card (9849)", earlier_export: false },
+    { txn_id: 42, date: "2026-07-05", name: "Target", amount: -12, account: "Card (9849)", earlier_export: true },
   ],
   pending_or_excluded: 2,
   new_categories: [{ name: "Golf", kind: "spending" }],
@@ -17,7 +17,14 @@ const plan: CopilotPlan = {
   accounts: [["Adv SafeBalance Banking", "Card (9849)"], ["(no account)", "Copilot history"]],
   cutoff: "2026-10-24",
   merges: [["Dining", "Eating Out"], ["Shopping", "Shops"]],
-  deletions: ["Travel", "Poker"],
+  deletions: ["Travel"],
+  // Travel holds nothing; Poker only a row offered for removal; Subscriptions
+  // one row Copilot doesn't cover, and one offered.
+  category_holds: [
+    { name: "Travel", kept_rows: 0, removable: [] },
+    { name: "Poker", kept_rows: 0, removable: [41] },
+    { name: "Subscriptions", kept_rows: 1, removable: [42] },
+  ],
   recategorised: 12,
   untouched_after_cutoff: 5,
   export_categories: ["Eating Out", "Shops", "Golf"],
@@ -44,18 +51,44 @@ describe("CopilotImportPanel", () => {
   });
 
   it("says how the categories will change to match Copilot, in plain English", () => {
-    render(<CopilotImportPanel {...base} plan={plan} />);
-    expect(screen.getByText("Renames: Dining → Eating Out, Shopping → Shops")).toBeInTheDocument();
+    render(<CopilotImportPanel {...base} plan={plan} removeIds={new Set([41])} />);
+    expect(screen.getByText("Renames and merges: Dining → Eating Out, Shopping → Shops")).toBeInTheDocument();
     expect(screen.getByText("Removes categories no longer used: Travel, Poker")).toBeInTheDocument();
+    expect(screen.getByText("Kept: Subscriptions — 2 transactions Copilot doesn't cover")).toBeInTheDocument();
     expect(screen.getByText("12 transactions get Copilot's category")).toBeInTheDocument();
-    expect(screen.getByText("5 transactions after Oct 24, 2026 are left as they are")).toBeInTheDocument();
+    expect(screen.getByText("5 transactions after Oct 24, 2026 keep their categories (renames aside)")).toBeInTheDocument();
+    expect(screen.getByText("Rules learned from Copilot will also sort new transactions from your bank from now on.")).toBeInTheDocument();
+  });
+
+  it("follows the ticks: a category goes once every row holding it is removed", () => {
+    const { rerender } = render(<CopilotImportPanel {...base} plan={plan} removeIds={new Set()} />);
+    expect(screen.getByText("Removes categories no longer used: Travel")).toBeInTheDocument();
+    expect(screen.getByText("Kept: Poker — 1 transaction Copilot doesn't cover")).toBeInTheDocument();
+
+    rerender(<CopilotImportPanel {...base} plan={plan} removeIds={new Set([41, 42])} />);
+    expect(screen.getByText("Kept: Subscriptions — 1 transaction Copilot doesn't cover")).toBeInTheDocument();
+    expect(screen.queryByText(/Kept: Poker/)).toBeNull();
+
+    // Keeping them all removes nothing, ticked or not.
+    rerender(<CopilotImportPanel {...base} plan={plan} removeIds={new Set([41, 42])} mode="keep" />);
+    expect(screen.getByText("Kept: Poker — 1 transaction Copilot doesn't cover")).toBeInTheDocument();
+  });
+
+  it("labels a row from an earlier Copilot export", () => {
+    render(<CopilotImportPanel {...base} plan={plan} />);
+    expect(screen.getByRole("checkbox", { name: /Target.*From an earlier Copilot export; Copilot no longer has it/ })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Transfer from Apple Pay/ }).closest("label")).not.toHaveTextContent(/earlier Copilot export/);
   });
 
   it("leaves out category changes there aren't any of", () => {
-    render(<CopilotImportPanel {...base} plan={{ ...plan, merges: [], deletions: [], recategorised: 1, untouched_after_cutoff: 0 }} />);
+    render(<CopilotImportPanel {...base} plan={{
+      ...plan, merges: [], deletions: [], category_holds: [], rules: [], recategorised: 1, untouched_after_cutoff: 0,
+    }} />);
     expect(screen.queryByText(/Renames/)).toBeNull();
     expect(screen.queryByText(/Removes categories/)).toBeNull();
-    expect(screen.queryByText(/left as they are/)).toBeNull();
+    expect(screen.queryByText(/Kept:/)).toBeNull();
+    expect(screen.queryByText(/keep their categories/)).toBeNull();
+    expect(screen.queryByText(/Rules learned from Copilot/)).toBeNull();
     expect(screen.getByText("1 transaction gets Copilot's category")).toBeInTheDocument();
   });
 

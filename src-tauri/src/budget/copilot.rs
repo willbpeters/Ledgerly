@@ -38,19 +38,14 @@ pub struct ExistingTxn {
     pub external_id: String,
     /// Payee, or the description when there is none: what the preview shows.
     pub label: String,
+    /// The bank's description, which matching also reads.
+    pub description: String,
     pub pending: bool,
     pub removed: bool,
-    pub category_id: Option<i64>,
-    /// Split into pieces, which the import never touches.
-    pub split: bool,
 }
 pub struct CategoryInfo {
     pub id: i64,
     pub name: String,
-    /// Has at least one budget row, any month.
-    pub has_budget: bool,
-    /// Split pieces filed under it.
-    pub pieces: usize,
 }
 pub struct Snapshot {
     pub accounts: Vec<AccountRef>,
@@ -74,7 +69,22 @@ pub struct Skipped { pub date: String, pub name: String, pub amount: f64, pub ac
 /// A Tally transaction Copilot does not have — usually one the owner deleted
 /// there after being paid back. Offered for removal, never removed unasked.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct NotInCopilot { pub txn_id: i64, pub date: String, pub name: String, pub amount: f64, pub account: String }
+pub struct NotInCopilot {
+    pub txn_id: i64, pub date: String, pub name: String, pub amount: f64, pub account: String,
+    /// Added by an earlier Copilot import, and no longer in Copilot.
+    pub earlier_export: bool,
+}
+/// A category the export doesn't use, no budget or split piece keeps, and
+/// that rows Copilot doesn't cover still hold once the import is done.
+/// It goes if `kept_rows` is 0 and every one of `removable` is removed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CategoryHold {
+    pub name: String,
+    /// Rows holding it that the import doesn't offer to remove.
+    pub kept_rows: usize,
+    /// Rows holding it from `not_in_copilot`, by `txn_id`.
+    pub removable: Vec<i64>,
+}
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NewCategory { pub name: String, pub kind: String }
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -98,9 +108,15 @@ pub struct Plan {
     /// Tally's old name → Copilot's, merged (or renamed) before anything else.
     pub merges: Vec<(String, String)>,
     /// Categories that will hold nothing after the import and that the export
-    /// doesn't use: deleted.
+    /// doesn't use, with nothing removed: deleted. Filled by
+    /// `store::copilot_preview`, which dry-runs the import.
     pub deletions: Vec<String>,
-    /// Matched rows whose category changes to Copilot's.
+    /// Every category that only rows Copilot doesn't cover keep, so the
+    /// preview can say which go for whichever rows the owner ticks.
+    /// Filled by `store::copilot_preview`.
+    pub category_holds: Vec<CategoryHold>,
+    /// Matched rows whose category changes to Copilot's. Filled by
+    /// `store::copilot_preview`.
     pub recategorised: usize,
     /// Rows in Tally dated after `cutoff`, left as they are.
     pub untouched_after_cutoff: usize,
@@ -185,6 +201,16 @@ pub fn system_kind(name: &str) -> Option<SystemKind> {
     }
 }
 
+/// The words of a name for matching: lowercase runs of letters and digits,
+/// three or more long and not all digits (store numbers, card digits).
+fn words(s: &str) -> std::collections::BTreeSet<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3 && !w.chars().all(|c| c.is_ascii_digit()))
+        .map(str::to_string)
+        .collect()
+}
+
 fn day(s: &str) -> Option<i64> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(|d| d.num_days_from_ce() as i64)
 }
@@ -239,10 +265,18 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         if let Target::Account(id) = target {
             if span.get(&id).is_some_and(|start| r.date >= *start) {
                 let Some(d) = day(&r.date) else { continue };
+                // Account, amount and a few days aren't enough on their own: a
+                // $10 Polymarket row once matched a $10 Chick-fil-a. Another
+                // day also needs a word in common with the payee or description.
+                let name_words = words(&r.name);
                 let best = snap.txns.iter()
                     .filter(|t| t.account_id == id && !t.from_copilot && !used.contains(&t.id) && cents(t.amount) == cents(r.amount))
-                    .filter_map(|t| day(&t.posted).map(|td| ((td - d).abs(), t.id)))
-                    .filter(|(gap, _)| *gap <= MATCH_DAYS)
+                    .filter_map(|t| day(&t.posted).map(|td| ((td - d).abs(), t)))
+                    .filter(|(gap, t)| *gap == 0 || (*gap <= MATCH_DAYS && {
+                        let theirs = words(&format!("{} {}", t.label, t.description));
+                        !name_words.is_disjoint(&theirs)
+                    }))
+                    .map(|(gap, t)| (gap, t.id))
                     .min();
                 match best {
                     Some((_, txn_id)) => {
@@ -278,13 +312,31 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     // runs a few hours behind the bank, so a row from that day may simply not
     // have reached it yet. The newest day of the whole file, not the account's —
     // an account with nothing on that day would otherwise push its cutoff back.
+    //
+    // A row an earlier Copilot import added that this export no longer has
+    // was deleted in Copilot since: offered too, up to and including the
+    // newest day (no lag here, an earlier export already had it), in a covered
+    // account or in Copilot history from the export's first day on.
+    let earliest = rows.iter().filter(|r| !r.pending && !r.excluded).map(|r| r.date.as_str()).min().unwrap_or("");
+    let history = snap.accounts.iter().find(|a| a.name == HISTORY_ACCOUNT).map(|a| a.id);
+    let still: HashSet<&str> = p.additions.iter().map(|a| a.external_id.as_str()).collect();
     for t in &snap.txns {
-        if t.from_copilot || t.pending || t.removed || used.contains(&t.id) { continue; }
-        let Some((first, _)) = covers.get(&t.account_id) else { continue };
-        if t.posted < *first || t.posted.as_str() >= newest { continue; }
+        if t.pending || t.removed || used.contains(&t.id) { continue; }
+        let first = match covers.get(&t.account_id) {
+            Some((first, _)) => first.as_str(),
+            None if t.from_copilot && history == Some(t.account_id) => earliest,
+            None => continue,
+        };
+        let offered = if t.from_copilot {
+            !still.contains(t.external_id.as_str()) && t.posted.as_str() >= first && t.posted.as_str() <= newest
+        } else {
+            t.posted.as_str() >= first && t.posted.as_str() < newest
+        };
+        if !offered { continue; }
         p.not_in_copilot.push(NotInCopilot {
             txn_id: t.id, date: t.posted.clone(), name: t.label.clone(), amount: t.amount,
             account: snap.accounts.iter().find(|a| a.id == t.account_id).map_or(String::new(), |a| a.name.clone()),
+            earlier_export: t.from_copilot,
         });
     }
     p.not_in_copilot.sort_by(|a, b| b.date.cmp(&a.date));
@@ -299,26 +351,27 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     p.export_categories = order.into_iter().map(|(name, _)| name).collect();
     let in_export = |name: &str| uses.contains_key(&name.to_lowercase());
 
-    // Tally's old names give way to Copilot's. `names` is each category's
-    // name once that is done, and `into` where a merged one's rows go.
+    // Copilot's spelling, then Tally's old names give way to Copilot's.
+    // `names` is each category's name once that is done.
     let mut names: BTreeMap<i64, String> = snap.categories.iter().map(|c| (c.id, c.name.clone())).collect();
-    let mut into: BTreeMap<i64, i64> = BTreeMap::new();
-    // (from, the id it ends up as) for each merge, in `p.merges` order.
-    let mut merged: Vec<(i64, i64)> = Vec::new();
+    for c in &snap.categories {
+        let Some((spelling, _)) = uses.get(&c.name.to_lowercase()) else { continue };
+        // Two spellings in Tally: the other folds into the exact one.
+        if *spelling != c.name {
+            names.insert(c.id, spelling.clone());
+            p.merges.push((c.name.clone(), spelling.clone()));
+        }
+    }
     for (old, new) in OLD_NAMES {
         let Some(from) = snap.categories.iter().find(|c| c.name.eq_ignore_ascii_case(old)) else { continue };
         // Copilot uses the old name itself: it is the owner's, keep it.
         if in_export(old) || !(in_export(new) || system_kind(new) == Some(SystemKind::Transfer)) {
             continue;
         }
-        let to = names.iter().find(|(id, n)| **id != from.id && n.eq_ignore_ascii_case(new)).map(|(id, _)| *id);
-        match to {
-            Some(to) => { names.remove(&from.id); into.insert(from.id, to); merged.push((from.id, to)); }
-            None => { names.insert(from.id, new.to_string()); merged.push((from.id, from.id)); }
-        }
+        let to = names.iter().any(|(id, n)| *id != from.id && n.eq_ignore_ascii_case(new));
+        if to { names.remove(&from.id); } else { names.insert(from.id, new.to_string()); }
         p.merges.push((from.name.clone(), new.to_string()));
     }
-    let after = |id: Option<i64>| id.map(|id| *into.get(&id).unwrap_or(&id));
 
     // Categories the owner used that Tally does not have yet. Transfer and
     // Income are Tally's system categories, made when first needed with the
@@ -335,53 +388,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         })
         .collect();
 
-    // What each Tally row will be filed under: Copilot's category for rows it
-    // covers (a split row aside), its own otherwise.
-    let split: HashSet<i64> = snap.txns.iter().filter(|t| t.split).map(|t| t.id).collect();
-    let matched: BTreeMap<i64, Option<String>> = p.matches.iter()
-        .filter(|m| !split.contains(&m.txn_id)).map(|m| (m.txn_id, m.category.clone())).collect();
-    let added: BTreeMap<&str, Option<String>> = p.additions.iter()
-        .map(|a| (a.external_id.as_str(), a.category.clone())).collect();
-    let mut holds: BTreeMap<i64, usize> = BTreeMap::new();
-    for t in &snap.txns {
-        let current = after(t.category_id);
-        let copilot = if t.split || t.posted.as_str() > newest { None } else {
-            matched.get(&t.id).or_else(|| added.get(t.external_id.as_str()))
-        };
-        match copilot {
-            Some(category) => {
-                let name = |id: i64| names.get(&id).map(|n| n.to_lowercase());
-                if matched.contains_key(&t.id)
-                    && current.and_then(name) != category.as_ref().map(|c| c.to_lowercase())
-                {
-                    p.recategorised += 1;
-                }
-            }
-            None => if let Some(id) = current { *holds.entry(id).or_default() += 1 },
-        }
-        if t.posted.as_str() > newest { p.untouched_after_cutoff += 1; }
-    }
-    for c in &snap.categories {
-        if let Some(id) = after(Some(c.id)) { *holds.entry(id).or_default() += c.pieces; }
-    }
-    let budgeted: HashSet<i64> = snap.categories.iter().filter(|c| c.has_budget).filter_map(|c| after(Some(c.id))).collect();
-    // A system category stays while the export has rows of its kind, under
-    // whichever of its names (as `store::tidy_categories`).
-    let kinds: Vec<SystemKind> = uses.values().filter_map(|(n, _)| system_kind(n)).collect();
-    let wanted = |n: &str| in_export(n) || system_kind(n).is_some_and(|k| kinds.contains(&k));
-    let doomed: HashSet<i64> = names.iter()
-        .filter(|(id, n)| holds.get(id).copied().unwrap_or(0) == 0 && !budgeted.contains(id) && !wanted(n))
-        .map(|(id, _)| *id)
-        .collect();
-    // A merge or rename into a category that ends up deleted is pointless:
-    // the old category is simply deleted under its own name instead.
-    let mut keep = merged.iter().map(|(_, end)| !doomed.contains(end));
-    let pointless: HashSet<i64> = merged.iter().filter(|(_, end)| doomed.contains(end)).map(|(from, _)| *from).collect();
-    p.merges.retain(|_| keep.next().unwrap_or(true));
-    p.deletions = snap.categories.iter()
-        .filter(|c| doomed.contains(&c.id) || pointless.contains(&c.id))
-        .map(|c| if pointless.contains(&c.id) { c.name.clone() } else { names[&c.id].clone() })
-        .collect();
+    p.untouched_after_cutoff = snap.txns.iter().filter(|t| t.posted.as_str() > newest).count();
 
     // A payee used at least twice, 90% of the time in one category. It
     // replaces any rule the payee already has: Copilot's choice wins.
@@ -425,9 +432,14 @@ mod tests {
     fn existing(id: i64, posted: &str, amount: f64) -> ExistingTxn {
         ExistingTxn {
             id, account_id: 1, posted: posted.into(), amount, from_copilot: false,
-            external_id: format!("sf{id}"), label: format!("Payee {id}"), pending: false, removed: false,
-            category_id: None, split: false,
+            external_id: format!("sf{id}"), label: format!("Payee {id}"), description: format!("PAYEE {id}"),
+            pending: false, removed: false,
         }
+    }
+
+    /// A row an earlier Copilot import added.
+    fn imported(id: i64, account_id: i64, posted: &str, amount: f64) -> ExistingTxn {
+        ExistingTxn { account_id, from_copilot: true, external_id: format!("copilot:old{id}"), ..existing(id, posted, amount) }
     }
 
     /// Copilot covers account 1 from 07-01 to 07-20; Tally holds 10 and 11
@@ -480,10 +492,89 @@ mod tests {
         pending.pending = true;
         let mut removed = existing(23, "2026-07-10", 2.0);
         removed.removed = true;
-        let mut imported = existing(24, "2026-07-10", 3.0);
-        imported.from_copilot = true;
-        let (rows, s) = covered(vec![pending, removed, imported]);
+        let mut gone = imported(24, 1, "2026-07-10", 3.0);
+        gone.removed = true;
+        let (rows, s) = covered(vec![pending, removed, gone]);
         assert!(plan(&rows, &s).not_in_copilot.is_empty());
+    }
+
+    #[test]
+    fn a_row_from_an_earlier_export_that_copilot_no_longer_has_is_offered() {
+        // In a covered account, and in Copilot history, up to and including
+        // the cutoff (an earlier export had it, so Copilot isn't lagging).
+        let (mut rows, mut s) = covered(vec![]);
+        s.accounts.push(AccountRef { id: 5, name: HISTORY_ACCOUNT.into() });
+        rows.push(parse_csv(&csv(&[&row("2026-06-01", "Old", "2.00", "Other", "regular", "")])).unwrap().remove(0));
+        let still = plan(&rows, &s).additions[0].external_id.clone();
+        s.txns.extend([
+            imported(60, 1, "2026-07-20", 4.0),
+            imported(61, 5, "2026-06-15", 5.0),
+            // Before the export starts, or one this export still has: kept.
+            imported(62, 5, "2026-05-01", 6.0),
+            ExistingTxn { external_id: still, ..imported(63, 5, "2026-06-01", -2.0) },
+            // An account the export doesn't cover.
+            imported(64, 9, "2026-07-10", 7.0),
+        ]);
+        let p = plan(&rows, &s);
+        let offered: Vec<(i64, bool)> = p.not_in_copilot.iter().map(|n| (n.txn_id, n.earlier_export)).collect();
+        assert_eq!(offered, vec![(60, true), (61, true)]);
+    }
+
+    #[test]
+    fn a_tally_row_is_not_marked_as_from_an_earlier_export() {
+        let (rows, s) = covered(vec![existing(20, "2026-07-10", 45.0)]);
+        assert!(!plan(&rows, &s).not_in_copilot[0].earlier_export);
+    }
+
+    #[test]
+    fn a_match_needs_the_same_day_or_a_shared_word() {
+        // The dry run matched a $10 Polymarket row to Copilot's $10
+        // Chick-fil-a a day earlier.
+        let rows = parse_csv(&csv(&[
+            &row("2026-07-02", "Chick-fil-a", "10.00", "Eating Out", "regular", "9849"),
+            &row("2026-07-20", "Later", "3.00", "Other", "regular", "9849"),
+        ])).unwrap();
+        let mut s = snap();
+        s.txns.push(ExistingTxn { label: "Polymarket".into(), description: "POLYMARKET 12345".into(), ..existing(70, "2026-07-03", -10.0) });
+        let p = plan(&rows, &s);
+        assert!(!p.matches.iter().any(|m| m.txn_id == 70));
+        assert_eq!(p.skipped.len(), 2);
+    }
+
+    #[test]
+    fn a_shared_word_matches_across_days_and_the_same_day_needs_none() {
+        let rows = parse_csv(&csv(&[
+            &row("2026-07-02", "Chick-fil-a", "10.00", "Eating Out", "regular", "9849"),
+            &row("2026-07-07", "Some Name", "8.00", "Other", "regular", "9849"),
+            &row("2026-07-20", "Later", "3.00", "Other", "regular", "9849"),
+        ])).unwrap();
+        let mut s = snap();
+        s.txns.extend([
+            ExistingTxn { label: "Chick-fil-A".into(), description: "CHICK-FIL-A #0123".into(), ..existing(71, "2026-07-04", -10.0) },
+            ExistingTxn { label: "Unrelated".into(), description: "POS 4411".into(), ..existing(72, "2026-07-07", -8.0) },
+        ]);
+        let ids: Vec<i64> = plan(&rows, &s).matches.iter().map(|m| m.txn_id).collect();
+        assert_eq!(ids, vec![71, 72]);
+    }
+
+    #[test]
+    fn words_are_lowercase_letters_and_digits_of_three_or_more_not_all_digits() {
+        assert_eq!(words("Chick-fil-A #0123 at SQ*Joe"), ["chick", "fil", "joe"].map(String::from).into_iter().collect());
+    }
+
+    #[test]
+    fn a_category_spelt_differently_takes_copilots_spelling() {
+        let rows = parse_csv(&csv(&[&row("2026-01-02", "Diner", "5", "Eating Out", "regular", "")])).unwrap();
+        let mut s = snap();
+        s.categories.push(cat(7, "Eating out"));
+        let p = plan(&rows, &s);
+        // Spelling first, so Dining then merges into "Eating Out".
+        assert_eq!(p.merges, vec![
+            ("Eating out".to_string(), "Eating Out".to_string()),
+            ("Dining".to_string(), "Eating Out".to_string()),
+            ("Transfer".to_string(), "Internal transfer".to_string()),
+        ]);
+        assert!(p.new_categories.is_empty());
     }
 
     #[test]
@@ -508,7 +599,7 @@ mod tests {
     }
 
     fn cat(id: i64, name: &str) -> CategoryInfo {
-        CategoryInfo { id, name: name.into(), has_budget: false, pieces: 0 }
+        CategoryInfo { id, name: name.into() }
     }
 
     #[test]
@@ -548,7 +639,9 @@ mod tests {
             // Moves the cutoff past both Tally rows.
             &row("2026-07-10", "Later", "1.00", "Other", "regular", "9849"),
         ])).unwrap();
-        let p = plan(&rows, &snap());
+        let mut s = snap();
+        for t in &mut s.txns { t.label = "Joe's Diner".into(); }
+        let p = plan(&rows, &s);
         let ids: Vec<i64> = p.matches.iter().map(|m| m.txn_id).collect();
         assert_eq!(ids, vec![11, 10]);
         assert_eq!(p.matches[0].category.as_deref(), Some("Eating Out"));
@@ -665,7 +758,7 @@ mod tests {
             &row("2026-07-20", "Late", "3.00", "Other", "regular", "9849"),
         ])).unwrap();
         let mut s = snap();
-        s.txns.push(existing(40, "2026-07-21", -3.0));
+        s.txns.push(ExistingTxn { label: "Late Night".into(), ..existing(40, "2026-07-21", -3.0) });
         let p = plan(&rows, &s);
         assert_eq!(p.matches.iter().map(|m| m.txn_id).collect::<Vec<_>>(), vec![10, 11]);
         assert!(p.not_in_copilot.is_empty());
@@ -675,10 +768,9 @@ mod tests {
     #[test]
     fn old_names_merge_into_copilots_when_the_export_uses_them() {
         let rows = parse_csv(&csv(&[&row("2026-01-02", "Diner", "5", "Eating Out", "regular", "")])).unwrap();
-        let mut s = snap();
-        s.txns[0].category_id = Some(4); // Transfer holds a row
-        let p = plan(&rows, &s);
-        // Shops is not in the export, so Shopping stays; Transfer always merges.
+        let p = plan(&rows, &snap());
+        // Shops is not in the export, so Shopping stays; Transfer always merges
+        // (the preview drops it again if Internal transfer would be deleted).
         assert_eq!(p.merges, vec![
             ("Dining".to_string(), "Eating Out".to_string()),
             ("Transfer".to_string(), "Internal transfer".to_string()),
@@ -694,39 +786,6 @@ mod tests {
         ])).unwrap();
         let p = plan(&rows, &snap());
         assert!(!p.merges.iter().any(|(from, _)| from == "Dining"));
-    }
-
-    #[test]
-    fn categories_the_import_leaves_empty_are_listed_for_deletion() {
-        let rows = parse_csv(&csv(&[
-            &row("2026-07-01", "Diner", "12.50", "Eating Out", "regular", "9849"),
-            &row("2026-07-05", "Diner", "12.50", "Groceries", "regular", "9849"),
-        ])).unwrap();
-        let mut s = snap();
-        // Shopping's only row moves to Copilot's; Other keeps a row after the
-        // cutoff; Travel has a budget; Gifts a split piece; Poker nothing.
-        s.txns[0].category_id = Some(2);
-        let mut late = existing(50, "2026-08-01", -4.0);
-        late.category_id = Some(6);
-        s.txns.push(late);
-        s.categories.extend([cat(7, "Travel"), cat(8, "Gifts"), cat(9, "Poker")]);
-        s.categories[6].has_budget = true;
-        s.categories[7].pieces = 1;
-        let p = plan(&rows, &s);
-        // Dining becomes Eating Out. Transfer and Income hold nothing and the
-        // export has no transfers or income, so renaming Transfer is dropped.
-        assert_eq!(p.deletions, vec!["Shopping".to_string(), "Transfer".to_string(), "Income".to_string(), "Poker".to_string()]);
-        assert_eq!(p.merges, vec![("Dining".to_string(), "Eating Out".to_string())]);
-        assert_eq!(p.recategorised, 2, "Shopping → Eating Out, none → Groceries");
-    }
-
-    #[test]
-    fn a_split_match_is_not_recategorised() {
-        let (rows, mut s) = covered(vec![]);
-        s.txns[0].split = true;
-        s.txns[1].category_id = Some(1); // Dining, which becomes Eating Out
-        let p = plan(&rows, &s);
-        assert_eq!(p.recategorised, 0);
     }
 
     #[test]

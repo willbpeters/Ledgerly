@@ -31,11 +31,24 @@ function longDate(iso: string): string {
 
 const transactions = (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"}`;
 
+/** Which categories the import deletes, and which it keeps only for rows
+ *  Copilot doesn't cover, once the rows in `removing` are removed. */
+export function categoryEffects(plan: CopilotPlan, removing: Set<number>) {
+  const removes: string[] = [];
+  const kept: { name: string; rows: number }[] = [];
+  for (const h of plan.category_holds) {
+    const rows = h.kept_rows + h.removable.filter((id) => !removing.has(id)).length;
+    if (rows === 0) removes.push(h.name); else kept.push({ name: h.name, rows });
+  }
+  return { removes, kept };
+}
+
 /** The "Import from Copilot" card's markup. Props only, so it can be tested
  *  without Tauri; `CopilotImportCard` wires it to the real calls. */
 export function CopilotImportPanel({
   plan, result, busy, onChoose, onImport, removeIds, onToggleRemove, onSetAllRemove, mode, onModeChange,
 }: CopilotImportPanelProps) {
+  const effects = plan ? categoryEffects(plan, mode === "remove" ? removeIds : new Set<number>()) : null;
   return (
     <Card title="Import from Copilot"
       subtitle="Bring your Copilot categories, notes and history into Tally, once, so you can stop using Copilot.">
@@ -98,7 +111,12 @@ export function CopilotImportPanel({
                       {plan.not_in_copilot.map((n) => (
                         <label key={n.txn_id} className="row center" style={{ gap: 8, fontSize: 12 }}>
                           <input type="checkbox" checked={removeIds.has(n.txn_id)} onChange={() => onToggleRemove(n.txn_id)} />
-                          <span>{fmtDate(n.date)} · {n.name} · {money(n.amount)} · <span className="muted">{n.account}</span></span>
+                          <span>
+                            {fmtDate(n.date)} · {n.name} · {money(n.amount)} · <span className="muted">{n.account}</span>
+                            {n.earlier_export && (
+                              <span className="muted"> · From an earlier Copilot export; Copilot no longer has it</span>
+                            )}
+                          </span>
                         </label>
                       ))}
                     </div>
@@ -113,20 +131,28 @@ export function CopilotImportPanel({
               <div>New categories: {plan.new_categories.map((c) => c.name).join(", ")}</div>
             )}
             {plan.merges.length > 0 && (
-              <div>Renames: {plan.merges.map(([from, to]) => `${from} → ${to}`).join(", ")}</div>
+              <div>Renames and merges: {plan.merges.map(([from, to]) => `${from} → ${to}`).join(", ")}</div>
             )}
-            {plan.deletions.length > 0 && (
-              <div>Removes categories no longer used: {plan.deletions.join(", ")}</div>
+            {effects && effects.removes.length > 0 && (
+              <div>Removes categories no longer used: {effects.removes.join(", ")}</div>
             )}
+            {effects?.kept.map((k) => (
+              <div key={k.name} className="muted">
+                Kept: {k.name} — {transactions(k.rows)} Copilot doesn't cover
+              </div>
+            ))}
             <div>
               {transactions(plan.recategorised)} {plan.recategorised === 1 ? "gets" : "get"} Copilot's category
             </div>
             {plan.untouched_after_cutoff > 0 && (
               <div className="muted">
-                {transactions(plan.untouched_after_cutoff)} after {longDate(plan.cutoff)} are left as they are
+                {transactions(plan.untouched_after_cutoff)} after {longDate(plan.cutoff)} keep their categories (renames aside)
               </div>
             )}
             <div>{plan.rules.length} payee rules learned from how you categorised in Copilot</div>
+            {plan.rules.length > 0 && (
+              <div className="muted">Rules learned from Copilot will also sort new transactions from your bank from now on.</div>
+            )}
             <details>
               <summary style={{ cursor: "pointer" }}>Accounts</summary>
               <div className="grid" style={{ gap: 2, paddingTop: 6 }}>

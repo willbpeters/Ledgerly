@@ -7,8 +7,7 @@ use tauri::Manager;
 fn plan_from(conn: &rusqlite::Connection, path: &str) -> Result<copilot::Plan, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("Couldn't read that file: {e}"))?;
     let rows = copilot::parse_csv(&text)?;
-    let snap = store::copilot_snapshot(conn).map_err(|e| e.to_string())?;
-    Ok(copilot::plan(&rows, &snap))
+    store::copilot_preview(conn, &rows)
 }
 
 /// What an import would do, without doing it.
@@ -57,7 +56,11 @@ mod tests {
     fn copilot_live_preview() {
         let db = std::env::var("LEDGERLY_DB").expect("LEDGERLY_DB");
         let csv = std::env::var("COPILOT_CSV").expect("COPILOT_CSV");
-        let conn = rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        // The preview dry-runs the import (rolled back), so it needs a
+        // writable database: a throwaway copy, never the original.
+        let copy = std::env::temp_dir().join("tally-copilot-live-preview.sqlite");
+        std::fs::copy(&db, &copy).unwrap();
+        let conn = rusqlite::Connection::open(&copy).unwrap();
         let plan = super::plan_from(&conn, &csv).unwrap();
         println!(
             "matched {} | added {} | skipped {} | not in copilot {} | pending/excluded {} | new categories {:?} | rules {}",
@@ -69,6 +72,7 @@ mod tests {
             "cutoff {} | merges {:?} | deletions {:?} | recategorised {} | untouched after cutoff {}",
             plan.cutoff, plan.merges, plan.deletions, plan.recategorised, plan.untouched_after_cutoff,
         );
+        println!("category holds {:?}", plan.category_holds);
         println!("export categories {:?}", plan.export_categories);
     }
 }
