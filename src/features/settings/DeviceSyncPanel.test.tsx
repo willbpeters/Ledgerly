@@ -11,7 +11,7 @@ const off: DeviceSyncStatus = {
 const on: DeviceSyncStatus = {
   ...off,
   enabled: true,
-  folder: "G:\\My Drive\\Ledgerly Sync",
+  folder: "G:\\My Drive\\Tally Sync",
   others: [{ id: "pc", name: "WILL-PC", last_sync: "2026-10-16T09:30:12" }],
   last: { at: "2026-10-16T09:31:00", pushed: 2, applied: 3, waiting: 0, skipped: 0, newer_files: 0 },
 };
@@ -37,7 +37,7 @@ describe("DeviceSyncPanel", () => {
 
   it("names the folder and the other computer with when it last synced", () => {
     render(<DeviceSyncPanel {...props({ status: on })} />);
-    expect(screen.getByText("G:\\My Drive\\Ledgerly Sync")).toBeInTheDocument();
+    expect(screen.getByText("G:\\My Drive\\Tally Sync")).toBeInTheDocument();
     expect(screen.getByText(/WILL-PC — last synced Today, 09:30/)).toBeInTheDocument();
   });
 
@@ -51,10 +51,10 @@ describe("DeviceSyncPanel", () => {
     expect(screen.getByText(/2 edits from your other computer are waiting/)).toBeInTheDocument();
   });
 
-  it("asks for an update when the other computer runs a newer Ledgerly", () => {
+  it("asks for an update when the other computer runs a newer Tally", () => {
     const status = { ...on, last: { ...on.last!, newer_files: 1 } };
     render(<DeviceSyncPanel {...props({ status })} />);
-    expect(screen.getByRole("alert")).toHaveTextContent(/newer version of Ledgerly/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/newer version of Tally/);
   });
 
   it("shows the last error", () => {

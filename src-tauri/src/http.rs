@@ -11,7 +11,7 @@ use std::time::Duration;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Yahoo rejects plain clients; a browser-like User-Agent works.
-pub const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ledgerly/0.1";
+pub const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Tally/0.1";
 
 /// The client every market and price fetch uses.
 pub fn client() -> reqwest::Result<reqwest::blocking::Client> {

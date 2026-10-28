@@ -1,4 +1,5 @@
-//! Merchant category codes → built-in category names.
+//! Merchant category codes → the sorter's category names, which
+//! `seed::sorter_category` maps onto the owner's categories.
 //!
 //! MCC is the four-digit code the card networks attach to a merchant, and
 //! SimpleFIN passes it straight through. It is a far better categorisation
@@ -66,7 +67,7 @@ const RANGES: &[(u32, u32, &str)] = &[
     (4000, 4199, "Transport"),   // transport services
 ];
 
-/// The built-in category name for a merchant category code, if we know one.
+/// The sorter's category name for a merchant category code, if we know one.
 pub fn category_for(mcc: &str) -> Option<&'static str> {
     let code = mcc.trim();
     if code.is_empty() {
@@ -120,13 +121,15 @@ mod tests {
     }
 
     #[test]
-    fn every_mapped_name_is_a_real_builtin_category() {
-        let names: Vec<&str> = super::super::seed::BUILTIN.iter().map(|(n, ..)| *n).collect();
-        for (_, name) in EXACT {
-            assert!(names.contains(name), "{name} is not a built-in category");
-        }
-        for (_, _, name) in RANGES {
-            assert!(names.contains(name), "{name} is not a built-in category");
+    fn every_mapped_name_is_one_the_sorter_can_resolve() {
+        // With Tally's old set in place, `sorter_category` finds each name.
+        let conn = crate::db::open_in_memory().unwrap();
+        super::super::seed::test_categories(&conn);
+        for name in EXACT.iter().map(|(_, n)| *n).chain(RANGES.iter().map(|(_, _, n)| *n)) {
+            assert!(
+                super::super::seed::sorter_category(&conn, name).unwrap().is_some(),
+                "the sorter can't resolve {name}",
+            );
         }
     }
 }

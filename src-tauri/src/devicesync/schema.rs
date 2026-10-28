@@ -333,12 +333,14 @@ mod tests {
     #[test]
     fn a_fresh_database_has_the_sync_tables_and_columns() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         assert!(is_complete(&conn).unwrap());
     }
 
     #[test]
     fn existing_rows_get_keys_both_computers_would_agree_on() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         conn.execute_batch(
             "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
                VALUES ('Card','credit','USD','2026-01-01','simplefin','ACT-1');
@@ -366,6 +368,7 @@ mod tests {
     #[test]
     fn a_manual_account_gets_a_random_key() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         conn.execute_batch(
             "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Cash jar','cash','USD','2026-01-01');
              UPDATE accounts SET sync_key=NULL;",
@@ -379,6 +382,7 @@ mod tests {
     #[test]
     fn installing_twice_is_harmless() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         install(&conn).unwrap();
         install(&conn).unwrap();
         assert!(is_complete(&conn).unwrap());
@@ -387,6 +391,7 @@ mod tests {
     #[test]
     fn a_reinstall_does_not_collide_with_a_renamed_category_key() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         conn.execute_batch(
             "UPDATE categories SET name='Eating out' WHERE name='Dining';
              INSERT INTO categories (name,kind) VALUES ('Dining','spending');
@@ -404,6 +409,7 @@ mod tests {
     #[test]
     fn a_missing_sync_on_view_makes_it_incomplete() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         conn.execute_batch("DROP VIEW sync_on;").unwrap();
         assert!(!is_complete(&conn).unwrap());
         install(&conn).unwrap();
@@ -412,6 +418,7 @@ mod tests {
 
     fn enabled() -> Connection {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         conn.execute_batch("INSERT OR REPLACE INTO sync_meta VALUES ('enabled','1');").unwrap();
         conn
     }
@@ -483,6 +490,7 @@ mod tests {
     #[test]
     fn nothing_is_recorded_while_sync_is_off_or_while_applying() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         simplefin_txn(&conn);
         conn.execute_batch("UPDATE bank_transactions SET note='lunch' WHERE id=1;").unwrap();
         assert!(outbox(&conn).is_empty(), "off");

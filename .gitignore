@@ -29,3 +29,8 @@ design/**/ledgerly-dashboard-directions.html
 
 # Isolated worktrees for feature work
 .worktrees/
+
+# Update signing key: never commit (the repo is public). The real copy lives in
+# %USERPROFILE%\.tauri\; keep backups outside this folder.
+*.key
+secret key.txt

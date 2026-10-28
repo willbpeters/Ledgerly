@@ -10,7 +10,7 @@ const BAD_STORED: &str =
 
 fn http() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent("Ledgerly/0.1 (Windows; +https://github.com/willbpeters/Ledgerly)")
+        .user_agent("Tally/0.1 (Windows; +https://github.com/willbpeters/Tally)")
         .timeout(Duration::from_secs(45))
         .build()
         .map_err(|e| e.to_string())
@@ -115,7 +115,7 @@ pub fn fetch_accounts_in(access_url: &str, range: Range) -> Result<SfAccountSet,
 
 /// The raw `/accounts` body, unparsed.
 ///
-/// The diagnostic needs this because `parse` keeps only the fields Ledgerly
+/// The diagnostic needs this because `parse` keeps only the fields Tally
 /// models and drops everything else — including the free-form `extra` object.
 pub fn fetch_raw(access_url: &str, range: Option<Range>) -> Result<String, String> {
     let (url, user, pass) = accounts_request_parts(access_url, range)?;
@@ -126,7 +126,7 @@ pub fn fetch_raw(access_url: &str, range: Option<Range>) -> Result<String, Strin
     let resp = req.send().map_err(|_| NETWORK_ERR.to_string())?;
     match resp.status().as_u16() {
         200 => resp.text().map_err(|_| NETWORK_ERR.to_string()),
-        402 => Err("Your SimpleFIN subscription needs renewing before Ledgerly can sync.".into()),
+        402 => Err("Your SimpleFIN subscription needs renewing before Tally can sync.".into()),
         403 => Err("SimpleFIN rejected the saved connection. Disconnect, then connect again with a new setup token.".into()),
         s => Err(format!("SimpleFIN returned an unexpected status ({s}). Try again later.")),
     }

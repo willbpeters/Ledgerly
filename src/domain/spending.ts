@@ -1,4 +1,5 @@
 import type { Account, BankTransaction, Budget, Category } from "./types";
+import { piecesOf } from "./splits";
 
 /**
  * Transactions that count toward spending: not removed, not in a hidden account, and not in
@@ -11,9 +12,18 @@ import type { Account, BankTransaction, Budget, Category } from "./types";
  * loading, and quietly losing money off the screen is the worse failure.
  */
 export function fromVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
-  const excluded = new Set(accounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
   // A removed transaction was paid back: it is not spending the owner made.
-  return txns.filter((t) => !t.removed && !excluded.has(t.account_id));
+  return inVisibleAccounts(txns, accounts).filter((t) => !t.removed);
+}
+
+/**
+ * Transactions in accounts that count, removed ones included: not in a hidden
+ * account and not in an investment account. For what needs the whole record of
+ * charges, such as recurring bills, where a removed row was still charged.
+ */
+export function inVisibleAccounts(txns: BankTransaction[], accounts: Account[]): BankTransaction[] {
+  const excluded = new Set(accounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
+  return txns.filter((t) => !excluded.has(t.account_id));
 }
 
 /** First and last day of a `YYYY-MM` month, inclusive. */
@@ -74,6 +84,7 @@ export interface MonthSummary {
   transferred: number;
   budgeted: number;
   uncategorisedCount: number;
+  /** Can be negative: a split purchase that later settled for less than its pieces leaves money back. */
   uncategorisedTotal: number;
   categories: CategorySpend[];
 }
@@ -84,7 +95,8 @@ export interface MonthSummary {
  * Spending is reported as a positive number, because "you spent $157" reads
  * better than "-157". A refund reduces its category rather than counting as
  * income, and transfers between your own accounts are left out of both sides
- * so moving money never looks like earning or spending it.
+ * so moving money never looks like earning or spending it. A split transaction
+ * counts piece by piece, each in its own category.
  */
 export function summariseMonth(
   txns: BankTransaction[],
@@ -103,28 +115,38 @@ export function summariseMonth(
   let uncategorisedTotal = 0;
 
   for (const t of inMonth) {
-    const category = t.category_id == null ? null : byId.get(t.category_id) ?? null;
-    if (category?.kind === "transfer") {
-      transferred += Math.abs(t.amount) / 2; // each leg is counted once
-      continue;
-    }
-    if (category?.kind === "income") {
-      income += t.amount;
-      continue;
-    }
-    if (category == null) {
-      if (t.amount < 0) {
-        uncategorisedCount += 1;
-        uncategorisedTotal += -t.amount;
-      } else {
-        income += t.amount;
+    let needsCategory = false; // a transaction counts once, however many of its pieces do
+    for (const piece of piecesOf(t)) {
+      const category = piece.category_id == null ? null : byId.get(piece.category_id) ?? null;
+      if (category?.kind === "transfer") {
+        transferred += Math.abs(piece.amount) / 2; // each leg is counted once
+        continue;
       }
-      continue;
+      if (category?.kind === "income") {
+        income += piece.amount;
+        continue;
+      }
+      if (category == null) {
+        // What a split no longer covers always needs a category, even when it is
+        // money in (a purchase that settled lower leaves a positive remainder).
+        // So does a real uncategorised piece of the opposite sign to the
+        // transaction: undoing an Unsplit after the bank's amount went down stores
+        // the gap that way, and it is not income.
+        const oppositeInASplit = t.splits.length > 0 && Math.sign(piece.amount) !== Math.sign(t.amount);
+        if (piece.remainder || piece.amount < 0 || oppositeInASplit) {
+          needsCategory = true;
+          uncategorisedTotal += -piece.amount;
+        } else {
+          income += piece.amount;
+        }
+        continue;
+      }
+      const row = totals.get(category.id) ?? { spent: 0, count: 0 };
+      row.spent += -piece.amount; // a refund is positive, so it reduces the total
+      row.count += 1;
+      totals.set(category.id, row);
     }
-    const row = totals.get(category.id) ?? { spent: 0, count: 0 };
-    row.spent += -t.amount; // a refund is positive, so it reduces the total
-    row.count += 1;
-    totals.set(category.id, row);
+    if (needsCategory) uncategorisedCount += 1;
   }
 
   const rows: CategorySpend[] = categories

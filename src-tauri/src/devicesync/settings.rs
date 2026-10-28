@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn settings_survive_a_save_and_load() {
         let dir = tempfile::tempdir().unwrap();
-        let s = DeviceSyncSettings { folder: Some(r"G:\My Drive\Ledgerly Sync".into()), device_id: Some("ab12".into()) };
+        let s = DeviceSyncSettings { folder: Some(r"G:\My Drive\Tally Sync".into()), device_id: Some("ab12".into()) };
         save(&path(dir.path()), &s).unwrap();
         assert_eq!(load(&path(dir.path())), s);
     }

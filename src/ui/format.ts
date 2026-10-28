@@ -9,8 +9,11 @@ export function shareCount(n: number): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
 }
 export function pct(n: number): string {
-  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
-  return `${sign}${Math.abs(n).toFixed(1)}%`;
+  // Signed by what is shown, not by the raw value: -0.004 rounds to 0.0, and a
+  // "-0.0%" reads as a loss that is not there.
+  const shown = Math.abs(n).toFixed(1);
+  const sign = Number(shown) === 0 ? "" : n > 0 ? "+" : "-";
+  return `${sign}${shown}%`;
 }
 export function fmtDate(iso: string): string { return iso.slice(0, 10); }
 export function timeAgo(iso: string | null | undefined, now: Date = new Date()): string {

@@ -56,12 +56,14 @@ mod tests {
     #[test]
     fn anything_is_newer_than_nothing() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         assert!(is_newer(&conn, "budgets", "cat:Dining|*", "_row", 5, "pc").unwrap());
     }
 
     #[test]
     fn an_older_change_is_not_newer_and_does_not_rewind_the_clock() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         record(&conn, "budgets", "k", "_row", 10, "pc").unwrap();
         assert!(!is_newer(&conn, "budgets", "k", "_row", 9, "laptop").unwrap());
         record(&conn, "budgets", "k", "_row", 9, "laptop").unwrap();
@@ -74,6 +76,7 @@ mod tests {
     #[test]
     fn a_tie_goes_to_the_larger_device_id() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         record(&conn, "budgets", "k", "_row", 10, "aaa").unwrap();
         assert!(is_newer(&conn, "budgets", "k", "_row", 10, "bbb").unwrap());
         assert!(!is_newer(&conn, "budgets", "k", "_row", 10, "000").unwrap());
@@ -82,6 +85,7 @@ mod tests {
     #[test]
     fn a_larger_device_overwrites_a_tie_and_a_smaller_one_does_not() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         record(&conn, "budgets", "k", "_row", 10, "aaa").unwrap();
         record(&conn, "budgets", "k", "_row", 10, "bbb").unwrap();
         assert!(!is_newer(&conn, "budgets", "k", "_row", 10, "aaa").unwrap());
@@ -93,6 +97,7 @@ mod tests {
     #[test]
     fn an_unsent_local_edit_beats_an_older_remote_one() {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         crate::devicesync::meta::enable(&conn, "laptop").unwrap();
         conn.execute_batch("UPDATE categories SET colour='chart-9' WHERE name='Dining';").unwrap();
         let (tbl, key, field): (String, String, String) = conn

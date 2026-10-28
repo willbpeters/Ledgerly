@@ -1,13 +1,38 @@
 import { useState } from "react";
 import {
   useCategories, useRules, useCreateCategory, useUpdateCategory, useDeleteCategory, useDeleteRule,
+  useClearCategories,
 } from "../../data/queries";
 import { Card, Button, Badge, EmptyState } from "../../ui/components";
-import { useChartColors } from "../../ui/chartColors";
+import { CategoryPill } from "../../ui/CategoryPill";
+import { CATEGORY_TOKENS, categoryColour, categoryToken } from "../../ui/categoryColour";
 import { askToConfirm } from "../../ui/confirm";
 import type { Category } from "../../domain/types";
 
-const TOKENS = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5", "chart-6"];
+// What each of the twelve colours is called in the picker, in token order.
+const COLOUR_NAMES = ["Blue", "Orange", "Aqua", "Yellow", "Pink", "Green", "Violet", "Red", "Sky", "Lime", "Plum", "Brown"];
+
+/**
+ * A colour picker: the twelve category colours by name, beside a swatch of the
+ * one chosen. With `automatic`, it first offers to let Tally pick the
+ * least-used colour ("auto"), so new categories look distinct by default.
+ */
+function ColourPicker({ value, onChange, label, automatic = false }: {
+  value: string; onChange: (token: string) => void; label: string; automatic?: boolean;
+}) {
+  const swatch = value === "auto"
+    ? { border: "1px dashed var(--line-2)" }
+    : { background: categoryColour(value) };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span aria-hidden="true" style={{ width: 12, height: 12, borderRadius: "50%", flexShrink: 0, ...swatch }} />
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ width: 104 }} aria-label={label}>
+        {automatic && <option value="auto">Automatic</option>}
+        {CATEGORY_TOKENS.map((t, i) => <option key={t} value={t}>{COLOUR_NAMES[i]}</option>)}
+      </select>
+    </span>
+  );
+}
 
 export function CategoriesCard() {
   const { data: categories = [] } = useCategories();
@@ -16,23 +41,19 @@ export function CategoriesCard() {
   const update = useUpdateCategory();
   const remove = useDeleteCategory();
   const removeRule = useDeleteRule();
-  const colours = useChartColors();
+  const clear = useClearCategories();
 
   const [newName, setNewName] = useState("");
-  const [newColour, setNewColour] = useState(TOKENS[0]);
+  const [newColour, setNewColour] = useState("auto");
   const [editing, setEditing] = useState<Category | null>(null);
   const [error, setError] = useState("");
 
-  const colourOf = (token: string) => {
-    const i = Number(token.replace("chart-", "")) - 1;
-    return colours.series[Number.isFinite(i) && i >= 0 ? i % colours.series.length : 0];
-  };
   const nameOf = (id: number) => categories.find((c) => c.id === id)?.name ?? "a deleted category";
 
   function add() {
     setError("");
     create.mutate({ name: newName, kind: "spending", colour: newColour }, {
-      onSuccess: () => { setNewName(""); },
+      onSuccess: () => { setNewName(""); setNewColour("auto"); },
       onError: (e) => setError(String(e)),
     });
   }
@@ -48,16 +69,27 @@ export function CategoriesCard() {
 
   return (
     <>
-      <Card title="Categories" subtitle="Used to sort your spending. Rename or recolour any of them, including the ones Ledgerly ships with.">
+      <Card title="Categories" subtitle="Used to sort your spending. Add your own, or import Copilot's; rename or recolour any of them."
+        actions={categories.length > 0 && (
+          <Button variant="danger" size="sm" loading={clear.isPending} onClick={async () => {
+            const ok = await askToConfirm(
+              `Remove all ${categories.length} categories? Every transaction becomes uncategorised and goes back to To review, ` +
+              "and learned rules and budgets go too. No transaction is deleted, and a backup is taken first.",
+              { okLabel: "Remove all" },
+            );
+            if (ok) clear.mutate(undefined, { onError: (e) => setError(String(e)) });
+          }}>Remove all categories</Button>
+        )}>
+        {categories.length === 0 && (
+          <EmptyState title="No categories yet"
+            body="Add one below, or import your categories from Copilot. New transactions wait in To review until they have one." />
+        )}
         <div style={{ display: "grid", gap: 2 }}>
           {categories.map((c) => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 4px" }}>
               {editing?.id === c.id ? (
                 <>
-                  <select value={editing.colour} onChange={(e) => setEditing({ ...editing, colour: e.target.value })}
-                    style={{ width: 74 }} aria-label="Colour">
-                    {TOKENS.map((t, i) => <option key={t} value={t}>Colour {i + 1}</option>)}
-                  </select>
+                  <ColourPicker value={editing.colour} onChange={(colour) => setEditing({ ...editing, colour })} label="Colour" />
                   <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                     onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") setEditing(null); }}
                     autoFocus style={{ flex: 1 }} aria-label="Name" />
@@ -66,12 +98,10 @@ export function CategoriesCard() {
                 </>
               ) : (
                 <>
-                  <span style={{ width: 10, height: 10, borderRadius: 3, background: colourOf(c.colour), flexShrink: 0 }} />
-                  <span style={{ fontWeight: 600 }}>{c.name}</span>
+                  <CategoryPill category={c} />
                   {c.kind !== "spending" && <Badge>{c.kind}</Badge>}
-                  {!c.is_builtin && <Badge tone="accent">yours</Badge>}
                   <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(c)}>Edit</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setEditing({ ...c, colour: categoryToken(c.colour) })}>Edit</Button>
                     <Button variant="ghost" size="sm" onClick={async () => {
                       if (await askToConfirm(`Delete "${c.name}"? Transactions in it become uncategorised.`)) remove.mutate(c.id);
                     }}>Delete</Button>
@@ -83,9 +113,7 @@ export function CategoriesCard() {
         </div>
 
         <div className="row center" style={{ gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
-          <select value={newColour} onChange={(e) => setNewColour(e.target.value)} style={{ width: 74 }} aria-label="New colour">
-            {TOKENS.map((t, i) => <option key={t} value={t}>Colour {i + 1}</option>)}
-          </select>
+          <ColourPicker value={newColour} onChange={setNewColour} label="New colour" automatic />
           <input value={newName} onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") add(); }}
             placeholder="Add a category" style={{ flex: 1, minWidth: 160 }} aria-label="New category name" />

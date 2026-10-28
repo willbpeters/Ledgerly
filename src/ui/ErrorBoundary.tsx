@@ -41,7 +41,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="card-title">Something went wrong</div>
         </div>
         <p className="muted">
-          Ledgerly hit an error it could not recover from. Your data is safe — nothing
+          Tally hit an error it could not recover from. Your data is safe — nothing
           is written when a screen fails to draw. Reloading usually clears it.
         </p>
         <pre className="muted" style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>

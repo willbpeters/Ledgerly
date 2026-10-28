@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 
-/// A healthy SQLite file that has Ledgerly's `accounts` table. Without the
+/// A healthy SQLite file that has Tally's `accounts` table. Without the
 /// second check, any `.sqlite` file on the disk could replace the finances.
 pub fn validate(path: &Path) -> Result<(), String> {
     snapshot::check(path)?;
@@ -22,7 +22,7 @@ pub fn validate(path: &Path) -> Result<(), String> {
     if tables == 1 {
         Ok(())
     } else {
-        Err("That file isn't a Ledgerly backup.".to_string())
+        Err("That file isn't a Tally backup.".to_string())
     }
 }
 
@@ -54,7 +54,7 @@ mod tests {
         Connection::open(&other).unwrap().execute_batch("CREATE TABLE notes (t TEXT);").unwrap();
 
         let err = stage(&conn, &paths, &other, test_at("2026-10-14 09:00:00")).unwrap_err();
-        assert!(err.contains("isn't a Ledgerly backup"), "{err}");
+        assert!(err.contains("isn't a Tally backup"), "{err}");
         assert!(!paths.pending_restore().exists());
         assert!(snapshot::list(&paths.backups()).is_empty(), "no safety backup for a refused restore");
     }

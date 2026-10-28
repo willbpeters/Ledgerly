@@ -406,6 +406,7 @@ mod tests {
     /// A database as `pull` leaves it while applying: recording on, but silenced.
     fn applying() -> Connection {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         meta::enable(&conn, "laptop").unwrap();
         meta::set(&conn, "applying", "1").unwrap();
         conn.execute_batch(

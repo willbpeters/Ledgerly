@@ -14,7 +14,7 @@ function bankTxn(id: number, accountId: number, description: string, amount: num
   return {
     id, account_id: accountId, external_id: `e${id}`, posted: "2026-09-05", amount,
     description, payee: description, memo: null, mcc: null, pending: false,
-    category_id: 1, category_source: "auto", reviewed: true, note: null, removed: false,
+    category_id: 1, category_source: "auto", reviewed: true, note: null, removed: false, splits: [],
   };
 }
 
@@ -64,6 +64,32 @@ describe("Activity — synced accounts show their bank transactions", () => {
     show();
     expect(screen.getByText("Groceries")).toBeInTheDocument();
     expect(screen.getByText(/82\.14/)).toBeInTheDocument();
+  });
+
+  it("shows the category as a pill in its colour", () => {
+    accounts = [account(1, "Chase Card", "simplefin")];
+    bankTxns = [bankTxn(1, 1, "WHOLE FOODS", -82.14)];
+    show();
+    const pill = screen.getByText("Groceries").closest(".cat-pill") as HTMLElement;
+    expect(pill.style.getPropertyValue("--pill")).toBe("var(--cat-1)");
+  });
+
+  it("shows an uncategorised row as the muted Uncategorised pill", () => {
+    accounts = [account(1, "Chase Card", "simplefin")];
+    bankTxns = [{ ...bankTxn(1, 1, "WHOLE FOODS", -82.14), category_id: null }];
+    show();
+    expect(screen.getByText("Uncategorised").closest(".cat-pill")).toHaveClass("none");
+  });
+
+  it("labels a split transaction Split rather than its empty category", () => {
+    accounts = [account(1, "Chase Card", "simplefin")];
+    bankTxns = [{
+      ...bankTxn(1, 1, "WHOLE FOODS", -82.14), category_id: null,
+      splits: [{ id: 1, category_id: 1, amount: -60, note: null }, { id: 2, category_id: null, amount: -22.14, note: null }],
+    }];
+    show();
+    expect(screen.getByText("Split")).toBeInTheDocument();
+    expect(screen.queryByText("Uncategorised")).not.toBeInTheDocument();
   });
 
   it("does not leak another account's transactions in", () => {

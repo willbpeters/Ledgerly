@@ -19,7 +19,7 @@ pub struct PullReport {
     pub waiting: usize,
     /// Changes that would not apply (a constraint failed).
     pub skipped: usize,
-    /// Files from a newer Ledgerly, left for after an update.
+    /// Files from a newer Tally, left for after an update.
     pub newer_files: usize,
 }
 
@@ -180,6 +180,7 @@ mod tests {
 
     fn laptop() -> Connection {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         meta::enable(&conn, "laptop").unwrap();
         conn.execute_batch(
             "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
@@ -267,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_from_a_newer_ledgerly_is_left_for_later() {
+    fn a_file_from_a_newer_tally_is_left_for_later() {
         let conn = laptop();
         let report = apply_all(&conn, &[file("pc/1-1.json", 99, vec![note("sf:ACT-1|TRN-1", "x", 10)])], 9, 100).unwrap();
         assert_eq!((report.applied, report.newer_files), (0, 1));

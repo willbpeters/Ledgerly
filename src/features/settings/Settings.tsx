@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useRefreshPrices } from "../../data/useRefresh";
 import { askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
 import { Card, Button } from "../../ui/components";
@@ -12,6 +13,11 @@ import { CopilotImportCard } from "./CopilotImportCard";
 export function Settings() {
   const refresh = useRefreshPrices();
   const [askRemove, setAskRemove] = useState(askBeforeRemove);
+  // Read from the running app, so it is right after every release.
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => { /* outside the app, e.g. tests */ });
+  }, []);
   return (
     <>
       <Card title="Appearance" subtitle="Light, dark, or follow Windows.">
@@ -48,7 +54,7 @@ export function Settings() {
 
       <Card title="About">
         <div className="grid" style={{ gap: 4, fontSize: 13 }}>
-          <div><span className="muted">Version</span> · Ledgerly 0.1.0</div>
+          <div><span className="muted">Version</span> · Tally {version ?? ""}</div>
           <div><span className="muted">Data</span> · stored locally in <code>%APPDATA%\com.ledgerly.app\finance.sqlite</code>, backed up to the <code>backups</code> folder beside it</div>
           <div><span className="muted">Coming later</span> · encrypted database + app lock</div>
         </div>

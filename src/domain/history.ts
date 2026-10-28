@@ -41,12 +41,15 @@ export interface HistoryInputs {
  *
  * Each point carries `invested` beside `value`: holdings only, under exactly the
  * same assumptions as above. It exists so the chart can show investment
- * performance without a deposit or a card balance reading as a gain.
+ * performance without a deposit or a card balance reading as a gain. `cash` and
+ * `liabilities` split the rest the way the dashboard summary does, with
+ * liabilities kept positive, so `value = invested + cash - liabilities`.
  */
 export function reconstructSeries(i: HistoryInputs): ValuePoint[] {
   const accounts = i.accounts.filter((a) => !a.hidden);
   const visible = new Set(accounts.map((a) => a.id));
   const isSynced = new Set(accounts.filter((a) => a.source === "simplefin").map((a) => a.id));
+  const isCredit = new Set(accounts.filter((a) => a.type === "credit").map((a) => a.id));
 
   // Same oversell rule as the dashboard, so the chart never holds negative shares.
   const txns = clampOversells(i.txns.filter((t) => visible.has(t.account_id)));
@@ -103,6 +106,10 @@ export function reconstructSeries(i: HistoryInputs): ValuePoint[] {
     // Holdings only. Tracked beside `value` so the chart can plot investment
     // performance without a deposit reading as a gain.
     let invested = 0;
+    // The rest of the total, split as the dashboard summary splits it: credit
+    // accounts are owed, everything else is cash.
+    let cash = 0;
+    let liabilities = 0;
 
     // Manual holdings: shares actually held on the day, from the transactions.
     const manualShares = new Map<number, number>();
@@ -132,7 +139,11 @@ export function reconstructSeries(i: HistoryInputs): ValuePoint[] {
 
     // Manual cash: every cash effect up to and including the day.
     for (const t of txns) {
-      if (t.date <= date && !isSynced.has(t.account_id)) value += cashEffect(t);
+      if (t.date > date || isSynced.has(t.account_id)) continue;
+      const effect = cashEffect(t);
+      value += effect;
+      if (isCredit.has(t.account_id)) liabilities -= effect;
+      else cash += effect;
     }
 
     // Synced cash and cards: today's balance, less everything posted since.
@@ -148,10 +159,14 @@ export function reconstructSeries(i: HistoryInputs): ValuePoint[] {
       const posted = bankTxns
         .filter((t) => t.account_id === a.id && t.posted > date)
         .reduce((sum, t) => sum + t.amount, 0);
-      value += a.synced_balance - accountHoldings - posted;
+      const balance = a.synced_balance - accountHoldings - posted;
+      value += balance;
+      // A card balance is negative; owed is kept positive so its line rises with the debt.
+      if (isCredit.has(a.id)) liabilities -= balance;
+      else cash += balance;
     }
 
-    series.push({ date, value, invested });
+    series.push({ date, value, invested, cash, liabilities });
   }
   return series;
 }

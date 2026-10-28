@@ -3,6 +3,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { usePriceAutoRefresh } from "./data/usePriceAutoRefresh";
 import { usePriceHistory } from "./data/priceHistory";
 import { useDeviceSyncLoop } from "./data/useDeviceSyncLoop";
+import { useSimplefinAutoSync } from "./data/useSimplefinAutoSync";
 import { AppShell } from "./app/AppShell";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Holdings } from "./features/holdings/Holdings";
@@ -11,6 +12,7 @@ import { Accounts } from "./features/accounts/Accounts";
 import { Activity } from "./features/activity/Activity";
 import { Settings } from "./features/settings/Settings";
 import { Spending } from "./features/spending/Spending";
+import { Goals } from "./features/goals/Goals";
 import { ThemeProvider } from "./ui/theme";
 import { ToastProvider } from "./ui/toast";
 import { ErrorBoundary } from "./ui/ErrorBoundary";
@@ -27,6 +29,7 @@ const router = createBrowserRouter([
       { path: "accounts", element: <Accounts /> },
       { path: "activity", element: <Activity /> },
       { path: "spending", element: <Spending /> },
+      { path: "goals", element: <Goals /> },
       { path: "settings", element: <Settings /> },
     ],
   },
@@ -35,6 +38,8 @@ const router = createBrowserRouter([
 function AutoRefresh() {
   usePriceAutoRefresh();
   useDeviceSyncLoop();
+  // Pull fresh balances and transactions from the bank once at launch.
+  useSimplefinAutoSync();
   // Fills in two years of daily closes once, so the risk figures have
   // something to work from.
   usePriceHistory();

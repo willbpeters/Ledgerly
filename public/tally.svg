@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Tally's app icon: an italic lowercase "t" with its crossbar slanted through
+       it, like a tally strike, in the app's pine green on no background. Scaled
+       up to fill the square, since there is no tile around it. Source for every
+       icon size: npx tauri icon app-icon.svg
+       With a background, for the README and elsewhere: brand/tally-logo.svg -->
+  <g transform="translate(512 512) scale(1.22) translate(-522 -512)"
+     fill="none" stroke="#0F6B4F" stroke-width="112">
+    <path d="M596 196 L530 690 Q522 772 604 772 L708 772"/>
+    <path d="M300 482 L744 360"/>
+  </g>
+</svg>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose, useBackupNow } from "../../data/queries";
+import { useSimplefinStatus, useSimplefinConnect, useSimplefinSync, useSimplefinSyncing, useSimplefinDisconnect, useSimplefinBackfill, useSimplefinDiagnose, useBackupNow } from "../../data/queries";
 import { AddBankSection, SIMPLEFIN_MY_ACCOUNT_URL } from "./AddBankSection";
 import { Card, Button, Badge } from "../../ui/components";
 import { timeAgo } from "../../ui/format";
@@ -8,7 +8,7 @@ import { askToConfirm } from "../../ui/confirm";
 import type { SyncReport, SimplefinSample } from "../../domain/types";
 
 // SimpleFIN's public demo. Its shared *setup token* is permanently claimed and
-// answers 403 to everyone, so the demo uses the access URL, which Ledgerly
+// answers 403 to everyone, so the demo uses the access URL, which Tally
 // accepts directly. Three sample cash accounts, no holdings.
 const DEMO_ACCESS_URL = "https://demo:demo@beta-bridge.simplefin.org/simplefin";
 
@@ -35,6 +35,7 @@ export function SimplefinCard() {
   const { data: status, isLoading } = useSimplefinStatus();
   const connect = useSimplefinConnect();
   const sync = useSimplefinSync();
+  const syncing = useSimplefinSyncing();
   const disconnect = useSimplefinDisconnect();
   const backfill = useSimplefinBackfill();
   const diagnose = useSimplefinDiagnose();
@@ -73,7 +74,7 @@ export function SimplefinCard() {
   }
   async function doDisconnect() {
     const removeAccounts = await askToConfirm(
-      "Also remove the accounts SimpleFIN created in Ledgerly? Keeping them means they stay, but stop updating.",
+      "Also remove the accounts SimpleFIN created in Tally? Keeping them means they stay, but stop updating.",
       { okLabel: "Remove them", cancelLabel: "Keep them" },
     );
     setError(""); setReport(null);
@@ -105,7 +106,7 @@ export function SimplefinCard() {
         <div className="grid" style={{ gap: 12 }}>
           <div className="muted">Last synced {timeAgo(status.last_synced_at)}. Balances and holdings update each time you sync.</div>
           <div className="row center">
-            <Button onClick={doSync} loading={sync.isPending}>Sync now</Button>
+            <Button onClick={doSync} loading={syncing}>Sync now</Button>
             <Button variant="secondary" loading={backfill.isPending} onClick={() => {
               setError(""); setReport(null);
               backfill.mutate(730, { onSuccess: setReport, onError: (e) => setError(String(e)) });
@@ -195,7 +196,7 @@ export function SimplefinCard() {
       <div className="grid" style={{ gap: 14 }}>
         <ol className="steps">
           <li>Sign up at <a href={SIMPLEFIN_MY_ACCOUNT_URL} onClick={(e) => { e.preventDefault(); openSimplefin(); }}>SimpleFIN Bridge</a> (about $1.50/month).</li>
-          <li>Connect each bank or brokerage you want in Ledgerly.</li>
+          <li>Connect each bank or brokerage you want in Tally.</li>
           <li>Click <strong>New Setup Token</strong>, copy it, and paste it below. Tokens work once, so make a new one if this fails.</li>
         </ol>
         <label>

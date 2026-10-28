@@ -28,9 +28,9 @@ export function DeviceSyncPanel(p: DeviceSyncPanelProps) {
       <Card title="Sync between computers" subtitle="Keep your budgets, categories and edits the same on your PC and laptop.">
         <p className="muted">
           Both computers need a place they can both see, such as My Drive in Google Drive. Start on the
-          computer whose data you want to keep and pick that place: Ledgerly makes a "Ledgerly Sync" folder
+          computer whose data you want to keep and pick that place: Tally makes a "Tally Sync" folder
           there. Then Join on the other computer and pick the same place. Joining replaces that computer's
-          Ledgerly data with a copy (backed up first).
+          Tally data with a copy (backed up first).
         </p>
         <div className="row center" style={{ gap: 8, marginTop: 12 }}>
           <Button onClick={p.onStartFirst} loading={busy}>Start with this computer…</Button>
@@ -46,7 +46,7 @@ export function DeviceSyncPanel(p: DeviceSyncPanelProps) {
       {status.last_error && <p className="neg" role="alert">Last sync failed: {status.last_error}</p>}
       {newer > 0 && (
         <p className="neg" role="alert">
-          Your other computer runs a newer version of Ledgerly. Update this one (git pull) to take its latest edits.
+          Your other computer runs a newer version of Tally. Update this one (git pull) to take its latest edits.
         </p>
       )}
 
@@ -78,7 +78,7 @@ export function DeviceSyncPanel(p: DeviceSyncPanelProps) {
         <Button variant="ghost" size="sm" onClick={p.onStop}>Stop syncing</Button>
       </div>
       <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-        Syncs every 30 seconds while Ledgerly is open. Until encryption arrives, the shared folder holds your
+        Syncs every 30 seconds while Tally is open. Until encryption arrives, the shared folder holds your
         edits unencrypted.
       </p>
     </Card>

@@ -1,36 +1,68 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   useBankTransactions, useCategories, useBudgets, useAccounts, useBankTransactionRange,
   useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
+  useRecurringDismissed, useSetRecurringDismissed,
 } from "../../data/queries";
-import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
+import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts, inVisibleAccounts } from "../../domain/spending";
+import { inCategory } from "../../domain/splits";
 import { money } from "../../ui/format";
 import { Card, Button, EmptyState, Segmented } from "../../ui/components";
-import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
+import { SearchPanel } from "./SearchPanel";
+import { RecurringPanel } from "./RecurringPanel";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
+import type { Account, BankTransaction, Category } from "../../domain/types";
 
-type View = "month" | "review";
+type View = "month" | "review" | "search" | "recurring";
+
+// One array for "no dismissed bills yet", so the panel's detection (which
+// depends on this list) isn't re-run over the whole history on every render.
+const NO_KEYS: string[] = [];
+// The same for the query data the every-month list is filtered from: a fresh
+// `= []` each render would make that list a new array each render.
+const NO_TXNS: BankTransaction[] = [];
+const NO_ACCOUNTS: Account[] = [];
+const NO_CATEGORIES: Category[] = [];
 
 export function Spending() {
-  const [view, setView] = useState<View>("month");
+  // The command bar's search sends you here with ?q=…, straight into Search.
+  const [params] = useSearchParams();
+  const q = params.get("q") ?? "";
+  const [view, setView] = useState<View>(q ? "search" : "month");
+  useEffect(() => { if (q) setView("search"); }, [q]);
   const [month, setMonth] = useState(thisMonth);
   const [focus, setFocus] = useState<number | "uncategorised" | null>(null);
   const { from, to } = monthWindow(month);
 
   const { data: allTxns = [], isLoading } = useBankTransactions(from, to);
-  const { data: categories = [] } = useCategories();
+  const { data: categories = NO_CATEGORIES } = useCategories();
   const { data: budgets = [] } = useBudgets();
-  const { data: allAccounts = [] } = useAccounts();
+  const { data: allAccounts = NO_ACCOUNTS } = useAccounts();
   // A hidden account is out of every total, and spending is a total.
   const accounts = allAccounts.filter((a) => !a.hidden);
   const txns = fromVisibleAccounts(allTxns, allAccounts);
-  const { data: range } = useBankTransactionRange();
-  const colours = useChartColors();
+  const { data: range, isLoading: loadingRange } = useBankTransactionRange();
+
+  // Search and Recurring cover every month, so they load the whole range,
+  // but only once one of them is opened. Both read the same cached query.
+  const [first, last] = range ?? [null, null];
+  const everyMonth = view === "search" || view === "recurring";
+  const { data: everyTxn = NO_TXNS, isLoading: loadingEvery } =
+    useBankTransactions(first ?? "", last ?? "", everyMonth && first != null && last != null);
+  const searchable = useMemo(() => fromVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
+  // Recurring keeps removed rows: a bill whose charge was paid back was still charged.
+  const recurringTxns = useMemo(() => inVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
+  // The every-month list is not ready until the range is known and then loaded.
+  const loadingAll = everyMonth && (loadingRange || loadingEvery);
+
+  const { data: dismissedKeys, isLoading: loadingDismissed } = useRecurringDismissed();
+  const dismissed = dismissedKeys ?? NO_KEYS;
+  const setDismissed = useSetRecurringDismissed();
 
   // The review list obeys the same filter as the month: a hidden account or an
   // investment account has nothing to review here.
@@ -44,7 +76,7 @@ export function Spending() {
   const hiddenAccounts = new Set(allAccounts.filter((a) => a.hidden || a.type === "brokerage").map((a) => a.id));
   const removedThisMonth = allTxns.filter((t) => t.removed && !hiddenAccounts.has(t.account_id));
   const offerUndo = useOfferUndo();
-  const byId = (id: number) => [...allTxns, ...allToReview].filter((t) => t.id === id).slice(0, 1);
+  const byId = (id: number) => [...allTxns, ...allToReview, ...everyTxn].filter((t) => t.id === id).slice(0, 1);
 
   async function removeOne(id: number) {
     if (askBeforeRemove()) {
@@ -73,22 +105,17 @@ export function Spending() {
     [txns, categories, budgets, month],
   );
 
-  const colourOf = (token: string) => {
-    const i = Number(token.replace("chart-", "")) - 1;
-    return colours.series[Number.isFinite(i) && i >= 0 ? i % colours.series.length : 0];
-  };
+  // A split purchase shows under every category it was split into.
+  const shown = txns.filter((t) => focus == null || inCategory(t, focus));
 
-  const shown = txns.filter((t) =>
-    focus == null ? true : focus === "uncategorised" ? t.category_id == null : t.category_id === focus);
-
-  const nothingImported = (range?.[0] ?? null) == null;
+  const nothingImported = range !== undefined && range[0] == null;
 
   if (nothingImported && !isLoading) {
     return (
       <Card>
         <EmptyState
           title="No spending imported yet"
-          body={<>Connect SimpleFIN in <Link to="/settings">Settings</Link> and Ledgerly will pull
+          body={<>Connect SimpleFIN in <Link to="/settings">Settings</Link> and Tally will pull
             your bank and credit-card transactions, then sort them into categories for you.</>}
         />
       </Card>
@@ -102,6 +129,8 @@ export function Spending() {
           <Segmented<View> value={view} onChange={setView} items={[
             { value: "month", label: "Month" },
             { value: "review", label: `To review (${toReview.length})` },
+            { value: "search", label: "Search" },
+            { value: "recurring", label: "Recurring" },
           ]} />
           {view === "month" && (
             <div className="row center" style={{ gap: 8 }}>
@@ -119,10 +148,29 @@ export function Spending() {
         )}
       </div>
 
-      {view === "review" ? (
+      {view === "search" ? (
+        <SearchPanel
+          key={q}
+          initialText={q}
+          transactions={searchable}
+          loading={loadingAll}
+          categories={categories}
+          accounts={accounts}
+          onRemove={removeOne}
+        />
+      ) : view === "recurring" ? (
+        <RecurringPanel
+          transactions={recurringTxns}
+          loading={loadingAll || loadingDismissed}
+          categories={categories}
+          accounts={accounts}
+          dismissed={dismissed}
+          onSetDismissed={(key, d) => setDismissed.mutateAsync({ key, dismissed: d })}
+        />
+      ) : view === "review" ? (
         <Card
           title="To review"
-          subtitle="New transactions, and any Ledgerly couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."
+          subtitle="New transactions, and any Tally couldn't sort. Everything it sorted is already in the Month view. Choosing a category counts as reviewing it."
           actions={toReview.length > 0 ? (
             <Button size="sm" loading={approve.isPending}
               onClick={() => approveSome(toReview.map((t) => t.id))}>
@@ -137,7 +185,6 @@ export function Spending() {
               transactions={toReview}
               categories={categories}
               accounts={accounts}
-              colourOf={colourOf}
               onApprove={(id) => approveSome([id])}
               onRemove={removeOne}
             />
@@ -182,7 +229,6 @@ export function Spending() {
                     key={row.category.id}
                     row={row}
                     month={month}
-                    colour={colourOf(row.category.colour)}
                     selected={focus === row.category.id}
                     onSelect={() => setFocus(focus === row.category.id ? null : row.category.id)}
                   />
@@ -212,7 +258,6 @@ export function Spending() {
                 transactions={shown}
                 categories={categories}
                 accounts={accounts}
-                colourOf={colourOf}
                 onRemove={removeOne}
               />
             )}
@@ -225,7 +270,6 @@ export function Spending() {
                   transactions={removedThisMonth}
                   categories={categories}
                   accounts={accounts}
-                  colourOf={colourOf}
                   onRestore={restoreOne}
                 />
               </div>

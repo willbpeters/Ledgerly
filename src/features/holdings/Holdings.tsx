@@ -5,6 +5,13 @@ import { useSecurities } from "../../data/queries";
 import { money, pct, shareCount } from "../../ui/format";
 import { PageHeader, Card, Button, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
+import { useRiskSeries } from "../../data/useRiskSeries";
+import { marketExposure } from "../../domain/risk";
+import { RiskCard } from "./RiskCard";
+import { AccountHoldingsCard } from "./AccountHoldingsCard";
+import { DrawdownCard } from "./DrawdownCard";
+import { drawdown } from "../../domain/drawdown";
+import { MarketExposureCard, exposureInputs } from "./MarketExposureCard";
 import type { Holding } from "../../domain/types";
 
 interface Row extends Holding { weight: number | null; name: string | null; }
@@ -44,6 +51,7 @@ function loadVisible(): string[] {
 
 export function Holdings() {
   const { holdings, summary, byAccount, isLoading } = usePortfolio();
+  const { aligned, isLoading: riskLoading } = useRiskSeries(holdings);
   const { data: securities = [] } = useSecurities();
   const [visible, setVisible] = useState<string[]>(loadVisible);
   const [showCols, setShowCols] = useState(false);
@@ -101,11 +109,15 @@ export function Holdings() {
       </Card>
 
       {accountsWithHoldings.length > 1 && accountsWithHoldings.map((b) => (
-        <Card key={b.account.id} title={b.account.name}
+        <AccountHoldingsCard key={b.account.id} accountId={b.account.id} title={b.account.name}
           subtitle={`${money(b.holdingsValue)} in holdings${b.cash ? ` · ${money(b.cash)} cash` : ""}`}>
           <DataTable columns={cols} rows={toRows(b.holdings, b.holdingsValue)} getKey={(r) => r.security_id} />
-        </Card>
+        </AccountHoldingsCard>
       ))}
+
+      <RiskCard holdings={holdings} cash={summary.cash} />
+      <DrawdownCard drawdown={drawdown(aligned)} isLoading={riskLoading} />
+      <MarketExposureCard exposure={marketExposure(exposureInputs(aligned, summary))} isLoading={riskLoading} />
     </>
   );
 }

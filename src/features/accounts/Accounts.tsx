@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useAccounts, useDeleteAccount, useSetAccountType, useSetAccountHidden } from "../../data/queries";
+import { useAccounts, useDeleteAccount, useSetAccountType, useSetAccountHidden, useGoals, useUpdateGoal } from "../../data/queries";
 import { usePortfolio } from "../../data/usePortfolio";
 import { AccountForm } from "./AccountForm";
 import { PageHeader, Card, Button, Badge, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { money, timeAgo } from "../../ui/format";
 import { askToConfirm } from "../../ui/confirm";
+import { useToast } from "../../ui/toast";
 import type { Account } from "../../domain/types";
 
 export function Accounts() {
@@ -14,6 +15,9 @@ export function Accounts() {
   const del = useDeleteAccount();
   const setType = useSetAccountType();
   const setHidden = useSetAccountHidden();
+  const { data: goals = [], isLoading: loadingGoals, isError: goalsFailed } = useGoals();
+  const updateGoal = useUpdateGoal();
+  const toast = useToast();
   const [showHidden, setShowHidden] = useState(false);
 
   // This is the one screen that sees hidden accounts: everywhere else they are
@@ -22,6 +26,43 @@ export function Accounts() {
   const hiddenCount = accounts.filter((a) => a.hidden).length;
   const rows = showHidden ? accounts : accounts.filter((a) => !a.hidden);
   const dim = (a: Account) => (a.hidden ? "dim" : undefined);
+
+  /**
+   * Deleting an account unlinks the goals following it, which would drop them
+   * to their hand-kept amount, often stale. So first store what they show now.
+   * A hidden account or a card is not followed (the goal already shows its
+   * hand-kept amount), so that is kept as it is.
+   */
+  function keptAmount(a: Account, hand: number): number {
+    if (a.hidden || a.type === "credit") return hand;
+    return Math.max(0, accountValues.get(a.id) ?? 0);
+  }
+
+  async function deleteAccount(a: Account) {
+    // Without the goals we cannot warn about them or keep their amounts, so do
+    // not delete on a guess.
+    if (goalsFailed) {
+      toast.push({ tone: "neg", title: "Couldn't check your goals, so nothing was deleted." });
+      return;
+    }
+    const following = goals.filter((g) => g.account_id === a.id);
+    const extra = a.source === "simplefin" ? " If you still share it with SimpleFIN it will come back on the next sync; if you have stopped sharing it, it is gone for good." : "";
+    const keeps = following.map((g) =>
+      ` Your goal “${g.name}” follows this account. Tally will keep its current amount, ${money(keptAmount(a, g.saved_amount))}, as an amount kept by hand.`).join("");
+    if (!(await askToConfirm(`Delete “${a.name}”? This removes its transactions.${extra}${keeps}`))) return;
+    try {
+      for (const g of following) {
+        await updateGoal.mutateAsync({ id: g.id, goal: {
+          name: g.name, target_amount: g.target_amount, target_date: g.target_date,
+          account_id: g.account_id, saved_amount: keptAmount(a, g.saved_amount),
+        } });
+      }
+    } catch (e) {
+      toast.push({ tone: "neg", title: `Couldn't keep the goal's amount, so "${a.name}" was not deleted`, body: String(e) });
+      return;
+    }
+    del.mutate(a.id);
+  }
 
   const columns: Column<Account>[] = [
     { key: "name", label: "Account", align: "left", className: dim, render: (a) => (
@@ -52,10 +93,7 @@ export function Accounts() {
             onClick={() => setHidden.mutate({ id: a.id, hidden: !a.hidden })}>
             {a.hidden ? "Unhide" : "Hide"}
           </Button>
-          <Button variant="ghost" size="sm" onClick={async () => {
-            const extra = a.source === "simplefin" ? " If you still share it with SimpleFIN it will come back on the next sync; if you have stopped sharing it, it is gone for good." : "";
-            if (await askToConfirm(`Delete "${a.name}"? This removes its transactions.${extra}`)) del.mutate(a.id);
-          }}>Delete</Button>
+          <Button variant="ghost" size="sm" disabled={loadingGoals} onClick={() => deleteAccount(a)}>Delete</Button>
         </div>) },
   ];
 

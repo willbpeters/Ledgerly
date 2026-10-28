@@ -26,7 +26,7 @@ export function BackupCard() {
   // On success the app restarts, so only failure needs handling here.
   const restoreFrom = async (path: string, what: string) => {
     const ok = await askToConfirm(
-      `Replace everything in Ledgerly with ${what}?\n\nYour current data is backed up first, so this can be undone. If sync between computers is on, it is turned off; join again afterwards. Ledgerly restarts to finish.`,
+      `Replace everything in Tally with ${what}?\n\nYour current data is backed up first, so this can be undone. If sync between computers is on, it is turned off; join again afterwards. Tally restarts to finish.`,
       { okLabel: "Restore", cancelLabel: "Cancel" },
     );
     if (!ok) return;
@@ -52,8 +52,8 @@ export function BackupCard() {
       onRestore={(b) => restoreFrom(b.path, `the backup from ${whenLabel(b.date, b.time, today)}`)}
       onRestoreFromFile={async () => {
         const file = await open({
-          title: "Choose a Ledgerly backup",
-          filters: [{ name: "Ledgerly backup", extensions: ["sqlite"] }],
+          title: "Choose a Tally backup",
+          filters: [{ name: "Tally backup", extensions: ["sqlite"] }],
         });
         if (typeof file === "string") restoreFrom(file, `the backup in ${file}`);
       }}

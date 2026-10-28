@@ -5,7 +5,7 @@ import {
   useMarketIndices, useLatestPrices, usePreviousPrices,
 } from "../../data/queries";
 import { usePortfolio } from "../../data/usePortfolio";
-import { buildMarketView } from "../../domain/market";
+import { buildMarketView, todayMove } from "../../domain/market";
 
 /**
  * Everything the Markets screen needs, assembled by the pure
@@ -49,6 +49,6 @@ export function useMarketView() {
       holdings: value, dayChange,
       today: localIsoDate(),
     });
-    return { view, you: summary.dayChangePct };
+    return { view, you: todayMove([...view.companies, ...view.funds], summary.dayChangePct, new Date()) };
   }, [securities, profiles, news, earnings, indices, latest, previous, holdings, summary]);
 }

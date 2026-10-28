@@ -32,8 +32,12 @@ pub fn parse_chart_json(body: &str) -> Vec<(String, f64)> {
         Ok(v) => v,
         Err(_) => return vec![],
     };
-    let result = &v["chart"]["result"][0];
+    parse_chart_result(&v["chart"]["result"][0])
+}
 
+/// One chart result object, as found under `chart.result[0]` — and, in the
+/// same shape, under each `spark.result[].response[0]` of the batch endpoint.
+pub fn parse_chart_result(result: &Value) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     if let (Some(ts), Some(closes)) = (
         result["timestamp"].as_array(),

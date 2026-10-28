@@ -25,7 +25,7 @@ export function DeviceSyncCard() {
       today={localIsoDate()}
       busy={now.isPending || start.isPending || join.isPending}
       onStartFirst={async () => {
-        const folder = await chooseFolder("Choose where to make the Ledgerly Sync folder, e.g. My Drive");
+        const folder = await chooseFolder("Choose where to make the Tally Sync folder, e.g. My Drive");
         if (typeof folder !== "string") return;
         start.mutate(folder, {
           onSuccess: () => toast.push({ tone: "pos", title: "Sync is on", body: "Now choose Join on your other computer." }),
@@ -33,10 +33,10 @@ export function DeviceSyncCard() {
         });
       }}
       onJoin={async () => {
-        const folder = await chooseFolder("Choose the same place you picked on your other computer, or its Ledgerly Sync folder");
+        const folder = await chooseFolder("Choose the same place you picked on your other computer, or its Tally Sync folder");
         if (typeof folder !== "string") return;
         const ok = await askToConfirm(
-          "Replace this computer's Ledgerly data with the copy from your other computer?\n\nThis computer's data is backed up first, so this can be undone from Backups. Ledgerly restarts to finish.",
+          "Replace this computer's Tally data with the copy from your other computer?\n\nThis computer's data is backed up first, so this can be undone from Backups. Tally restarts to finish.",
           { okLabel: "Join", cancelLabel: "Cancel" },
         );
         if (ok) join.mutate(folder, { onError: failed("Couldn't join") });

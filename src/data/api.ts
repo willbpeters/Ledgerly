@@ -2,11 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, Security, Transaction, Snapshot,
   SyncedHolding, SyncReport, SimplefinStatus, SimplefinSample,
-  Category, BankTransaction, CategoryRule, Budget,
+  Category, BankTransaction, CategoryRule, Budget, NewSplit,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
   DeviceSyncReport, DeviceSyncStatus,
+  Goal, NewGoal,
 } from "../domain/types";
 
 export type { NewAccount, NewTransaction };
@@ -71,7 +72,10 @@ export const api = {
     /** A dry run: what importing this Copilot export would do. */
     preview: (path: string) => invoke<CopilotPlan>("copilot_preview", { path }),
     /** Backs up, then imports in one transaction. */
-    import: (path: string, removeIds: number[]) => invoke<CopilotCounts>("copilot_import", { path, removeIds }),
+    /** With `replaceAll`, every category the export doesn't use goes, apart
+     *  from those named in `keep`. */
+    import: (path: string, removeIds: number[], replaceAll: boolean, keep: string[]) =>
+      invoke<CopilotCounts>("copilot_import", { path, removeIds, replaceAll, keep }),
   },
   backup: {
     status: () => invoke<BackupStatus>("backup_status"),
@@ -100,6 +104,8 @@ export const api = {
     update: (id: number, name: string, colour: string) =>
       invoke<void>("categories_update", { id, name, colour }),
     delete: (id: number) => invoke<void>("categories_delete", { id }),
+    /** Backs up, then removes every category; returns how many went. */
+    clear: () => invoke<number>("categories_clear"),
   },
   bankTransactions: {
     list: (from: string, to: string) =>
@@ -107,6 +113,9 @@ export const api = {
     range: () => invoke<[string | null, string | null]>("bank_transactions_range"),
     setCategory: (id: number, categoryId: number | null, applyToPayee: boolean) =>
       invoke<number>("bank_transaction_set_category", { id, categoryId, applyToPayee }),
+    /** Split across categories; no pieces unsplits. Refused unless they add up. */
+    setSplits: (id: number, splits: NewSplit[]) =>
+      invoke<void>("bank_transaction_set_splits", { id, splits }),
     toReview: () => invoke<BankTransaction[]>("bank_transactions_to_review"),
     approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
     /** Remove from Spending (paid back), or restore. Never deletes. */
@@ -123,7 +132,19 @@ export const api = {
     set: (categoryId: number, month: string | null, amount: number) =>
       invoke<void>("budget_set", { categoryId, month, amount }),
   },
+  recurring: {
+    /** Payee keys the owner said are not bills; see `recurringKey`. */
+    dismissed: () => invoke<string[]>("recurring_dismissed_list"),
+    dismiss: (key: string) => invoke<void>("recurring_dismiss", { key }),
+    undismiss: (key: string) => invoke<void>("recurring_undismiss", { key }),
+  },
   accountTypes: {
     set: (id: number, kind: string) => invoke<void>("accounts_set_type", { id, kind }),
+  },
+  goals: {
+    list: () => invoke<Goal[]>("goals_list"),
+    create: (goal: NewGoal) => invoke<Goal>("goals_create", { goal }),
+    update: (id: number, goal: NewGoal) => invoke<void>("goals_update", { id, goal }),
+    delete: (id: number) => invoke<void>("goals_delete", { id }),
   },
 };

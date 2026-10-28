@@ -1,10 +1,10 @@
-# Ledgerly — open work
+# Tally — open work
 
 Rewritten 2026-10-14 after a full review, when every branch was merged and
 `master` became the only branch. `docs/HANDOFF.md` remains the reference for how
 things work; this file is only what is *not done yet*, **in the order to do it**.
 
-**The goal driving the order:** Ledgerly should be able to replace a paid
+**The goal driving the order:** Tally should be able to replace a paid
 budgeting app (Copilot) for daily use. So the list protects your data first, then
 fixes what makes everyday use annoying, then fills the gaps a budgeting app is
 expected to have, and only then adds the bigger investment features.
@@ -64,28 +64,54 @@ These are the gaps a former Copilot user would notice first.
 
 - [x] **9. Bank-supplied categories.** Done differently, 2026-10-15: the
       diagnostic showed SimpleFIN sends no category for the owner's banks, so
-      Ledgerly sorts by merchant name and transfer pairing instead, with a
+      Tally sorts by merchant name and transfer pairing instead, with a
       Copilot-style To review list. See HANDOFF "Copilot-style sorting".
 - [x] **9b. Import from Copilot.** Done 2026-10-15, with Remove and Undo in
       Spending. See HANDOFF "Import from Copilot" and "Remove and Undo".
-- [ ] **10. Search and filter transactions.** Spending shows one month at a
-      time with no search. Wanted: find by payee, description, amount or
-      category across all months.
+- [x] **9c. Categories that match Copilot, shown as coloured pills.** Done
+      2026-10-28: Tally no longer starts with preset categories (only Internal
+      transfer and Income appear, when first needed). An import from Copilot
+      now leaves your categories exactly as Copilot has them: its names, its
+      choice for every transaction up to the export's last day (even over one
+      you picked in Tally), old names like Dining merged in, empty leftovers
+      tidied away, and nothing after that day touched. Nothing is deleted, the
+      preview is exact, and importing the same file twice changes nothing.
+      Categories show as coloured pills, twelve colours. See HANDOFF "No preset
+      categories", "Import from Copilot" and "Category pills".
+- [x] **10. Search and filter transactions.** Done 2026-10-25: Spending →
+      Search finds words, exact amounts and >/< sizes across every month, with
+      category and account filters; the command bar's search box goes there
+      while you are on Spending. Removed transactions are not searched yet.
 - [ ] **11. Edit a bank transaction.** Partly done 2026-10-15: notes are stored
       and shown (Copilot's arrive with the import), and **Remove** covers
-      "exclude from budget". Still to do: editing a note in Ledgerly, and a
+      "exclude from budget". Still to do: editing a note in Tally, and a
       friendlier display name. Keep the sync from overwriting what you set,
       the way `category_source = 'manual'` already protects categories.
-- [ ] **12. Recurring bills and subscriptions.** Detect repeating payees with a
-      steady amount and cadence, list them with the next expected date, and show
-      what is still due this month. The maths is pure and belongs in
-      `src/domain/`. **(spec)**
+- [x] **12. Recurring bills and subscriptions.** Done 2026-10-25: Spending →
+      Recurring lists bills spotted from the history (three or more charges
+      from one payee at a steady amount and rhythm) with the next expected
+      date, and shows what is still due and what was paid this month. A bill
+      that has stopped is moved aside as "Not seen lately". "Not recurring"
+      dismisses a wrong guess, and Restore brings it back. Income and
+      paychecks are not listed.
 - [ ] **13. Spending trends.** A month-by-month view: spending per category over
       the last 6–12 months, and income against spending (cash flow).
 - [ ] **14. Budget rollover** (optional per category): unspent money carries
       into next month, overspending reduces it.
-- [ ] **15. Split a transaction** across categories (one Costco trip →
-      groceries + household). **(spec)**
+- [x] **15. Split a transaction** across categories. Done 2026-10-25: Split
+      on any row in Spending divides it into pieces with their own categories;
+      budgets, search and the category filter count each piece.
+
+- [x] **15b. Savings goals.** Done 2026-10-25: a Goals screen (on the rail
+      below Spending) with a target, an optional date, and either an account
+      to follow or an amount kept by hand; shows what to put aside each month
+      to make the date. In the CSV export as `goals.csv`.
+- [ ] **15c. Goals when a sync or a disconnect removes an account.** When a
+      sync removes an account a goal follows, or Settings → SimpleFIN
+      "Disconnect → Remove them" (`SimplefinCard.tsx`) deletes every SimpleFIN
+      account at once, the goal drops to its hand-kept amount, which may be
+      stale. Keep its value the way deleting an account by hand now does:
+      store the last shown figure as `saved_amount` before the account goes.
 
 ## Phase 4 — Correct numbers for a real portfolio
 

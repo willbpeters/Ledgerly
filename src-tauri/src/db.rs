@@ -28,12 +28,13 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// sync columns and the synced_holdings table; v3 adds budgeting and the
 /// `credit` account type; v4 adds the `hidden` flag on accounts; v5 adds the
 /// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
-/// once; v7 adds a `note` and v8 a `removed` flag to bank transactions. To add a change later: bump
+/// once; v7 adds a `note` and v8 a `removed` flag to bank transactions; v9 adds
+/// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. v11 adds the `goals` table. v12 adds device sync
+/// (sync keys, the outbox and its triggers). To add a change later: bump
 /// TARGET_VERSION, add another `if current < N` block, and give it a
 /// completeness check so a mis-stamped database can still repair itself. Add
-/// the new completeness check to `migration_pending` too. v9 adds device sync
-/// (sync keys, the outbox and its triggers).
-pub(crate) const TARGET_VERSION: i64 = 9;
+/// the new completeness check to `migration_pending` too.
+pub(crate) const TARGET_VERSION: i64 = 12;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -256,6 +257,76 @@ fn apply_v8(conn: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(conn, "bank_transactions", V8_COLUMN.0, V8_COLUMN.1)
 }
 
+/// v9: a bank transaction can be split across categories (one Costco trip →
+/// groceries + household). The pieces live in their own table so the
+/// transaction keeps the amount the bank sent; while split, its own category
+/// is empty and the pieces are what count. A piece whose category is deleted
+/// becomes uncategorised rather than disappearing, so the money never leaves
+/// the month.
+const MIGRATION_9: &str = "
+CREATE TABLE IF NOT EXISTS bank_transaction_splits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  txn_id INTEGER NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  amount REAL NOT NULL,
+  note TEXT,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS bank_transaction_splits_txn ON bank_transaction_splits(txn_id);
+";
+
+fn v9_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    table_exists(conn, "bank_transaction_splits")
+}
+
+/// Every statement is IF NOT EXISTS, so this is safe to re-run.
+fn apply_v9(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_9)
+}
+
+/// v10: bills the owner said are not recurring. Detection is pure TypeScript;
+/// this only remembers which keys to skip, as the text `recurringKey` in
+/// `src/domain/recurring.ts` makes from a payee. Rust never builds a key.
+const MIGRATION_10: &str = "
+CREATE TABLE IF NOT EXISTS recurring_dismissed (
+  payee_key TEXT PRIMARY KEY,
+  dismissed_at TEXT NOT NULL
+);
+";
+
+fn v10_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    table_exists(conn, "recurring_dismissed")
+}
+
+/// IF NOT EXISTS, so this is safe to re-run.
+fn apply_v10(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_10)
+}
+
+/// v11: savings goals. A goal follows one account's balance, or holds an amount
+/// the owner keeps up to date by hand. Deleting the account keeps the goal and
+/// turns it into a by-hand one, rather than losing what the owner set up.
+const MIGRATION_11: &str = "
+CREATE TABLE IF NOT EXISTS goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  target_amount REAL NOT NULL,
+  target_date TEXT,
+  account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+  saved_amount REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+";
+
+fn v11_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    table_exists(conn, "goals")
+}
+
+/// IF NOT EXISTS throughout, so this is safe to re-run.
+fn apply_v11(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_11)
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -356,8 +427,8 @@ fn apply_v3(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         result?;
     }
+    // No preset categories: they come from the owner or a Copilot import.
     conn.execute_batch(MIGRATION_3_BUDGET)?;
-    crate::budget::seed::insert_builtin_categories(conn)?;
     Ok(())
 }
 
@@ -409,6 +480,15 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v8_is_complete(conn)? {
         apply_v8(conn)?;
     }
+    if !v9_is_complete(conn)? {
+        apply_v9(conn)?;
+    }
+    if !v10_is_complete(conn)? {
+        apply_v10(conn)?;
+    }
+    if !v11_is_complete(conn)? {
+        apply_v11(conn)?;
+    }
     if !crate::devicesync::schema::is_complete(conn)? {
         crate::devicesync::schema::install(conn)?;
     }
@@ -429,12 +509,85 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v6_is_complete(conn)?
         || !v7_is_complete(conn)?
         || !v8_is_complete(conn)?
+        || !v9_is_complete(conn)?
+        || !v10_is_complete(conn)?
+        || !v11_is_complete(conn)?
         || !crate::devicesync::schema::is_complete(conn)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v9_adds_the_splits_table_and_is_idempotent() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("DROP TABLE bank_transaction_splits;").unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+
+        assert!(table_exists(&conn, "bank_transaction_splits").unwrap());
+        assert!(!migration_pending(&conn).unwrap());
+    }
+
+    #[test]
+    fn split_pieces_go_with_their_transaction() {
+        let conn = open_in_memory().unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (id,name,type,created_at) VALUES (93,'Card','credit','2026-10-01');
+             INSERT INTO bank_transactions (id,account_id,external_id,posted,amount,description)
+               VALUES (500,93,'t','2026-10-01',-10,'Costco');
+             INSERT INTO bank_transaction_splits (txn_id,category_id,amount,sort)
+               VALUES (500,NULL,-6,0), (500,NULL,-4,1);",
+        ).unwrap();
+
+        conn.execute("DELETE FROM bank_transactions WHERE id=500", []).unwrap();
+
+        let left: i64 = conn.query_row("SELECT count(*) FROM bank_transaction_splits", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "deleting a transaction must delete its pieces");
+    }
+
+    #[test]
+    fn v10_adds_the_dismissed_bills_table_and_is_idempotent() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        // Stand in for a v9 database.
+        conn.execute_batch("DROP TABLE recurring_dismissed;").unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+
+        assert!(table_exists(&conn, "recurring_dismissed").unwrap());
+        conn.execute("INSERT INTO recurring_dismissed (payee_key, dismissed_at) VALUES ('netflix','2026-10-25')", []).unwrap();
+        assert!(
+            conn.execute("INSERT INTO recurring_dismissed (payee_key, dismissed_at) VALUES ('netflix','2026-10-26')", []).is_err(),
+            "one row per key",
+        );
+        assert!(!migration_pending(&conn).unwrap());
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, TARGET_VERSION);
+    }
+
+    #[test]
+    fn v11_adds_the_goals_table_and_running_it_twice_changes_nothing() {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        // Stand in for a v10 database: everything but the goals table.
+        conn.execute_batch("DROP TABLE goals;").unwrap();
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+
+        assert!(table_exists(&conn, "goals").unwrap());
+        assert!(!migration_pending(&conn).unwrap());
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, TARGET_VERSION);
+    }
 
     #[test]
     fn v8_adds_a_removed_flag_that_starts_off() {
@@ -482,6 +635,7 @@ mod tests {
     fn v6_re_sorts_existing_rows_and_reviews_only_the_categorised_ones() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
+        crate::budget::seed::test_categories(&conn);
         crate::devicesync::schema::drop_triggers(&conn).unwrap();
         // Undo v6 to stand in for a v5 database with rows from an older build.
         conn.execute_batch(
@@ -620,16 +774,17 @@ mod tests {
     }
 
     #[test]
-    fn v3_seeds_the_builtin_categories_once() {
+    fn v3_seeds_no_categories_and_a_rerun_keeps_the_owners() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
-        let n: i64 = conn.query_row("SELECT count(*) FROM categories WHERE is_builtin=1", [], |r| r.get(0)).unwrap();
-        assert_eq!(n as usize, crate::budget::seed::BUILTIN.len());
+        let n: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "categories come from the owner or a Copilot import");
 
-        // Running migrations again must not duplicate them.
+        // Running migrations again must neither add nor duplicate anything.
+        conn.execute("INSERT INTO categories (name,kind) VALUES ('Mine','spending')", []).unwrap();
         apply_migrations(&conn).unwrap();
         let again: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
-        assert_eq!(again, n);
+        assert_eq!(again, 1);
     }
 
     /// Exactly the state found on the owner's machine: a v2 schema carrying a
@@ -676,11 +831,11 @@ mod tests {
     }
 
     #[test]
-    fn the_repair_seeds_the_builtin_categories() {
+    fn the_repair_seeds_no_categories() {
         let conn = v2_schema_mis_stamped_as_v3();
         apply_migrations(&conn).unwrap();
         let n: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
-        assert_eq!(n as usize, crate::budget::seed::BUILTIN.len());
+        assert_eq!(n, 0);
     }
 
     #[test]

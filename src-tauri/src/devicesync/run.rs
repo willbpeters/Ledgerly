@@ -91,6 +91,7 @@ mod tests {
         let pc_dir = tempfile::tempdir().unwrap();
         let pc_paths = Paths::new(pc_dir.path());
         let pc = db::open(&pc_paths.db()).unwrap();
+        crate::budget::seed::test_categories(&pc);
         pc.execute_batch(
             "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
                VALUES ('Card','credit','USD','2026-01-01','simplefin','ACT-1');
@@ -103,10 +104,12 @@ mod tests {
         let laptop_dir = tempfile::tempdir().unwrap();
         let laptop_paths = Paths::new(laptop_dir.path());
         let laptop = db::open(&laptop_paths.db()).unwrap();
+        crate::budget::seed::test_categories(&laptop);
         pair::join(&laptop, &laptop_paths, drive, test_at("2026-10-16 09:00:00")).unwrap();
         drop(laptop);
         backup::startup::run(&laptop_paths, test_at("2026-10-16 09:00:05"));
         let laptop = db::open(&laptop_paths.db()).unwrap();
+        crate::budget::seed::test_categories(&laptop);
         let s = settings::load(&settings::path(&laptop_paths.app_dir));
         meta::adopt(&laptop, &s).unwrap();
 

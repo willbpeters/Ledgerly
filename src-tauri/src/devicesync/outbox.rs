@@ -65,6 +65,7 @@ mod tests {
 
     fn recording() -> Connection {
         let conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         meta::enable(&conn, "pc").unwrap();
         conn
     }

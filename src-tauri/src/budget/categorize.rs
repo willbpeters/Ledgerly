@@ -32,7 +32,8 @@ pub struct Candidate {
 pub enum Decision {
     /// A user rule matched; use this category id.
     Rule(i64),
-    /// The merchant code mapped to a built-in category, named here.
+    /// The sorter's own name for the category (Tally's old names, such as
+    /// "Dining"); `seed::sorter_category` finds the owner's category for it.
     Builtin(&'static str),
     /// Money coming in with nothing else to go on.
     Income,
@@ -74,7 +75,7 @@ pub fn decide(c: &Candidate, rules: &[Rule]) -> Decision {
     if merchants::is_transfer_wording(c.payee.as_deref(), &c.description) {
         return Decision::Builtin("Transfer");
     }
-    // 6. The built-in merchant-code map. Most banks here send no code, so this
+    // 6. The merchant-code map. Most banks here send no code, so this
     //    rarely fires, but it is right when it does.
     if let Some(code) = c.mcc.as_deref() {
         if let Some(name) = mcc::category_for(code) {

@@ -52,6 +52,20 @@
   --chart-5: #4d7c0f;
   --chart-6: #475569;
   --chart-grid: #eae5da;
+  /* Category colours, in the order new categories take them. Neighbours stay
+     apart under colour blindness; every pill also carries its name. */
+  --cat-1: #2a78d6;  /* blue */
+  --cat-2: #eb6834;  /* orange */
+  --cat-3: #1baf7a;  /* aqua */
+  --cat-4: #eda100;  /* yellow */
+  --cat-5: #e87ba4;  /* pink */
+  --cat-6: #008300;  /* green */
+  --cat-7: #6250d6;  /* violet */
+  --cat-8: #e34948;  /* red */
+  --cat-9: #0e9fc0;  /* sky */
+  --cat-10: #7ca10a; /* lime */
+  --cat-11: #a347c0; /* plum */
+  --cat-12: #a0652b; /* brown */
 }
 :root[data-theme="dark"] {
   --bg: #131211;
@@ -85,6 +99,18 @@
   --chart-5: #9aae55;
   --chart-6: #8c939c;
   --chart-grid: #2b2825;
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
+  --cat-8: #e66767;
+  --cat-9: #1aa3c4;
+  --cat-10: #7f9f1a;
+  --cat-11: #b866d4;
+  --cat-12: #bf7632;
 }
 
 /* ---------- Base ---------- */
@@ -193,10 +219,33 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .stat-value { font-size: 20px; font-weight: 600; }
 .stat-hint { font-size: 11px; color: var(--mut); }
 
-.headline { display: flex; align-items: flex-end; gap: 36px; flex-wrap: wrap; }
-.headline-figure { display: grid; gap: 2px; }
-.headline-side { padding-bottom: 7px; }
-.headline-side .n { font-size: 17px; font-weight: 600; margin-top: 5px; }
+/* The Dashboard's value tabs: each is a headline figure and picks the chart's line. */
+.value-tabs { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 18px; margin-bottom: 14px; }
+.value-tabs button {
+  background: none; border: 0; border-bottom: 2px solid var(--line); padding: 2px 0 10px; text-align: left;
+  font: inherit; color: var(--ink); cursor: pointer; display: grid; gap: 5px; align-content: end;
+}
+.value-tabs button:hover { border-bottom-color: var(--line-2); }
+.value-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); }
+.value-tab-figure { font-size: 19px; font-weight: 600; }
+.value-tab-sub { font-size: 11px; color: var(--mut); }
+@media (max-width: 900px) { .value-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* A card that opens and closes from its header (Holdings' per-account cards). */
+.collapse-head {
+  width: 100%; background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.collapse-head.closed { margin-bottom: 0; }
+.collapse-chevron { color: var(--mut); font-size: 13px; transition: transform .15s; }
+.collapse-head.closed .collapse-chevron { transform: rotate(-90deg); }
+.collapse-head:hover .collapse-chevron { color: var(--ink); }
+
+/* The Dashboard's accounts card. */
+.acct-group + .acct-group { margin-top: 12px; }
+.acct-group-head { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.acct-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+.acct-row:last-child { border-bottom: 0; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
@@ -215,6 +264,39 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .badge.pos { background: var(--pos-soft); color: var(--pos); }
 .badge.neg { background: var(--neg-soft); color: var(--neg); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* A category as a pill: its colour (--pill, set inline) tinted behind the
+   name; the name in the colour mixed with the ink, so deeper on paper and
+   lighter in the dark, and readable on the tint either way. */
+.cat-pill {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  padding: 1px 9px 1px 8px; border-radius: 999px; border: 1px solid transparent;
+  font-size: 12px; font-weight: 600; line-height: 18px; white-space: nowrap;
+  background: color-mix(in srgb, var(--pill) 18%, var(--surface));
+  color: color-mix(in srgb, var(--pill) 50%, var(--ink));
+}
+.cat-pill.none { background: transparent; border: 1px dashed var(--line-2); color: var(--mut); font-weight: 500; }
+.cat-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pill); flex-shrink: 0; }
+.cat-pill-name { overflow: hidden; text-overflow: ellipsis; }
+/* The picker: a native select laid over the pill, its dot and chevron drawn
+   around it, so it still behaves exactly like a select. */
+.cat-select { position: relative; padding: 0; gap: 0; }
+.cat-select select {
+  appearance: none; -webkit-appearance: none; font: inherit; color: inherit; line-height: inherit;
+  background: transparent; border: 0; border-radius: 999px; cursor: pointer;
+  padding: 1px 22px 1px 20px; max-width: 176px; text-overflow: ellipsis;
+}
+.cat-select.none select { padding-left: 9px; }
+.cat-select select:focus { outline: none; border: 0; }
+/* The transparent outline is what forced-colours (High Contrast) mode draws,
+   since it drops the box-shadow. */
+.cat-select:focus-within {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+  outline: 2px solid transparent; outline-offset: 2px;
+}
+.cat-select option { color: var(--ink); background: var(--surface); font-weight: 400; }
+.cat-select .cat-pill-dot { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.cat-select-chevron { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; opacity: .75; }
 
 /* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; }
@@ -272,7 +354,7 @@ textarea { resize: vertical; font-family: ui-monospace, Consolas, monospace; fon
 label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--mut); font-weight: 500; }
 .field-hint { font-size: 11px; color: var(--mut); font-weight: 400; }
 .field-error { font-size: 11px; color: var(--neg); }
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.row { display: flex; flex-direction: row; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .row.center { align-items: center; }
 .between { justify-content: space-between; }
 
@@ -306,6 +388,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .notice.neg { background: var(--neg-soft); color: var(--neg); }
 .notice.pos { background: var(--pos-soft); color: var(--pos); }
 .notice.info { background: var(--accent-soft); color: var(--accent); }
+.update-banner { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.update-banner-text { flex: 1; }
 
 .feed-row { display: flex; gap: 11px; align-items: center; }
 .feed-icon { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; }
@@ -338,3 +422,34 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .market-row-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .market-row-head .cell-secondary:last-child { margin-left: auto; }
 .market-day { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+
+/* The Today board: a full-width grid of market tiles. */
+.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.board-tile { background: var(--line-soft); border-radius: 9px; padding: 10px 12px 8px; display: grid; gap: 6px; }
+.board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.board-level { font-size: 19px; font-weight: 600; margin-top: 2px; }
+.board-change { font-size: 12px; font-weight: 600; padding-top: 2px; white-space: nowrap; }
+/* The month's closes, full tile width; colour from the month's direction. */
+.sparkline { display: block; width: 100%; height: 40px; color: var(--mut); }
+.sparkline.up { color: var(--pos); }
+.sparkline.down { color: var(--neg); }
+
+/* Heatmap tiles: seven steps from deep red through neutral to deep green,
+   mixed from the theme's own pos/neg so both palettes stay in key. */
+.heat-tile { border-radius: 5px; padding: 6px 8px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; gap: 1px; min-width: 0; }
+.heat-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.heat-move { font-size: 12px; }
+.heat-0  { background: var(--line-soft); color: var(--ink); }
+.heat-p1 { background: color-mix(in srgb, var(--pos) 22%, var(--surface)); color: var(--ink); }
+.heat-p2 { background: color-mix(in srgb, var(--pos) 45%, var(--surface)); color: var(--ink); }
+.heat-p3 { background: color-mix(in srgb, var(--pos) 75%, var(--surface)); color: var(--surface); }
+.heat-n1 { background: color-mix(in srgb, var(--neg) 22%, var(--surface)); color: var(--ink); }
+.heat-n2 { background: color-mix(in srgb, var(--neg) 45%, var(--surface)); color: var(--ink); }
+.heat-n3 { background: color-mix(in srgb, var(--neg) 75%, var(--surface)); color: var(--surface); }
+.heat-size { font-size: 10px; opacity: .8; margin-top: auto; white-space: nowrap; }
+.heat-tile.heat-compact .heat-size { display: none; }
+.heat-treemap { list-style: none; margin: 0; padding: 0; position: relative; height: 300px; }
+.heat-treemap .heat-tile { position: absolute; box-sizing: border-box; border: 2px solid var(--surface); }
+.heat-tile.heat-tiny > * { display: none; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

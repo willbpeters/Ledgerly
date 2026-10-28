@@ -1,8 +1,15 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Account } from "../../domain/types";
+import type { Account, Goal } from "../../domain/types";
 
 const setHidden = vi.fn();
+const deleteAccount = vi.fn();
+const updateGoal = vi.fn();
+const ask = vi.fn();
+const push = vi.fn();
+let goals: Goal[] = [];
+let goalsState: { isLoading: boolean; isError: boolean } = { isLoading: false, isError: false };
+let values = new Map<number, number>();
 
 function account(id: number, name: string, hidden: boolean): Account {
   return {
@@ -15,13 +22,17 @@ let rows: Account[] = [];
 // Only the data layer is mocked; the screen and the shared UI kit are real.
 vi.mock("../../data/queries", () => ({
   useAccounts: () => ({ data: rows, isLoading: false }),
-  useDeleteAccount: () => ({ mutate: vi.fn() }),
+  useDeleteAccount: () => ({ mutate: deleteAccount }),
+  useGoals: () => ({ data: goals, ...goalsState }),
+  useUpdateGoal: () => ({ mutateAsync: updateGoal }),
   useSetAccountType: () => ({ mutate: vi.fn() }),
   useSetAccountHidden: () => ({ mutate: setHidden }),
 }));
 vi.mock("../../data/usePortfolio", () => ({
-  usePortfolio: () => ({ accountValues: new Map<number, number>() }),
+  usePortfolio: () => ({ get accountValues() { return values; } }),
 }));
+vi.mock("../../ui/confirm", () => ({ askToConfirm: (...args: unknown[]) => ask(...args) }));
+vi.mock("../../ui/toast", () => ({ useToast: () => ({ push }) }));
 vi.mock("./AccountForm", () => ({ AccountForm: () => null }));
 
 const { Accounts } = await import("./Accounts");
@@ -66,5 +77,108 @@ describe("Accounts screen — hiding", () => {
     fireEvent.click(screen.getByRole("button", { name: /show hidden \(1\)/i }));
     fireEvent.click(screen.getByRole("button", { name: "Unhide" }));
     expect(setHidden).toHaveBeenCalledWith({ id: 2, hidden: false });
+  });
+});
+
+describe("Accounts screen — deleting an account a goal follows", () => {
+  const goal = (over: Partial<Goal> = {}): Goal => ({
+    id: 7, name: "Trip", target_amount: 2000, target_date: "2027-03-01",
+    account_id: 1, saved_amount: 40, created_at: "", ...over,
+  });
+
+  beforeEach(() => {
+    deleteAccount.mockClear(); updateGoal.mockReset(); ask.mockReset(); push.mockClear();
+    updateGoal.mockResolvedValue(undefined);
+    ask.mockResolvedValue(true);
+    rows = [account(1, "Everyday", false)];
+    values = new Map([[1, 1250.5]]);
+    goals = [goal()];
+    goalsState = { isLoading: false, isError: false };
+  });
+
+  const clickDelete = () => fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+  it("names the goal and the amount it will keep", async () => {
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(ask).toHaveBeenCalled());
+    expect(ask.mock.calls[0][0]).toContain(
+      "Delete “Everyday”? This removes its transactions. Your goal “Trip” follows this account. Tally will keep its current amount, $1,250.50, as an amount kept by hand.");
+  });
+
+  it("keeps the goal's progress as its hand-kept amount, then deletes the account", async () => {
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(deleteAccount).toHaveBeenCalledWith(1));
+    expect(updateGoal).toHaveBeenCalledWith({
+      id: 7,
+      goal: { name: "Trip", target_amount: 2000, target_date: "2027-03-01", account_id: 1, saved_amount: 1250.5 },
+    });
+    expect(updateGoal.mock.invocationCallOrder[0]).toBeLessThan(deleteAccount.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps an overdrawn account as nothing, not as a negative amount", async () => {
+    values = new Map([[1, -80]]);
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(deleteAccount).toHaveBeenCalled());
+    expect(updateGoal.mock.calls[0][0].goal.saved_amount).toBe(0);
+  });
+
+  it("keeps the hand-kept amount for a hidden account, which the goal was already showing", async () => {
+    rows = [account(1, "Everyday", true)];
+    values = new Map();
+    render(<Accounts />);
+    fireEvent.click(screen.getByRole("button", { name: /show hidden/i }));
+    clickDelete();
+    await waitFor(() => expect(deleteAccount).toHaveBeenCalled());
+    expect(updateGoal.mock.calls[0][0].goal.saved_amount).toBe(40);
+  });
+
+  it("leaves goals that follow other accounts alone", async () => {
+    goals = [goal({ account_id: 2 }), goal({ id: 8, account_id: null })];
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(deleteAccount).toHaveBeenCalledWith(1));
+    expect(updateGoal).not.toHaveBeenCalled();
+    expect(ask.mock.calls[0][0]).not.toContain("follows this account");
+  });
+
+  it("changes nothing when the owner says no", async () => {
+    ask.mockResolvedValue(false);
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(ask).toHaveBeenCalled());
+    expect(updateGoal).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("disables Delete while the goals are still loading", () => {
+    goalsState = { isLoading: true, isError: false };
+    render(<Accounts />);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    clickDelete();
+    expect(ask).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete, and says so, when the goals could not be loaded", async () => {
+    goals = [];
+    goalsState = { isLoading: false, isError: true };
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(push.mock.calls[0][0]).toMatchObject({ tone: "neg", title: "Couldn't check your goals, so nothing was deleted." });
+    expect(ask).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not delete the account, and says why, when the goal could not be updated", async () => {
+    updateGoal.mockRejectedValue("disk full");
+    render(<Accounts />);
+    clickDelete();
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(push.mock.calls[0][0]).toMatchObject({ tone: "neg", body: "disk full" });
+    expect(deleteAccount).not.toHaveBeenCalled();
   });
 });

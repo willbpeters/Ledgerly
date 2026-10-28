@@ -5,7 +5,7 @@ import type { BankTransaction } from "../domain/types";
 const txn = {
   id: 7, account_id: 1, external_id: "t", posted: "2026-10-01", amount: -9, description: "TARGET",
   payee: "Target", memo: null, mcc: null, pending: false, category_id: 3, category_source: "auto",
-  reviewed: false, note: "x", removed: true,
+  reviewed: false, note: "x", removed: true, splits: [],
 } as BankTransaction;
 
 describe("undo", () => {

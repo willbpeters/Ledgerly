@@ -50,6 +50,10 @@ export interface SeriesPoint { date: string; value: number; }
 export interface ValuePoint extends SeriesPoint {
   /** Holdings only — unmoved by deposits, withdrawals or card balances. */
   invested: number;
+  /** Cash on every non-credit account, brokerage cash included. */
+  cash: number;
+  /** Owed on credit accounts, as a positive amount: the line rises with the debt. */
+  liabilities: number;
 }
 
 export interface SyncedHolding {
@@ -82,20 +86,54 @@ export interface BankTransaction {
   note: string | null;
   /** Left out of Spending and budgets (paid back); restorable. */
   removed: boolean;
+  /** The pieces, when split across categories; empty otherwise. While split,
+   *  `category_id` is null and the pieces are what count — read them through
+   *  `piecesOf()` in `splits.ts`, never `category_id` alone. */
+  splits: TxnSplit[];
 }
+
+/** One piece of a split transaction. The amount carries the transaction's
+ *  sign: a purchase splits into negative pieces. */
+export interface TxnSplit {
+  id: number; category_id: number | null; amount: number; note: string | null;
+}
+/** A piece on its way to the database, before it has an id. */
+export type NewSplit = Omit<TxnSplit, "id">;
 
 /** What an import from Copilot would do. See `budget/copilot.rs`. */
 export interface CopilotPlan {
   matches: { txn_id: number; category: string | null; note: string | null }[];
   additions: { external_id: string; posted: string; amount: number; name: string; category: string | null }[];
   skipped: { date: string; name: string; amount: number; account: string }[];
-  /** Ledgerly rows Copilot does not have: usually deleted there after being paid back. */
-  not_in_copilot: { txn_id: number; date: string; name: string; amount: number; account: string }[];
+  /** Tally rows Copilot does not have: usually deleted there after being paid back. */
+  not_in_copilot: {
+    txn_id: number; date: string; name: string; amount: number; account: string;
+    /** Added by an earlier Copilot import, and no longer in Copilot. */
+    earlier_export: boolean;
+  }[];
   pending_or_excluded: number;
   new_categories: { name: string; kind: string }[];
   rules: { pattern: string; category: string }[];
-  /** Copilot account → the Ledgerly account it maps to. */
+  /** Copilot account → the Tally account it maps to. */
   accounts: [string, string][];
+  /** The export's newest day (YYYY-MM-DD). Nothing in Tally after it changes,
+   *  apart from a rename in `merges`. */
+  cutoff: string;
+  /** Tally's old category name → Copilot's, merged or renamed first. */
+  merges: [string, string][];
+  /** Categories left holding nothing that the export doesn't use, with no
+   *  rows removed: deleted. */
+  deletions: string[];
+  /** Each category the export doesn't use that only rows Copilot doesn't
+   *  cover keep. It goes when `kept_rows` is 0 and every `removable` row
+   *  (txn ids from `not_in_copilot`) is removed. */
+  category_holds: { name: string; kept_rows: number; removable: number[]; pinned: number }[];
+  /** Matched rows whose category changes to Copilot's. */
+  recategorised: number;
+  /** Rows in Tally dated after `cutoff`, left as they are. */
+  untouched_after_cutoff: number;
+  /** Every category name the export uses, most used first. */
+  export_categories: string[];
 }
 export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }
 export interface CategoryRule {
@@ -126,7 +164,14 @@ export interface SecurityProfile {
   security_id: number; long_name: string | null; sector: string | null;
   quote_type: string | null; tracks: string | null;
 }
-export interface IndexQuote { symbol: string; label: string; latest: number; previous: number; }
+/** How a board symbol is shown: see `market/indices.rs`. */
+export type BoardGroup = "index" | "volatility" | "yield" | "sector";
+export interface IndexQuote {
+  symbol: string; label: string; group: BoardGroup;
+  latest: number; previous: number;
+  /** Up to the last five closes, oldest first. */
+  recent: number[];
+}
 export interface MarketRefreshReport {
   news_added: number; profiles_updated: number; earnings_updated: number;
   indices_updated: number; errors: string[];
@@ -188,4 +233,21 @@ export interface DeviceSyncStatus {
   unsent: number;
   last: DeviceSyncReport | null;
   last_error: string | null;
+}
+
+/** A savings goal. It follows one account's value, or an amount kept up to date by hand. */
+export interface Goal {
+  id: number; name: string; target_amount: number;
+  /** `YYYY-MM-DD`, or null for a goal with no deadline. */
+  target_date: string | null;
+  /** The account whose value is the progress; null when updated by hand. */
+  account_id: number | null;
+  /** Saved so far, for a goal updated by hand. */
+  saved_amount: number;
+  created_at: string;
+}
+/** A goal on its way to the database, before it has an id. */
+export interface NewGoal {
+  name: string; target_amount: number; target_date: string | null;
+  account_id: number | null; saved_amount: number;
 }

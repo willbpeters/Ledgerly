@@ -1,39 +1,33 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { usePortfolio } from "../data/usePortfolio";
-import { useTransactions, useSecurities, usePreviousPrices, useSimplefinStatus } from "../data/queries";
+import { useTransactions, useSecurities, usePreviousPrices, useSimplefinStatus, useBankTransactions } from "../data/queries";
 import { readLastSync } from "../data/lastSync";
 import { buildMovers, attentionItems } from "../domain/movers";
+import { activityWindowStart, recentActivity } from "../domain/overview";
+import { localIsoDate } from "../domain/dates";
 import { money, pct, fmtDate } from "../ui/format";
 import { useChartColors } from "../ui/chartColors";
 import { Badge } from "../ui/components";
 import { Icons } from "./icons";
-import type { Transaction, TxnType } from "../domain/types";
 
 type Tab = "activity" | "movers" | "accounts";
 
-const INFLOW: TxnType[] = ["deposit", "dividend", "interest", "sell"];
-
-function txnLabel(t: Transaction, ticker: string | null): string {
-  const kind = t.type.charAt(0).toUpperCase() + t.type.slice(1);
-  return ticker ? `${kind} · ${ticker}` : kind;
-}
-
-function txnAmount(t: Transaction): number {
-  if (t.type === "buy" || t.type === "sell") return t.quantity * t.price;
-  return t.amount;
-}
+/** How far back Recent looks, and how many rows it shows. */
+const RECENT_DAYS = 30;
+const RECENT_ROWS = 6;
 
 export function InsightRail() {
   const [tab, setTab] = useState<Tab>("activity");
   const { holdings, accountValues, accounts, isLoading } = usePortfolio();
+  const today = localIsoDate();
+  const { data: bankTxns = [] } = useBankTransactions(activityWindowStart(today, RECENT_DAYS), today);
   const { data: txns = [] } = useTransactions();
   const { data: securities = [] } = useSecurities();
   const { data: previous = [] } = usePreviousPrices();
   const { data: status } = useSimplefinStatus();
   const colors = useChartColors();
 
-  const tickerOf = (id: number | null) => securities.find((s) => s.id === id)?.ticker ?? null;
   const movers = buildMovers(holdings, new Map(previous));
   const attention = attentionItems({
     accounts,
@@ -42,9 +36,11 @@ export function InsightRail() {
     skippedHoldings: readLastSync()?.holdings_skipped ?? 0,
   });
 
-  const recent = [...txns]
-    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id))
-    .slice(0, 6);
+  // Synced bank and card activity alongside investment trades, as on the Dashboard.
+  const recent = useMemo(
+    () => recentActivity({ bankTxns, txns, accounts, securities, today, days: RECENT_DAYS }).slice(0, RECENT_ROWS),
+    [bankTxns, txns, accounts, securities, today],
+  );
 
   const ranked = accounts
     .map((a) => ({ account: a, value: accountValues.get(a.id) ?? 0 }))
@@ -78,18 +74,20 @@ export function InsightRail() {
 
       {tab === "activity" && (
         <div className="insight-block">
-          <div className="cap" style={{ marginBottom: 12 }}>Recent</div>
+          <div style={{ display: "flex", alignItems: "baseline", marginBottom: 12 }}>
+            <div className="cap">Recent</div>
+            {recent.length > 0 && <Link to="/spending" style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600 }}>View all</Link>}
+          </div>
           {isLoading ? <p className="muted">Loading…</p> : recent.length === 0 ? (
             <p className="muted" style={{ fontSize: 12 }}>
-              Nothing recorded yet. <Link to="/activity">Add a transaction</Link>.
+              Nothing in the last {RECENT_DAYS} days. Sync your banks, or <Link to="/activity">add a transaction</Link>.
             </p>
           ) : (
             <div style={{ display: "grid", gap: 13 }}>
-              {recent.map((t) => {
-                const inflow = INFLOW.includes(t.type);
-                const ticker = tickerOf(t.security_id);
+              {recent.map((r) => {
+                const inflow = r.amount > 0;
                 return (
-                  <div className="feed-row" key={t.id}>
+                  <div className="feed-row" key={r.key}>
                     <span className="feed-icon" style={{
                       background: inflow ? "var(--pos-soft)" : "var(--accent-soft)",
                       color: inflow ? "var(--pos)" : "var(--accent)",
@@ -97,11 +95,15 @@ export function InsightRail() {
                       {inflow ? <Icons.up size={13} /> : <Icons.down size={13} />}
                     </span>
                     <span style={{ minWidth: 0 }}>
-                      <span style={{ fontWeight: 600, display: "block" }}>{txnLabel(t, ticker)}</span>
-                      <span className="cell-secondary">{fmtDate(t.date)}</span>
+                      <span style={{ fontWeight: 600, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.description}
+                      </span>
+                      <span className="cell-secondary">
+                        {fmtDate(r.date)} · {r.account}{r.pending && " · Pending"}
+                      </span>
                     </span>
                     <span className="n" style={{ marginLeft: "auto", fontWeight: 600, color: inflow ? "var(--pos)" : undefined }}>
-                      {inflow ? "+" : ""}{money(txnAmount(t))}
+                      {inflow ? "+" : ""}{money(r.amount)}
                     </span>
                   </div>
                 );

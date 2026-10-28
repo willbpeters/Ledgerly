@@ -16,7 +16,7 @@ function price(security_id: number, date: string, close: number): PriceRow {
 function bank(id: number, account_id: number, posted: string, amount: number): BankTransaction {
   return {
     id, account_id, external_id: `e${id}`, posted, amount, description: "x",
-    payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto", reviewed: true, note: null, removed: false,
+    payee: null, memo: null, mcc: null, pending: false, category_id: null, category_source: "auto", reviewed: true, note: null, removed: false, splits: [],
   };
 }
 
@@ -269,5 +269,67 @@ describe("reconstructSeries — invested apart from cash", () => {
     const day = s.find((p) => p.date === "2026-09-05");
     expect(day?.invested).toBe(200);
     expect(day?.value).toBe(2000 - 500);
+  });
+});
+
+describe("reconstructSeries — cash and liabilities", () => {
+  const prices = [price(10, "2026-09-03", 100), price(10, TODAY, 100)];
+
+  it("splits manual cash from manual card debt, owed as a positive amount", () => {
+    const checking = acct(1, "Checking", "cash", "manual", null);
+    const card = acct(2, "Card", "credit", "manual", null);
+    const txns: Transaction[] = [
+      { id: 1, account_id: 1, security_id: null, type: "deposit", date: "2026-09-01",
+        quantity: 0, price: 0, amount: 1000, fees: 0, note: null },
+      { id: 2, account_id: 2, security_id: null, type: "withdrawal", date: "2026-09-04",
+        quantity: 0, price: 0, amount: 300, fees: 0, note: null },
+    ];
+    const s = reconstructSeries({ ...base, accounts: [checking, card], txns, synced: [], bankTxns: [], prices });
+    expect(s.find((p) => p.date === "2026-09-03")).toMatchObject({ cash: 1000, liabilities: 0, value: 1000 });
+    expect(s.find((p) => p.date === TODAY)).toMatchObject({ cash: 1000, liabilities: 300, value: 700 });
+  });
+
+  it("walks a synced card back through what has posted since", () => {
+    const card = acct(1, "Card", "credit", "simplefin", -500);
+    const bankTxns = [bank(1, 1, "2026-09-04", -200)];
+    const s = reconstructSeries({ ...base, accounts: [card], txns: [], synced: [], bankTxns, prices });
+    expect(s.find((p) => p.date === "2026-09-03")?.liabilities).toBe(300);
+    expect(s.find((p) => p.date === TODAY)?.liabilities).toBe(500);
+  });
+
+  it("counts a synced brokerage's uninvested balance as cash, not as investments", () => {
+    const broker = acct(1, "Fidelity", "brokerage", "simplefin", 1000);
+    const held: SyncedHolding[] = [
+      { id: 1, account_id: 1, security_id: 10, shares: 4, cost_basis: 400, market_value: 400, as_of: TODAY },
+    ];
+    const s = reconstructSeries({ ...base, accounts: [broker], txns: [], synced: held, bankTxns: [], prices });
+    expect(s.find((p) => p.date === TODAY)).toMatchObject({ invested: 400, cash: 600, liabilities: 0 });
+  });
+
+  it("leaves hidden accounts out of cash and liabilities", () => {
+    const card = acct(1, "Card", "credit", "simplefin", -500, true);
+    const savings = acct(2, "Savings", "cash", "simplefin", 900, true);
+    const s = reconstructSeries({ ...base, accounts: [card, savings], txns: [], synced: [], bankTxns: [], prices });
+    expect(s.length).toBeGreaterThan(0);
+    expect(s.every((p) => p.cash === 0 && p.liabilities === 0)).toBe(true);
+  });
+
+  it("keeps net worth equal to investments plus cash less liabilities", () => {
+    const accounts = [
+      acct(1, "Fidelity", "brokerage", "simplefin", 1000),
+      acct(2, "Card", "credit", "simplefin", -250),
+      acct(3, "Wallet", "cash", "manual", null),
+    ];
+    const held: SyncedHolding[] = [
+      { id: 1, account_id: 1, security_id: 10, shares: 4, cost_basis: 400, market_value: 400, as_of: TODAY },
+    ];
+    const txns: Transaction[] = [
+      { id: 1, account_id: 3, security_id: null, type: "deposit", date: "2026-09-02",
+        quantity: 0, price: 0, amount: 75.5, fees: 0, note: null },
+    ];
+    const bankTxns = [bank(1, 2, "2026-09-04", -40), bank(2, 1, "2026-09-04", 120)];
+    const s = reconstructSeries({ ...base, accounts, txns, synced: held, bankTxns, prices });
+    expect(s.length).toBeGreaterThan(0);
+    for (const p of s) expect(p.value).toBeCloseTo(p.invested + p.cash - p.liabilities, 6);
   });
 });

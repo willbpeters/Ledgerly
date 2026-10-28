@@ -17,6 +17,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init()) // keep whatever plugins scaffold added
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
@@ -71,9 +73,11 @@ pub fn run() {
             commands::budget::categories_create,
             commands::budget::categories_update,
             commands::budget::categories_delete,
+            commands::budget::categories_clear,
             commands::budget::bank_transactions_list,
             commands::budget::bank_transactions_range,
             commands::budget::bank_transaction_set_category,
+            commands::budget::bank_transaction_set_splits,
             commands::budget::bank_transactions_to_review,
             commands::budget::bank_transactions_approve,
             commands::budget::bank_transactions_set_removed,
@@ -83,6 +87,9 @@ pub fn run() {
             commands::budget::budgets_list,
             commands::budget::budget_set,
             commands::budget::accounts_set_type,
+            commands::recurring::recurring_dismissed_list,
+            commands::recurring::recurring_dismiss,
+            commands::recurring::recurring_undismiss,
             commands::market::market_news_list,
             commands::market::market_earnings_list,
             commands::market::market_profiles_list,
@@ -105,6 +112,10 @@ pub fn run() {
             commands::devicesync::device_sync_join,
             commands::devicesync::device_sync_now,
             commands::devicesync::device_sync_stop,
+            commands::goals::goals_list,
+            commands::goals::goals_create,
+            commands::goals::goals_update,
+            commands::goals::goals_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

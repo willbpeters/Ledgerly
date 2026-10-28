@@ -10,11 +10,11 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 /// The folder Start creates inside the place the owner picks.
-pub const FOLDER_NAME: &str = "Ledgerly Sync";
+pub const FOLDER_NAME: &str = "Tally Sync";
 
 /// Where Start puts the sync data when the owner picks `chosen`: a
-/// "Ledgerly Sync" folder inside it, so picking "My Drive" doesn't scatter
-/// files across the Drive. Picking a "Ledgerly Sync" folder itself uses it
+/// "Tally Sync" folder inside it, so picking "My Drive" doesn't scatter
+/// files across the Drive. Picking a "Tally Sync" folder itself uses it
 /// as it is, rather than nesting a second one.
 pub fn folder_for_start(chosen: &Path) -> PathBuf {
     if is_sync_folder_name(chosen) {
@@ -25,7 +25,7 @@ pub fn folder_for_start(chosen: &Path) -> PathBuf {
 }
 
 /// Where Join looks when the owner picks `chosen`: the folder itself if it
-/// holds the copy, else its "Ledgerly Sync" folder, so the same place can be
+/// holds the copy, else its "Tally Sync" folder, so the same place can be
 /// picked on both computers. Neither holding a copy gives `chosen` back, and
 /// `join` explains what to do.
 pub fn folder_for_join(chosen: &Path) -> PathBuf {
@@ -55,7 +55,7 @@ pub fn start_first(conn: &Connection, app_dir: &Path, folder: &Path) -> Result<D
     }
     let seed = files::seed_path(folder);
     if files::is_used(folder) {
-        return Err("That folder already has Ledgerly sync data. Join it from this computer, or choose an empty folder.".into());
+        return Err("That folder already has Tally sync data. Join it from this computer, or choose an empty folder.".into());
     }
     let id = meta::new_device_id(conn).map_err(|e| e.to_string())?;
     meta::enable(conn, &id).map_err(|e| e.to_string())?;
@@ -103,7 +103,7 @@ fn write_seed(conn: &Connection, seed: &Path) -> Result<(), String> {
 pub fn join(conn: &Connection, paths: &Paths, folder: &Path, at: NaiveDateTime) -> Result<Attempt, String> {
     let seed = files::seed_path(folder);
     if !seed.exists() {
-        return Err("There's no Ledgerly data in that folder yet. Turn on sync on your other computer first, choosing this same folder.".into());
+        return Err("There's no Tally data in that folder yet. Turn on sync on your other computer first, choosing this same folder.".into());
     }
     let id = meta::new_device_id(conn).map_err(|e| e.to_string())?;
     let safety = restore::stage(conn, paths, &seed, at)?;
@@ -164,35 +164,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::new(dir.path());
         let conn = db::open(&paths.db()).unwrap();
+        crate::budget::seed::test_categories(&conn);
         Computer { _dir: dir, paths, conn }
     }
 
     #[test]
-    fn start_makes_a_ledgerly_sync_folder_inside_the_chosen_place() {
+    fn start_makes_a_tally_sync_folder_inside_the_chosen_place() {
         let drive = tempfile::tempdir().unwrap();
-        assert_eq!(folder_for_start(drive.path()), drive.path().join("Ledgerly Sync"));
+        assert_eq!(folder_for_start(drive.path()), drive.path().join("Tally Sync"));
         let pc = computer();
         let folder = folder_for_start(drive.path());
         start_first(&pc.conn, &pc.paths.app_dir, &folder).unwrap();
-        assert!(files::seed_path(&drive.path().join("Ledgerly Sync")).exists());
+        assert!(files::seed_path(&drive.path().join("Tally Sync")).exists());
     }
 
     #[test]
-    fn choosing_the_ledgerly_sync_folder_itself_does_not_nest_another() {
+    fn choosing_the_tally_sync_folder_itself_does_not_nest_another() {
         let drive = tempfile::tempdir().unwrap();
-        let picked = drive.path().join("ledgerly sync");
+        let picked = drive.path().join("tally sync");
         assert_eq!(folder_for_start(&picked), picked);
     }
 
     #[test]
-    fn join_finds_the_copy_in_the_place_or_its_ledgerly_sync_folder() {
+    fn join_finds_the_copy_in_the_place_or_its_tally_sync_folder() {
         let drive = tempfile::tempdir().unwrap();
         let pc = computer();
         let folder = folder_for_start(drive.path());
         start_first(&pc.conn, &pc.paths.app_dir, &folder).unwrap();
 
-        assert_eq!(folder_for_join(drive.path()), folder, "picking My Drive finds Ledgerly Sync");
-        assert_eq!(folder_for_join(&folder), folder, "picking Ledgerly Sync itself works too");
+        assert_eq!(folder_for_join(drive.path()), folder, "picking My Drive finds Tally Sync");
+        assert_eq!(folder_for_join(&folder), folder, "picking Tally Sync itself works too");
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(folder_for_join(empty.path()), empty.path(), "nothing there: join explains");
     }
@@ -240,6 +241,7 @@ mod tests {
         drop(conn); // the restart lets go of the file
         backup::startup::run(&paths, test_at("2026-10-16 09:00:05"));
         let conn = db::open(&paths.db()).unwrap();
+        crate::budget::seed::test_categories(&conn);
         let laptop_settings = settings::load(&settings::path(&paths.app_dir));
         meta::adopt(&conn, &laptop_settings).unwrap();
 
@@ -363,7 +365,7 @@ mod tests {
         std::fs::create_dir_all(drive.path().join("changes/pc")).unwrap();
         std::fs::write(drive.path().join("changes/pc/0000000000001-1.json"), "{}").unwrap();
         let err = start_first(&pc.conn, &pc.paths.app_dir, drive.path()).unwrap_err();
-        assert!(err.contains("already has Ledgerly sync data"), "{err}");
+        assert!(err.contains("already has Tally sync data"), "{err}");
         assert!(!settings::path(&pc.paths.app_dir).exists());
     }
 
@@ -392,6 +394,7 @@ mod tests {
         drop(conn);
         backup::startup::run(&paths, test_at("2026-10-16 09:00:05"));
         let conn = db::open(&paths.db()).unwrap();
+        crate::budget::seed::test_categories(&conn);
         meta::adopt(&conn, &settings::load(&settings::path(&paths.app_dir))).unwrap();
         let left: i64 = conn.query_row("SELECT count(*) FROM sync_outbox", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);

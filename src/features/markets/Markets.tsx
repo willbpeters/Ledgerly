@@ -4,6 +4,9 @@ import { money, pct, timeAgo } from "../../ui/format";
 import { useMarketRefresh } from "../../data/queries";
 import { planNextMarketTick } from "../../data/marketSchedule";
 import { useMarketView } from "./useMarketView";
+import { TodayBoard } from "./TodayBoard";
+import { SectorHeatmap } from "./SectorHeatmap";
+import { HoldingsHeatmap } from "./HoldingsHeatmap";
 import type { MarketRow } from "../../domain/market";
 
 // `pct` already supplies its own +/- sign, so do not add another.
@@ -66,37 +69,32 @@ export function Markets() {
 
   return (
     <>
-      <PageHeader subtitle="What happened to what you own" />
+      <PageHeader subtitle="The market today, and what happened to what you own" />
 
-      <Card title="Today" actions={
-        <Button size="sm" loading={refresh.isPending} onClick={() => refresh.mutate()}>Refresh</Button>
-      }>
-        <div className="row center" style={{ gap: 18, flexWrap: "wrap" }}>
-          {view.indices.map((i) => (
-            <div key={i.symbol}>
-              <div className="cell-secondary">{i.label}</div>
-              <div className="cell-primary"><Move value={i.changePct} /></div>
+      <TodayBoard rows={view.indices} you={you}
+        actions={<Button size="sm" loading={refresh.isPending} onClick={() => refresh.mutate()}>Refresh</Button>}
+        footer={<>
+          {view.newestFetch
+            ? <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                News as of {timeAgo(view.newestFetch)}.
+              </p>
+            : <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                Nothing fetched yet — press Refresh.
+              </p>}
+          {refresh.data && refresh.data.errors.length > 0 && (
+            <div className="notice warn" style={{ marginTop: 8 }}>
+              {refresh.data.errors.length} source{refresh.data.errors.length === 1 ? "" : "s"} could
+              not be reached. What was already stored is still shown.
             </div>
-          ))}
-          <div>
-            <div className="cell-secondary">You</div>
-            <div className="cell-primary"><Move value={you} /></div>
-          </div>
-        </div>
-        {view.newestFetch
-          ? <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-              News as of {timeAgo(view.newestFetch)}.
-            </p>
-          : <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-              Nothing fetched yet — press Refresh.
-            </p>}
-        {refresh.data && refresh.data.errors.length > 0 && (
-          <div className="notice warn" style={{ marginTop: 8 }}>
-            {refresh.data.errors.length} source{refresh.data.errors.length === 1 ? "" : "s"} could
-            not be reached. What was already stored is still shown.
-          </div>
-        )}
-      </Card>
+          )}
+        </>} />
+
+      <div className="grid grid-2">
+        <SectorHeatmap sectors={view.sectors} />
+        <HoldingsHeatmap holdings={view.companies.map((r) => (
+          { ticker: r.ticker, value: r.value, changePct: r.dayChangePct }
+        ))} />
+      </div>
 
       <Card title="Your companies" subtitle="Biggest movers first. Headlines sit beside moves, not as their cause.">
         {view.companies.length === 0

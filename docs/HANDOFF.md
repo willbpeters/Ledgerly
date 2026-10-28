@@ -1,7 +1,22 @@
-# Ledgerly — Handoff & Next Steps
+# Tally — Handoff & Next Steps
 
-**Last updated:** 2026-10-14
-**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Ledgerly` (private), branch `master`
+**Last updated:** 2026-10-24
+**Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Tally` (public: the updater reads its Releases without signing in), branch `master`
+
+**Renamed from Ledgerly to Tally on 2026-10-24** (0.1.3). Only what the owner
+sees changed. These still say "ledgerly" on purpose, because renaming them would
+lose data or settings: the identifier `com.ledgerly.app` (the `%APPDATA%` data
+folder and the updater's identity), the Windows Credential Manager service
+`Ledgerly` (the saved SimpleFIN URL), the `ledgerly.*` localStorage keys, the
+`ledgerly-` backup file prefix, the Rust crate and binary `ledgerly`, the
+`LEDGERLY_DB` test variable, and this local folder (moving it forces a full
+Rust rebuild). The GitHub repo was renamed to `willbpeters/Tally`; GitHub
+redirects the old `willbpeters/Ledgerly` address, which copies from before
+0.1.3 still use to find updates, so **never create a new repo named
+`Ledgerly`** on this account. The installer hook
+`src-tauri/windows/hooks.nsh` removes an old Ledgerly install (program,
+shortcuts, Installed apps entry) after Tally installs, because the installer
+files apps under their display name and would otherwise leave both.
 
 ## What this project is
 
@@ -23,13 +38,19 @@ budgeting and spending module.
 - **Tests:** 296 TypeScript (Vitest) + 284 Rust (`cargo test`), plus 10 tests marked
   `#[ignore]` that touch the network, the OS credential store or the owner's
   real files — all passing as of 2026-10-15. Run the live ones with `cargo test --lib live_ -- --ignored`.
-- **Build:** `npm run tauri build` → `Ledgerly_0.1.0_x64-setup.exe` + `.msi`
-  under `src-tauri/target/release/bundle/`.
+- **Build:** releases are built on GitHub by the Release button (see
+  [Releasing](#releasing)). A local `npm run tauri build` still makes an
+  unsigned `-setup.exe` + `.msi` under `src-tauri/target/release/bundle/`.
 
 ### What's built
-- **Markets**: a screen answering "what happened to what I own?" and "is this
-  me or the whole market?". A strip of S&P/Nasdaq/Dow beside your own day
-  change; held companies with their day move and latest headlines, biggest
+- **Markets**: a screen (titled "Markets"; it used to say "Dashboard") answering
+  "what happened to what I own?" and "is this me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
+  Russell 2000, International via VXUS, VIX, 10- and 5-year yields; level,
+  move and a one-month sparkline; VIX and yields uncoloured, yields in basis
+  points) with your own day change in its header; an **S&P sector heatmap** (the
+  eleven SPDR sector funds, sized by approximate S&P weight from `SECTOR_WEIGHTS`)
+  and a **stocks heatmap** (individual stocks only, sized by value)
+  coloured by today's move; held companies with their day move and latest headlines, biggest
   mover first; held index funds with what they track; and an earnings strip for
   the next 14 days with beat/miss on quarters just reported. Everything renders
   from a SQLite cache, so the screen never blocks on the network and works
@@ -47,33 +68,218 @@ budgeting and spending module.
   progress bar and remainder; and the month's transactions with an inline
   category picker. Changing a category can write a payee rule that later syncs
   obey. Categories and the learned rules are managed in Settings.
+  **No preset categories (2026-10-28):** a fresh database has none; they come
+  from the owner or from the Copilot import. Only two are ever made by Tally
+  itself, **Internal transfer** (kind `transfer`) and **Income** (kind
+  `income`), because they mirror Copilot's own transaction types. They are
+  made the first time a row needs one by `seed::system_category(conn,
+  SystemKind)`, which finds an existing one **by name only** (Copilot's name,
+  or Tally's old "Transfer", ignoring case) and makes the kind right if it
+  differs. It never picks a category just because it has the same kind, so an
+  owner's "Investments" (also kind `transfer`) never receives paired
+  transfers. The auto-sorter still speaks Tally's old names (`Dining`,
+  `Shopping`, `Transfer`); `seed::sorter_category` maps them onto what the
+  owner has through aliases (Dining → Eating Out, Shopping → Shops, then the
+  old name itself) and **never makes a spending category**: with no match the
+  row stays uncategorised and waits in To review. A new category's colour is
+  the least-used one (`seed::next_colour`), counting an older `chart-N` as
+  `cat-N`.
   **Copilot-style sorting (2026-10-15):** SimpleFIN sends no category and, for
   the owner's banks, no merchant code, so `budget/merchants.rs` recognises
   merchants from SimpleFIN's clean `payee`, `budget/transfers.rs` pairs equal
-  and opposite amounts between the owner's accounts as Transfer, and payments
+  and opposite amounts between the owner's accounts as Internal transfer, and payments
   to people (Apple Pay, Venmo, Zelle) are left for the owner. A **Month / To
   review** switch lists unreviewed rows with ✓ and "Mark all reviewed".
   Investment accounts are left out of Spending. Every sync re-sorts all
   automatic rows, so a list change reaches history. Spec:
   `docs/superpowers/specs/2026-10-14-copilot-style-categories-design.md`
-- **Import from Copilot** (Settings): reads Copilot's CSV export, matches
-  rows to transactions SimpleFIN already has (same account by mask, same
-  amount, within 3 days) and gives them the owner's Copilot category and note;
-  adds older rows as history — to their own account, or to a manual
-  **"Copilot history"** account for accounts Copilot no longer has; creates
-  the owner's Copilot categories (Golf, Car, Date night…; Investments as a
-  transfer kind); learns payee rules (2+ uses, 90% one category, never for
-  Apple Pay / Venmo / Zelle). It also lists Ledgerly rows Copilot does not have
-  (deleted there after being paid back) with checkboxes to remove them. A
-  backup is taken first; it all lands in one transaction; re-running is safe.
-  Pure planner in `budget/copilot.rs`. Spec:
-  `docs/superpowers/specs/2026-10-15-copilot-import-design.md`
+- **Goals** (`/goals`, on the rail below Spending): savings targets with an
+  optional date (exactly `YYYY-MM-DD`, a real day). A goal **follows an
+  account** — its progress is that account's value from `derivePortfolio()`
+  (at least $0; a visible account with no value yet counts as $0), so it moves
+  with each sync — or holds an amount the owner updates by hand ("Saved so
+  far"). Only visible cash and brokerage accounts can be followed (a card
+  balance is a debt). The screen shows saved of target, a bar, and what to set
+  aside each month to make the date: what is left divided by the months to go.
+  Months are counted by the calendar (`monthsUntil` in `src/domain/dates.ts`;
+  a part month counts as a whole one), and the line names the day ("by March
+  1, 2027"). On the target day it says "Due today — $Z to go"; once the date
+  has passed it says "The date has passed — $Z to go" and gives no monthly
+  figure. Done is decided in cents. Maths is pure in `src/domain/goals.ts`;
+  storage and the rules in `src-tauri/src/commands/goals.rs`, mirrored by
+  `readGoal` in `src/features/goals/GoalForm.tsx` so mistakes are explained
+  beside the form. A target must be at least $0.01. A goal whose account was
+  retyped to Credit card can't follow it any more: `savedFor` takes the
+  followable ids and the visible ids, and gives `not-followable` (hand-kept
+  amount, "is now a credit card" line, and `GoalForm`'s `otherAccounts`
+  names it) as opposed to `missing-account` for a hidden one. Deleting a
+  followed account in the Accounts screen first stores the amount the goal
+  shows (at least $0) as its `saved_amount`, and the confirmation says so; if
+  that fails the account is not deleted. A sync that removes a followed
+  account does not do this yet (TODO 15c).
+- **Import from Copilot** (Settings): reads Copilot's CSV export and leaves
+  Tally's categories matching Copilot's (2026-10-28 rework; the original was
+  2026-10-15). It matches rows to transactions SimpleFIN already has (same
+  account by mask, same amount, same day or within 3 days; on a different day
+  the two names must share a word of three or more characters, so a $10 Polymarket
+  row never takes a $10 Chick-fil-a), and adds older rows as history — to
+  their own account, or to a manual **"Copilot history"** account for accounts
+  Copilot no longer has. What it does to categories:
+  - **Copilot's names, as they are.** `category_for` returns the export's name
+    exactly (`SAME_AS`, the old Eating Out → Dining table, is gone). An
+    internal transfer is always "Internal transfer"; income with no category
+    is "Income". Categories Tally lacks are created (Investments as kind
+    `transfer`, the rest `spending`).
+  - **Old names merge first.** `OLD_NAMES` (Dining → Eating Out, Shopping →
+    Shops, Transfer → Internal transfer) are folded into Copilot's name by
+    `store::merge_category(from, to)` when the export uses it: transactions,
+    split pieces, rules and budgets move across (the target's own budget wins
+    for a month both have), then the old category is deleted; if the target
+    doesn't exist the old one is simply renamed. A spelling that differs only
+    in case is renamed to Copilot's.
+  - **Copilot wins up to the cutoff.** The `cutoff` is the export's newest
+    posted day. Every matched row dated on or before it takes Copilot's
+    category (made `manual` and reviewed, even over a choice made in Tally; no
+    category in Copilot sends it back to To review). Split rows keep their
+    pieces. **Nothing dated after the cutoff changes**, apart from a merge
+    renaming the category it points at; every write is guarded by
+    `posted <= cutoff`. A cutoff of "" (nothing posted in the export) is
+    refused with `NO_POSTED`.
+  - **Nothing is ever deleted.** "Removal" is the restorable `removed` flag.
+    Tally rows Copilot does not have are listed, ticked by default under a
+    "Remove them / Keep them" switch, for the owner to confirm: those older
+    than the export's newest day for SimpleFIN rows (Copilot runs a few hours
+    behind), and up to and including it for rows an earlier Copilot import
+    added that this export no longer has (`earlier_export`, deleted in Copilot
+    since). An id the plan did not offer is ignored.
+  - **Tidied afterwards.** After the re-sort, `tidy_categories` deletes every
+    category that holds nothing (no live transaction, split piece or budget)
+    and that the export doesn't use. A category still holding a newer row
+    stays; one only rows being removed hold goes with them (`CategoryHold`
+    tells the preview which). The survivors are put in Copilot's order (most
+    used first, then Internal transfer / Income, then the rest) and given
+    `cat-1`, `cat-2`… in that order (`order_categories`).
+  - **"Only Copilot's" (the default, 2026-10-28).** `apply_copilot_plan(..,
+    replace: Some(keep))` also deletes every category the export doesn't use
+    even while it holds rows, splits or budgets (`drop_unwanted_categories`):
+    its rows go uncategorised and back to To review. The export only names
+    categories some transaction uses, so a Copilot category with nothing in
+    it can't be seen: the preview lists each category it would remove with a
+    Keep tick-box, and ticked names (`keep`) stay. A category written on a
+    transfer row (Copilot's "Car" on a smog payment) counts as one of
+    Copilot's, though the row itself is Internal transfer. "Keep ones still
+    in use" (`replace: None`) is the older tidy-only behaviour.
+  - **Remove all categories** (Settings → Categories, `categories_clear`):
+    backs up, then deletes every category; all rows go uncategorised and back
+    to To review, split pieces go uncategorised, rules and budgets go. No
+    transaction is deleted.
+  - **Rules follow Copilot.** Payee rules learned from the export (2+ uses,
+    90% one category, never for Apple Pay / Venmo / Zelle) now replace an
+    existing rule for that payee, then the automatic rows up to the cutoff are
+    re-sorted at once. Notes: Copilot's fills a blank, the owner's stays.
+  - **Transfer pairs** that straddle the cutoff keep their earlier leg a
+    transfer (`pair_transfers(.., until)`).
+
+  A backup is taken first; it all lands in one transaction. **A second import
+  of the same file changes nothing**, and its counts say so (they count rows
+  actually changed). **The preview is exact:** `store::copilot_preview` plans
+  from a snapshot, then runs the real import inside a transaction that is
+  rolled back and reads the result (rows recategorised, categories deleted,
+  holds), twice if a planned merge turned out pointless because its target is
+  deleted anyway. `CopilotImportPanel` shows renames and merges, new
+  categories, the count that get Copilot's category, and "N transactions after
+  <cutoff> keep their categories". Pure planner in `budget/copilot.rs`;
+  writing in `store::apply_copilot_plan`. Original spec:
+  `docs/superpowers/specs/2026-10-15-copilot-import-design.md` (its "the
+  owner's choice wins" and name-translation rules no longer apply)
+- **Category pills** (2026-10-28): a category shows as a pill tinted in its
+  colour with its name in a deeper shade of it; no category is a dashed,
+  muted "Uncategorised" outline. Colours are twelve tokens `--cat-1`…
+  `--cat-12` in `src/styles.css` (light and dark sets, chosen to stay apart for
+  colour-blind readers). `src/ui/categoryColour.ts` turns a stored colour into
+  `var(--cat-N)`; an older `chart-N` colour reads as the same-numbered `cat-N`
+  (before this, every `cat-N` category fell back to the first colour). The
+  pill look is `.cat-pill` in `styles.css`, set from a `--pill` variable.
+  `src/ui/CategoryPill.tsx` has the read-only `CategoryPill` (Activity, split
+  pieces in the list, the Settings category list) and `CategorySelect`, the
+  same pill over a native `<select>` so keyboard and screen readers work as
+  before (the category cell in Spending's Month, To review and Search lists).
+  `BudgetRow` keeps its bar and uses the same colour. Settings → Categories
+  offers all twelve colours by name, and a new category defaults to "let
+  Tally pick" (the least used).
 - **Remove and Undo** (Spending): × removes a transaction from spending and
   budgets (paid back) — a `removed` flag, so a sync never brings it back, and
   **Show removed** → Restore undoes it. Remove, Restore, ✓, Mark all reviewed
   and a category change each show a toast with **Undo**, which puts the rows
   back exactly as they were (`bank_transactions_restore`). The remove question
   has "Remove, don't ask again"; Settings → Spending turns it back on.
+- **Recurring** (Spending → Recurring): bills and subscriptions spotted from
+  every month's history by `detectRecurring` in `src/domain/recurring.ts`
+  (pure, tested). Money out only; transfer and income rows are left out (a
+  split is skipped only when every piece is one); uncategorised ones are kept.
+  A split counts whole, and its series is filed under the largest piece of its
+  latest charge. Charges are grouped by `recurringKey` (payee, or the
+  description when the payee is blank or nothing but runs of three or more
+  digits; lowercased, runs of 3+ digits removed, spaces collapsed; the display
+  name falls back the same way). Same-day rows from one payee are one bill:
+  their amounts are summed into one charge. Two subscriptions to the same payee
+  on different days are merged into one key (a known limit). A bill needs
+  **3+ charges**; the median gap picks the cadence (weekly 6–8 days, every two
+  weeks 13–16, monthly 27–33, every three months 84–98, yearly 350–380) and
+  **75%** of gaps must fit it. Amount steadiness is judged on the **last six
+  charges** (**75%** within **25% or $2** of their median), so a price rise
+  settles in within six charges however long the history; the usual amount is
+  the median of the last three.
+  - **Pending** rows never make a bill or shape its cadence or amount. But once
+    a bill is detected from posted charges, a pending charge dated after its
+    last one is its latest charge: the last date, the next date and "Paid this
+    month" all use it, so a bill is not "Late" while its charge is only pending.
+  - **Removed** rows (the owner was paid back) still count for timing: cadence,
+    last and next date, and whether the bill is still active. They do not count
+    for money: the amount uses the non-removed charges, "Paid this month" leaves
+    removed charges out (a bill with none this month is not counted as charging),
+    and a series whose every charge was removed is not a bill. The Recurring panel therefore
+    gets the rows of visible accounts with removed ones kept
+    (`inVisibleAccounts`), not `fromVisibleAccounts`.
+  - The next date steps by days or calendar months from the last charge's own
+    day of the month (clamped to the target month). Only when that charge fell
+    on the last day of its month, so its day may have been clamped, is the
+    largest day among the last three charges used instead: Jan 31, Feb 28,
+    Mar 31, Apr 30 is followed by May 31, not the 28th for ever after, while a
+    billing day that moved from the 28th to the 5th stays on the 5th.
+  - A bill shows **Late** only when today is more than **2 days** past its next
+    date (`LATE_AFTER_DAYS`: weekends and posting lag); within that it is Due on
+    that date, and the badge reads "Expected <date>" once that date has passed.
+    A bill charged this month whose charges this month were all removed shows
+    **Paid back this month** (`paidBack`), not paid: it is in neither "Still
+    due" nor "Paid this month". Past the next date by more than its grace
+    (3/5/10/20/30 days) a bill is "Not seen lately" ("Probably cancelled";
+    newest last charge first) and drops out of the month's figures.
+  - `monthOutlook`: "Still due" lists every expected unpaid charge this month,
+    a late bill's missed date from last month included; "Paid this month" sums
+    every charge this month from bills still being charged (a weekly bill
+    charged three times counts all three). The distinct-bill count under "Still
+    due" is done by the panel, not `monthOutlook`. Totals are summed in whole
+    cents. "Not recurring" stores the key in `recurring_dismissed` (v10), with
+    Undo once it has landed; dismissed bills are listed with Restore. Rust never
+    builds keys, it only stores what `recurringKey` made.
+- **Split transactions** (Spending): Split on a row opens `SplitEditor`
+  beneath it; the pieces (category + amount, carrying the transaction's sign)
+  must add up to the cent, and Rust checks again (`store::set_splits`), storing
+  each piece rounded to the cent and rejecting an unknown category with "That
+  category no longer exists." They live in `bank_transaction_splits` (v9) and
+  arrive on every listed row as `splits`. While split, the row's own
+  `category_id` is NULL and `category_source` is `manual`, so syncs, re-sorts,
+  transfer pairing and the Copilot import (a repeat import included) leave it
+  alone. If a later sync changes the amount, whatever the pieces no longer
+  cover counts under "Needs a category" (once per transaction), whichever way
+  the amount moved, and the row says so: "$X not assigned — the bank changed
+  the amount" when it grew, "The pieces are $X more than the bank's amount —
+  edit the split" when it shrank. Unsplit and Undo both work (undoing an
+  Unsplit adds an uncategorised piece for any remainder so the sum check
+  passes); choosing one category for the row ends a split, inside one
+  database transaction. The CSV export includes the pieces in
+  `transaction-splits.csv`.
 - **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
   the type editable because SimpleFIN never says which accounts are cards.
   Each account can be **hidden**: a hidden account keeps syncing and keeps its
@@ -86,18 +292,32 @@ budgeting and spending module.
   (file → column mapping → preview → commit). Picking a **synced** account
   instead lists that account's **bank transactions** (date, description,
   category, amount), read-only, because those live in a different table.
-- **Holdings**: overall table, a **per-account breakdown** below it, and a **⚙
-  column picker** (persisted to localStorage).
-- **Dashboard**: a serif net-worth figure with today, all-time, invested, cash
-  and owed beside it — today and all time measure the **investments only**, and
-  say so in their captions; a value-over-time area chart with a Net worth /
-  Investments toggle and a 1M/3M range picker, whose Y axis zooms to the data
-  rather than anchoring at zero; and a positions table.
-- **Risk (Phase 1)**: a **Concentration** card on the dashboard — largest
+- **Holdings**: overall table, a **per-account breakdown** below it, a **⚙
+  column picker** (persisted to localStorage), and the Concentration and Market
+  exposure cards at the bottom.
+- **Dashboard** (an overview since 2026-10-21): a big value chart whose four
+  tabs are the headline figures — **Net worth** (serif), **Investments**,
+  **Cash**, **Liabilities** — each picking the line plotted, with a 1M/3M range
+  picker; today and all time sit under the Investments tab because they measure
+  the **investments only**. Below it, an **Accounts** card (visible accounts
+  grouped Brokerage / Cash / Credit cards, with group totals) and **Last 7
+  days** (bank transactions and manual investment transactions, merged, newest
+  first, read-only). The Y axis zooms to the data rather than anchoring at
+  zero, and goes below zero when the line does. Spec:
+  `docs/superpowers/specs/2026-10-21-dashboard-overview-design.md`.
+- **Risk (Phase 1)**: a **Concentration** card on the Holdings page — largest
   holding, top-5 combined, cash share, and **effective positions**
   (`1 / Σwᵢ²`), which is how many equally-sized holdings the portfolio
   actually behaves like. Maths is pure in `src/domain/risk.ts`. The card
   describes and never advises; see the spec for the phases still to come.
+- **Drawdown** card on Holdings: the worst peak-to-trough fall of today's
+  holdings over the stored two years (with dates and whether it recovered), and
+  how far below their high they sit now, in percent and dollars. Buy-and-hold
+  of today's shares, cash left out, built on the same aligned series as Market
+  exposure, so it shares that card's calendar and exclusions. Maths is pure in
+  `src/domain/drawdown.ts`.
+- **Holdings' per-account cards** open and close from their header; closed
+  account ids persist in localStorage (`ledgerly.holdings.collapsed.v1`).
 - **Price history**: `prices_backfill` stores **two years of daily closes**
   per security (`HISTORY_RANGE`), run once when `prices_history_depth` shows
   the database has fewer than `MIN_HISTORY_DAYS` (200). This is the
@@ -139,8 +359,8 @@ budgeting and spending module.
   kept and every other kind is kept for good. An optional extra folder gets a
   copy of each. **Restore** stages the chosen file as
   `finance.sqlite.restore-pending`, lets go of the database and restarts; the
-  swap happens at launch, before `db::open`. **Export to CSV** writes seven
-  spreadsheet-ready files. Settings → Backups. Spec:
+  swap happens at launch, before `db::open`. **Export to CSV** writes nine
+  spreadsheet-ready files, among them `transaction-splits.csv` and `goals.csv`. Settings → Backups. Spec:
   `docs/superpowers/specs/2026-10-14-backup-and-export-design.md`
 
 ### Reliability pass (2026-09-08)
@@ -211,9 +431,23 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   known merchant / keyword (`budget/merchants.rs`) → money in on a *cash*
   account is Income (on a card it is a refund or payment, never income). A new
   merchant is one line in `merchants.rs`. Generic words ("shop", "store") are
-  deliberately not keywords: a blank in To review beats a wrong guess.
+  deliberately not keywords: a blank in To review beats a wrong guess. The
+  ladder still names categories the old Tally way ("Dining", "Shopping",
+  "Transfer"); `store::resolve` maps each through `seed::sorter_category` onto
+  the owner's own categories, and a name with no match leaves the row
+  uncategorised rather than inventing a category. Add a new alias in
+  `seed::ALIASES`, not a new preset.
 - **Approving a transaction makes its category `manual`**, so later list
   changes and re-sorts never move it. Only `auto` rows are ever re-decided.
+  **The one exception is the Copilot import**, which overrides a manual
+  category for every row up to its cutoff (Copilot is the source of truth for
+  the history it covers). It never touches a split row or anything dated
+  after the cutoff.
+- **There are no preset categories, so tests that need some must make them.**
+  `seed::test_categories` (test-only) inserts Tally's old set; the in-memory
+  database from `db::open_in_memory()` starts empty. The only categories code
+  may create on its own are the two from `seed::system_category`, and
+  `categories.is_builtin` is 1 for just those.
 - **A migration that runs today's code must make sure the columns that code
   reads exist.** v6 re-sorts with `recategorise_all`, which now reads v8's
   `removed`; an upgrade from v5 failed with "no such column" until v6 added
@@ -228,6 +462,19 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **A pending SimpleFIN transaction arrives with `posted: 0`**; it is dated
   from `transacted_at` (it used to land on 1970-01-01).
 
+- **Never total or filter bank transactions by `category_id` alone.** A split
+  row's own category is NULL; its pieces are what count. Read rows through
+  `piecesOf()` / `inCategory()` in `src/domain/splits.ts`, as
+  `summariseMonth`, search and Spending's category focus do.
+- **v11 adds `goals`.** `account_id` is `ON DELETE SET NULL`: deleting the
+  followed account keeps the goal as a by-hand one with its last
+  `saved_amount`, and the Goals query is refetched after an account delete or
+  a sync for that reason. **A goal following a hidden account** has no value in
+  `derivePortfolio()` (hidden accounts are filtered there) and falls back to
+  `saved_amount`, saying so on the card — showing $0 would read as lost money.
+  (A *visible* account with no value yet is the opposite case: $0, from the
+  account.) `goals.csv`'s `saved_by_hand` is the hand-entered figure only; a
+  followed account's progress is worked out by the app, not stored.
 - **Never call the browser's `confirm()`; `await askToConfirm()` from
   `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an
   async version whose Promise is always truthy, so `if (confirm(...))` deletes
@@ -301,16 +548,24 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   `refresh_all` refetches profiles weekly and earnings daily, gated on stored
   `updated_at` stamps; only news runs every poll. Removing those gates turns
   roughly 6 requests per poll into roughly 27. This is the same budget that
-  cost the project Stooq — see the note above about `MARKET_HOURS_MS`.
+  cost the project Stooq — see the note above about `MARKET_HOURS_MS`. The
+  whole market board (19 symbols) is **one** request per poll via Yahoo's
+  batch spark endpoint (`indices::spark_url`, max 20 symbols a request): add a
+  symbol past 20 and it becomes two, which `the_board_fits_in_one_request`
+  will flag. Spec: `docs/superpowers/specs/2026-10-21-markets-board-design.md`
 - **v5 adds the Markets tables** (`news_items`, `earnings_events`,
   `security_profile`, `index_quotes`). Every statement is `IF NOT EXISTS` and
   the completeness check is `v5_is_complete`.
+- **v10 adds `recurring_dismissed`** (`payee_key` primary key,
+  `dismissed_at`), `IF NOT EXISTS`, checked by `v10_is_complete`. Its keys
+  are made only by `recurringKey` in TypeScript: change that normalisation
+  and every dismissed bill reappears, so treat it like a stored format.
 - **Today and All time on the Dashboard describe the investments, not net
   worth.** `dayChangePct` divides by `priorInvested`, never by net worth —
   dividing by net worth lets a cash balance shrink the percentage, so a 2% day
-  reads as 1% purely because the owner keeps savings beside the portfolio. The
-  captions say `(investments)` for the same reason: the figures sit beside a
-  net-worth hero while measuring something narrower. `reconstructSeries`
+  reads as 1% purely because the owner keeps savings beside the portfolio. They
+  sit under the Investments tab for the same reason: they measure something
+  narrower than the net-worth hero beside them. `reconstructSeries`
   carries `invested` beside `value` so the chart can plot holdings alone; a
   deposit must move `value` and leave `invested` flat, which `history.test.ts`
   pins with concrete figures rather than by comparing two days to each other —
@@ -320,6 +575,14 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   investments line is not: a caveat that outlives its mode is a false
   statement, not a stale one. Spec:
   `docs/superpowers/specs/2026-09-11-dashboard-investment-figures-design.md`
+- **The chart's Cash and Liabilities lines** come from the same reconstruction:
+  each point also carries `cash` (every non-credit account, brokerage cash
+  included) and `liabilities` (credit accounts, kept **positive** so the line
+  rises with the debt). `value = invested + cash − liabilities` on every point,
+  pinned in `history.test.ts`. The tab figures still read the summary, where
+  liabilities are negative. The Accounts card groups by account type, so its
+  Brokerage total includes brokerage cash and does not equal the Investments tab;
+  the labels name account types for that reason.
 
 - **Smart App Control must stay OFF** on this machine. It was blocking execution
   of self-compiled unsigned binaries (every Rust build). This is required for
@@ -334,14 +597,16 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   20-holding portfolio made ~240 requests a minute, which invites a 429 and a
   repeat of the Stooq problem. Do not shorten `MARKET_HOURS_MS` without batching
   the fetches first.
-- **The `.exe` is a frozen snapshot.** Code changes do not appear until you run
-  `npm run tauri build` again. Use `npm run tauri dev` for live iteration.
+- **The installed app is a frozen snapshot.** Code changes reach it only through
+  a release. Use `npm run tauri dev` (the "Tally (test)" shortcut) for live
+  iteration. Both use the same database, so don't run them at the same time.
 - **Windows PowerShell 5.1 does not support `&&`** for chaining commands — run
   commands on separate lines or join with `;`.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **5**; migrations are
+  **unencrypted**. The schema is at `user_version` **11** (v9 adds `bank_transaction_splits`, v10 adds
+  `recurring_dismissed`, v11 adds `goals`); migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept
@@ -385,8 +650,10 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   do not put the backfill on the polling timer.
 - **Categorising happens in Rust at sync time**, not in the UI, so categories
   are right before any screen opens. The ladder is in `budget/categorize.rs`: a
-  manual choice is never overruled, then user rules (MCC, payee, description),
-  then the merchant-code map in `budget/mcc.rs`, then the sign of the amount.
+  manual choice is never overruled (the Copilot import aside), then user rules
+  (MCC, payee, description), then the merchant-code map in `budget/mcc.rs`, then
+  the sign of the amount. Its category names are mapped onto the owner's own by
+  `seed::sorter_category` (see "No preset categories" above).
 - **SimpleFIN transactions carry an `mcc`** — the card network's merchant
   category code — which is what makes auto-categorisation accurate. Do not
   replace it with text matching on the description.
@@ -396,7 +663,7 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   `https://demo:demo@beta-bridge.simplefin.org/simplefin`. The demo has three
   cash accounts and no holdings, so holdings parsing is covered by fixtures.
 - **The SimpleFIN access URL lives in Windows Credential Manager** under service
-  `Ledgerly`, key `simplefin_access_url` — never in SQLite. Deleting the database
+  `Ledgerly` (kept through the rename), key `simplefin_access_url` — never in SQLite. Deleting the database
   does **not** disconnect SimpleFIN; use Disconnect in Settings.
 - **Charts read CSS variables**, so the theme must be applied before they first
   render. `theme.tsx` sets `data-theme` at module load for exactly this reason —
@@ -495,9 +762,37 @@ G. **Dividends in returns** — dividends add cash but count toward no gain
   which flattens volatility and drags beta toward zero. `src/domain/returns.ts`
   explains the second at the point it is enforced.
 
+## Releasing
+
+Spec: `docs/superpowers/specs/2026-10-24-auto-update-design.md`.
+
+- **To release:** GitHub → Actions → **Release** → Run workflow → type a version
+  higher than the last (three numbers, e.g. `0.2.0`). About 15 minutes later a
+  Release appears; installed copies show "Version 0.2.0 is ready" on their next
+  launch (`src/app/UpdateBanner.tsx`). Pushing to `master` alone changes nothing
+  for the installed app.
+- **What the workflow does** (`.github/workflows/release.yml`): refuses a version
+  whose tag exists, runs `npm test`, writes the version into all five files with
+  `scripts/set-version.mjs`, builds a **draft** release with `tauri-action`
+  (config `src-tauri/tauri.release.conf.json`: NSIS only, updater artifacts),
+  then commits `chore(release): vX.Y.Z` to `master`, tags it and publishes. Pull
+  after a release: the bot's version commit is on GitHub, not your laptop.
+- **A failed run** leaves at most a draft release. Delete the draft on the
+  Releases page and run again with the same version.
+- **Signing key:** `%USERPROFILE%\.tauri\ledgerly.key` (no password), stored in
+  the repo secret `TAURI_SIGNING_PRIVATE_KEY`; its public half is
+  `plugins.updater.pubkey` in `tauri.conf.json`. **Keep a backup of the key
+  file.** If it is lost, installed copies reject every future update: make a
+  new key, replace the pubkey and secret, and reinstall once by hand.
+- **First install** from the Release page shows SmartScreen's "Windows protected
+  your PC" (no paid certificate): More info → Run anyway. It installs for the
+  current user (no admin prompt); updates install with a progress bar only.
+- **Keep the updater packages on their crates' major.minor** like the others
+  (`@tauri-apps/plugin-updater` ↔ `tauri-plugin-updater`, same for `process`).
+
 ## Commands
 
-The easiest start is the **"Ledgerly (test)" shortcut on the Desktop**, which
+The easiest start is the **"Tally (test)" shortcut on the Desktop**, which
 runs `scripts/start-ledgerly.cmd`: it puts Rust on the PATH, then runs
 `npm run tauri dev` from the project folder. Closing its console window closes
 the app. The first start after code or dependency changes takes a minute

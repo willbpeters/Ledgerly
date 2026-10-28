@@ -68,7 +68,9 @@ pub trait MarketSource {
     fn headlines(&self, ticker: &str) -> anyhow::Result<Vec<rss::NewsItem>>;
     fn earnings_calendar(&self, date: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>>;
     fn earnings_surprise(&self, ticker: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>>;
-    fn index_closes(&self, symbol: &str) -> anyhow::Result<Vec<(String, f64)>>;
+    /// One batch of board symbols (at most `indices::SPARK_BATCH`), each with
+    /// its recent closes. A symbol the source could not serve is left out.
+    fn board_closes(&self, symbols: &[&str]) -> anyhow::Result<Vec<(String, Vec<(String, f64)>)>>;
 }
 
 /// The real sources: Yahoo for profiles, news and indices; Nasdaq for earnings.
@@ -87,8 +89,8 @@ impl MarketSource for LiveSource {
     fn earnings_surprise(&self, ticker: &str) -> anyhow::Result<Vec<nasdaq_parse::ParsedEarnings>> {
         nasdaq::surprise_for(ticker)
     }
-    fn index_closes(&self, symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
-        indices::fetch_closes(symbol)
+    fn board_closes(&self, symbols: &[&str]) -> anyhow::Result<Vec<(String, Vec<(String, f64)>)>> {
+        indices::fetch_board(symbols)
     }
 }
 
@@ -181,20 +183,32 @@ pub fn refresh_all(db: &Db, src: &dyn MarketSource) -> MarketRefreshReport {
         report.earnings_updated = refresh_earnings(db, src, &targets, &now, &mut report.errors);
     }
 
-    let closes: Vec<_> = indices::INDICES
-        .iter()
-        .map(|(symbol, _)| (*symbol, src.index_closes(symbol)))
+    // The whole board in as few requests as the batch limit allows — one, today.
+    let batches: Vec<(Vec<&str>, anyhow::Result<Vec<(String, Vec<(String, f64)>)>>)> = indices::INDICES
+        .chunks(indices::SPARK_BATCH)
+        .map(|chunk| {
+            let symbols: Vec<&str> = chunk.iter().map(|b| b.symbol).collect();
+            let fetched = src.board_closes(&symbols);
+            (symbols, fetched)
+        })
         .collect();
     {
         let conn = lock(db);
-        for (symbol, fetched) in closes {
+        for (symbols, fetched) in batches {
             match fetched {
-                Ok(closes) => {
-                    if store::upsert_index_closes(&conn, symbol, &closes).is_ok() {
-                        report.indices_updated += 1;
+                Ok(results) => {
+                    for symbol in symbols {
+                        match results.iter().find(|(s, _)| s == symbol) {
+                            Some((_, closes)) => {
+                                if store::upsert_index_closes(&conn, symbol, closes).is_ok() {
+                                    report.indices_updated += 1;
+                                }
+                            }
+                            None => report.errors.push(format!("{symbol}: not in the batch response")),
+                        }
                     }
                 }
-                Err(e) => report.errors.push(format!("{symbol}: {e}")),
+                Err(e) => report.errors.push(format!("{}: {e}", symbols.join(", "))),
             }
         }
     }
@@ -409,6 +423,8 @@ mod refresh_tests {
         db: &'a Db,
         lock_was_held: Cell<bool>,
         calls: Cell<usize>,
+        /// A board symbol the fake leaves out of its answer, as Yahoo does with one it cannot serve.
+        skip: Option<&'static str>,
     }
 
     impl Fake<'_> {
@@ -450,9 +466,13 @@ mod refresh_tests {
             self.fetching();
             Ok(vec![earnings("2026-06-25", Some(1.2))])
         }
-        fn index_closes(&self, _symbol: &str) -> anyhow::Result<Vec<(String, f64)>> {
+        fn board_closes(&self, symbols: &[&str]) -> anyhow::Result<Vec<(String, Vec<(String, f64)>)>> {
             self.fetching();
-            Ok(vec![("2026-09-09".into(), 100.0), ("2026-09-10".into(), 101.0)])
+            Ok(symbols
+                .iter()
+                .filter(|sym| Some(**sym) != self.skip)
+                .map(|sym| (sym.to_string(), vec![("2026-09-09".into(), 100.0), ("2026-09-10".into(), 101.0)]))
+                .collect())
         }
     }
 
@@ -471,7 +491,7 @@ mod refresh_tests {
     #[test]
     fn the_database_is_never_locked_while_the_refresh_is_downloading() {
         let db = db_holding_mu();
-        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0) };
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0), skip: None };
         refresh_all(&db, &fake);
         assert!(fake.calls.get() > 0, "the fake must actually have been asked");
         assert!(!fake.lock_was_held.get(), "a download ran with the database locked");
@@ -480,7 +500,7 @@ mod refresh_tests {
     #[test]
     fn a_refresh_stores_everything_it_fetched() {
         let db = db_holding_mu();
-        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0) };
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0), skip: None };
         let report = refresh_all(&db, &fake);
         assert_eq!(report.profiles_updated, 1);
         assert_eq!(report.news_added, 1);
@@ -492,7 +512,7 @@ mod refresh_tests {
     #[test]
     fn a_second_refresh_skips_profiles_and_earnings_that_are_still_fresh() {
         let db = db_holding_mu();
-        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0) };
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0), skip: None };
         refresh_all(&db, &fake);
         fake.calls.set(0);
 
@@ -500,8 +520,18 @@ mod refresh_tests {
 
         assert_eq!(report.profiles_updated, 0, "profiles are refetched weekly");
         assert_eq!(report.earnings_updated, 0, "earnings are refetched daily");
-        // What remains per poll: one news feed and the three indices.
-        assert_eq!(fake.calls.get(), 1 + indices::INDICES.len());
+        // What remains per poll: one news feed and one batch for the whole board.
+        assert_eq!(fake.calls.get(), 1 + indices::INDICES.len().div_ceil(indices::SPARK_BATCH));
+        assert_eq!(fake.calls.get(), 2);
+    }
+
+    #[test]
+    fn a_symbol_missing_from_the_batch_is_named_and_the_rest_are_stored() {
+        let db = db_holding_mu();
+        let fake = Fake { db: &db, lock_was_held: Cell::new(false), calls: Cell::new(0), skip: Some("^VIX") };
+        let report = refresh_all(&db, &fake);
+        assert_eq!(report.indices_updated, indices::INDICES.len() - 1);
+        assert!(report.errors.iter().any(|e| e.contains("^VIX")), "{:?}", report.errors);
     }
 }
 

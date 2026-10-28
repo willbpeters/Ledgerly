@@ -57,8 +57,8 @@ describe("BackupPanel", () => {
   });
 
   it("says when a restore did not happen", () => {
-    render(<BackupPanel {...props({ status: { ...status, restore_error: "That file isn't a Ledgerly backup." } })} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Restore didn't happen: That file isn't a Ledgerly backup.");
+    render(<BackupPanel {...props({ status: { ...status, restore_error: "That file isn't a Tally backup." } })} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Restore didn't happen: That file isn't a Tally backup.");
   });
 
   it("offers Remove only when an extra folder is set", () => {
@@ -71,8 +71,8 @@ describe("BackupPanel", () => {
 
   it("points to a finished export", () => {
     const onRevealExport = vi.fn();
-    render(<BackupPanel {...props({ exportedTo: "D:\\Ledgerly export 2026-10-14", onRevealExport })} />);
-    expect(screen.getByText(/Exported to D:\\Ledgerly export 2026-10-14/)).toBeInTheDocument();
+    render(<BackupPanel {...props({ exportedTo: "D:\\Tally export 2026-10-14", onRevealExport })} />);
+    expect(screen.getByText(/Exported to D:\\Tally export 2026-10-14/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show in folder" }));
     expect(onRevealExport).toHaveBeenCalled();
   });

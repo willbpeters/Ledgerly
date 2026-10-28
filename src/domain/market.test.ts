@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildMarketView } from "./market";
+import { buildMarketView, todayMove, type MarketRow } from "./market";
 import type { Security, SecurityProfile, NewsItem, EarningsEvent, IndexQuote } from "./types";
 
 const securities: Security[] = [
@@ -17,7 +17,9 @@ const news = (security_id: number, title: string, published: string): NewsItem =
      published, fetched_at: "2026-09-10T12:00:00Z" });
 const holdings = new Map([[1, 900], [2, 1400], [3, 3400]]);
 const dayChange = new Map([[1, 3.8], [2, 0.9], [3, 0.42]]);
-const indices: IndexQuote[] = [{ symbol: "^GSPC", label: "S&P 500", latest: 101, previous: 100 }];
+const quote = (symbol: string, label: string, group: IndexQuote["group"], latest: number, previous: number): IndexQuote =>
+  ({ symbol, label, group, latest, previous, recent: [previous, latest] });
+const indices: IndexQuote[] = [quote("^GSPC", "S&P 500", "index", 101, 100)];
 
 const base = {
   securities, profiles, holdings, dayChange, indices,
@@ -122,6 +124,24 @@ describe("buildMarketView", () => {
     expect(v.indices[0].changePct).toBeCloseTo(1.0, 5);
   });
 
+  it("keeps the board in its own order and sorts the sectors by today's move", () => {
+    const v = buildMarketView({ ...base, indices: [
+      quote("^GSPC", "S&P 500", "index", 101, 100),
+      quote("XLE", "Energy", "sector", 99, 100),
+      quote("^VIX", "VIX", "volatility", 16, 17),
+      quote("XLK", "Technology", "sector", 102, 100),
+      quote("^TNX", "10-yr yield", "yield", 5.11, 5.13),
+    ] });
+    expect(v.indices.map((r) => r.symbol)).toEqual(["^GSPC", "^VIX", "^TNX"]);
+    expect(v.sectors.map((r) => r.label)).toEqual(["Technology", "Energy"]);
+  });
+
+  it("measures a yield's move in basis points", () => {
+    const v = buildMarketView({ ...base, indices: [quote("^TNX", "10-yr yield", "yield", 5.11, 5.13)] });
+    expect(v.indices[0].changeBp).toBeCloseTo(-2, 5);
+    expect(v.indices[0]).toMatchObject({ latest: 5.11, group: "yield", recent: [5.13, 5.11] });
+  });
+
   it("reports the newest fetch time so staleness can be shown", () => {
     const v = buildMarketView({ ...base, news: [
       { ...news(1, "a", "2026-09-09T10:00:00Z"), fetched_at: "2026-09-09T12:00:00Z" },
@@ -132,5 +152,44 @@ describe("buildMarketView", () => {
 
   it("has no fetch time at all before the first refresh", () => {
     expect(buildMarketView(base).newestFetch).toBeNull();
+  });
+});
+
+describe("todayMove", () => {
+  const r = (ticker: string, value: number, dayChangePct: number, mutualFund = false): MarketRow =>
+    ({ security_id: ticker.length, ticker, name: null, value, dayChangePct, tracks: null, news: [],
+       quoteType: mutualFund ? "MUTUALFUND" : "EQUITY" });
+  // A Wednesday, 2 pm in New York: the market is open, mutual funds have not priced.
+  const midday = new Date("2026-10-21T18:00:00Z");
+  const saturday = new Date("2026-10-24T18:00:00Z");
+
+  it("measures only what has priced while the mutual funds still show yesterday's price", () => {
+    const m = todayMove([r("SWLGX", 9000, 0, true), r("MU", 600, 2), r("GOOG", 400, -1)], 0.04, midday);
+    expect(m.scope).toBe("priced");
+    expect(m.pct).toBeCloseTo((600 * 2 + 400 * -1) / 1000, 6);
+    expect(m.pendingShare).toBeCloseTo(0.9, 6);
+    expect(m.pricedLabel).toBe("Your stocks");
+  });
+
+  it("says ETFs are in the priced part when there are some", () => {
+    const etf = { ...r("VTI", 500, 1), quoteType: "ETF" };
+    const m = todayMove([r("SWLGX", 9000, 0, true), etf], 0, midday);
+    expect(m.pricedLabel).toBe("Your stocks and ETFs");
+  });
+
+  it("uses the whole portfolio once the mutual funds have moved", () => {
+    const m = todayMove([r("SWLGX", 9000, 0.8, true), r("MU", 600, 2)], 0.85, midday);
+    expect(m).toMatchObject({ scope: "all", pct: 0.85, pendingShare: 0 });
+  });
+
+  it("uses the whole portfolio at the weekend, when nothing is waiting to price", () => {
+    const m = todayMove([r("SWLGX", 9000, 0, true), r("MU", 600, 2)], 0.13, saturday);
+    expect(m).toMatchObject({ scope: "all", pct: 0.13 });
+  });
+
+  it("has no figure to give when everything held is a mutual fund still waiting", () => {
+    const m = todayMove([r("SWLGX", 9000, 0, true)], 0, midday);
+    expect(m.scope).toBe("pending");
+    expect(m.pct).toBeNull();
   });
 });
