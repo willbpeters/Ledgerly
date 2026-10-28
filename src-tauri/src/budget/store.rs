@@ -151,10 +151,29 @@ pub fn set_category(
     category_id: Option<i64>,
     apply_to_payee: bool,
 ) -> rusqlite::Result<usize> {
-    conn.execute(
+    // One category for the whole row ends any split: the pieces would
+    // otherwise go on counting beside it.
+    // It is all one transaction, so a refused category leaves the pieces be.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM bank_transaction_splits WHERE txn_id=?1", [txn_id])?;
+    tx.execute(
         "UPDATE bank_transactions SET category_id=?1, category_source='manual', reviewed=1 WHERE id=?2",
         params![category_id, txn_id],
     )?;
+    let changed = apply_payee_rule(&tx, txn_id, category_id, apply_to_payee)?;
+    tx.commit()?;
+    Ok(changed)
+}
+
+/// The "apply to this payee" half of `set_category`: remember the choice as a
+/// rule and re-file the payee's other automatic rows. Returns rows changed,
+/// counting the one the owner chose.
+fn apply_payee_rule(
+    conn: &Connection,
+    txn_id: i64,
+    category_id: Option<i64>,
+    apply_to_payee: bool,
+) -> rusqlite::Result<usize> {
     if !apply_to_payee {
         return Ok(1);
     }
@@ -176,6 +195,81 @@ pub fn set_category(
         params![category_id, payee.to_lowercase()],
     )?;
     Ok(changed + 1)
+}
+
+/// One piece of a split, as the owner entered it. The amount carries the
+/// transaction's sign: a purchase splits into negative pieces.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct NewSplit {
+    pub category_id: Option<i64>,
+    pub amount: f64,
+    pub note: Option<String>,
+}
+
+fn cents(x: f64) -> i64 {
+    (x * 100.0).round() as i64
+}
+
+fn dollars(cents: i64) -> String {
+    format!("${}.{:02}", cents.abs() / 100, cents.abs() % 100)
+}
+
+/// Split a transaction across categories, or unsplit it with no pieces.
+///
+/// The pieces must add up to the transaction to the cent, and there must be at
+/// least two, none of them zero. A split row's own category is emptied and
+/// made manual, which is what keeps a sync, a re-sort, transfer pairing and the
+/// Copilot import away from it: all of them touch only automatic rows.
+/// Unsplitting leaves the row uncategorised for the owner to choose. All of it
+/// happens in one transaction; a refused split changes nothing.
+///
+/// Rust checks the count, that no piece is zero, and the sum, but not the signs:
+/// the editor gives every piece the transaction's sign, and Undo may send an
+/// opposite-sign uncategorised piece to put back a gap a sync left.
+pub fn set_splits(conn: &Connection, txn_id: i64, pieces: &[NewSplit]) -> Result<(), String> {
+    let amount: f64 = conn
+        .query_row("SELECT amount FROM bank_transactions WHERE id=?1", [txn_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "That transaction no longer exists.".to_string())?;
+    if !pieces.is_empty() {
+        if pieces.len() < 2 {
+            return Err("Split it into at least two pieces.".into());
+        }
+        if pieces.iter().any(|p| cents(p.amount) == 0) {
+            return Err("Every piece needs an amount.".into());
+        }
+        let sum: i64 = pieces.iter().map(|p| cents(p.amount)).sum();
+        if sum != cents(amount) {
+            return Err(format!(
+                "The pieces add up to {}, but the transaction is {}.",
+                dollars(sum), dollars(cents(amount)),
+            ));
+        }
+    }
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let write = || -> rusqlite::Result<()> {
+        tx.execute("DELETE FROM bank_transaction_splits WHERE txn_id=?1", [txn_id])?;
+        for (i, p) in pieces.iter().enumerate() {
+            // Stored to the cent, as they were checked, so sums never drift by a hair.
+            let stored = cents(p.amount) as f64 / 100.0;
+            tx.execute(
+                "INSERT INTO bank_transaction_splits (txn_id, category_id, amount, note, sort)
+                 VALUES (?1,?2,?3,?4,?5)",
+                params![txn_id, p.category_id, stored, p.note, i as i64],
+            )?;
+        }
+        tx.execute(
+            "UPDATE bank_transactions SET category_id=NULL, category_source='manual', reviewed=1 WHERE id=?1",
+            [txn_id],
+        )?;
+        Ok(())
+    };
+    write().map_err(|e| {
+        let text = e.to_string();
+        if text.contains("FOREIGN KEY") { "That category no longer exists.".to_string() } else { text }
+    })?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// File as Transfer every automatic row, posted on or after `since`, that has
@@ -282,8 +376,16 @@ pub fn restore_rows(conn: &Connection, states: &[RowState]) -> rusqlite::Result<
         if s.category_source != "auto" && s.category_source != "manual" {
             return Err(rusqlite::Error::InvalidParameterName(format!("category_source {}", s.category_source)));
         }
+        // A row that has been split since keeps no category of its own: its pieces
+        // carry them, and sync, re-sort, transfer pairing and the Copilot import
+        // skip it only because it is manual. So an older category and source are
+        // not put back on it; only reviewed and removed are.
         changed += tx.execute(
-            "UPDATE bank_transactions SET category_id=?1, category_source=?2, reviewed=?3, removed=?4 WHERE id=?5",
+            "UPDATE bank_transactions SET
+                category_id = CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits WHERE txn_id = ?5) THEN NULL ELSE ?1 END,
+                category_source = CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits WHERE txn_id = ?5) THEN 'manual' ELSE ?2 END,
+                reviewed=?3, removed=?4
+             WHERE id=?5",
             params![s.category_id, s.category_source, s.reviewed as i64, s.removed as i64, s.id],
         )?;
     }
@@ -377,7 +479,8 @@ pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan, remove: &[i64
                (account_id,external_id,posted,amount,description,payee,category_id,category_source,reviewed,note)
              VALUES (?1,?2,?3,?4,?5,?5,?6,'manual',1,?7)
              ON CONFLICT(account_id,external_id) DO UPDATE SET
-               category_id=excluded.category_id, note=excluded.note",
+               category_id=excluded.category_id, note=excluded.note
+             WHERE NOT EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.txn_id = bank_transactions.id)",
             params![account_id, a.external_id, a.posted, a.amount, a.name, category, a.note],
         )?;
         counts.added += 1;
@@ -707,6 +810,22 @@ mod tests {
     }
 
     #[test]
+    fn undoing_an_earlier_action_never_gives_a_split_row_a_category() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        let groceries = seed::category_id(&conn, "Groceries").unwrap();
+        // How the row looked before it was split: an automatic category, unreviewed.
+        let before = RowState { id, category_id: groceries, category_source: "auto".into(), reviewed: false, removed: true };
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        assert_eq!(restore_rows(&conn, &[before]).unwrap(), 1);
+
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), false), "still a split row; reviewed restored");
+        assert!(removed(&conn, "c1"), "removed restored");
+        assert_eq!(splits_of(&conn, "c1").len(), 2, "the pieces are untouched");
+    }
+
+    #[test]
     fn undo_refuses_a_source_that_is_not_auto_or_manual() {
         let conn = db::open_in_memory().unwrap();
         let bad = RowState { id: 1, category_id: None, category_source: "bogus".into(), reviewed: false, removed: false };
@@ -724,6 +843,206 @@ mod tests {
         set_removed(&conn, &[out], true).unwrap();
 
         assert_eq!(mark_transfer_pairs(&conn, "2026-01-01").unwrap(), 0);
+    }
+
+    fn splits_of(conn: &Connection, ext: &str) -> Vec<(Option<String>, f64)> {
+        conn.prepare(
+            "SELECT c.name, s.amount FROM bank_transaction_splits s
+             JOIN bank_transactions b ON b.id = s.txn_id
+             LEFT JOIN categories c ON c.id = s.category_id
+             WHERE b.external_id=?1 ORDER BY s.sort",
+        ).unwrap()
+            .query_map([ext], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+            .map(|r| r.unwrap()).collect()
+    }
+
+    fn piece(conn: &Connection, category: Option<&str>, amount: f64) -> NewSplit {
+        NewSplit { category_id: category.and_then(|n| seed::category_id(conn, n).unwrap()), amount, note: None }
+    }
+
+    /// One $85.50 Costco trip on a card; returns (card, transaction id).
+    fn costco(conn: &Connection) -> (i64, i64) {
+        let card = account(conn, "Card", "credit");
+        upsert_transactions(conn, card, &[payee_txn("c1", "2026-10-03", -85.5, "Costco")], &[]).unwrap();
+        let id = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='c1'", [], |r| r.get(0)).unwrap();
+        (card, id)
+    }
+
+    #[test]
+    fn a_split_stores_its_pieces_and_empties_the_rows_own_category() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        assert_eq!(splits_of(&conn, "c1"), vec![(Some("Groceries".into()), -60.0), (Some("Shopping".into()), -25.5)]);
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), true), "a split row is the owner's, and reviewed");
+    }
+
+    #[test]
+    fn a_split_must_add_up_to_the_transaction() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+
+        let err = set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, None, -25.0)]).unwrap_err();
+
+        assert_eq!(err, "The pieces add up to $85.00, but the transaction is $85.50.");
+        assert!(splits_of(&conn, "c1").is_empty(), "a refused split writes nothing");
+        assert_eq!(row(&conn, "c1").1, "auto");
+    }
+
+    #[test]
+    fn a_split_needs_two_pieces_each_with_an_amount() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+
+        assert_eq!(
+            set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -85.5)]).unwrap_err(),
+            "Split it into at least two pieces.",
+        );
+        assert_eq!(
+            set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -85.5), piece(&conn, None, 0.0)]).unwrap_err(),
+            "Every piece needs an amount.",
+        );
+        assert_eq!(
+            set_splits(&conn, 99_999, &[]).unwrap_err(),
+            "That transaction no longer exists.",
+        );
+    }
+
+    #[test]
+    fn splitting_again_replaces_the_pieces() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        set_splits(&conn, id, &[piece(&conn, Some("Dining"), -80.0), piece(&conn, None, -5.5)]).unwrap();
+
+        assert_eq!(splits_of(&conn, "c1"), vec![(Some("Dining".into()), -80.0), (None, -5.5)]);
+    }
+
+    #[test]
+    fn unsplitting_removes_the_pieces_and_leaves_the_row_uncategorised() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        set_splits(&conn, id, &[]).unwrap();
+
+        assert!(splits_of(&conn, "c1").is_empty());
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), true));
+    }
+
+    #[test]
+    fn a_later_sync_and_a_re_sort_leave_a_split_alone() {
+        let conn = db::open_in_memory().unwrap();
+        let (card, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        upsert_transactions(&conn, card, &[payee_txn("c1", "2026-10-03", -85.5, "Costco")], &[]).unwrap();
+        recategorise_all(&conn).unwrap();
+
+        assert_eq!(splits_of(&conn, "c1").len(), 2);
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), true));
+    }
+
+    #[test]
+    fn deleting_the_account_deletes_the_pieces() {
+        let conn = db::open_in_memory().unwrap();
+        let (card, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        conn.execute("DELETE FROM accounts WHERE id=?1", [card]).unwrap();
+
+        let n: i64 = conn.query_row("SELECT count(*) FROM bank_transaction_splits", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn deleting_a_category_leaves_its_piece_uncategorised() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        conn.execute("DELETE FROM categories WHERE name='Groceries'", []).unwrap();
+
+        assert_eq!(splits_of(&conn, "c1"), vec![(None, -60.0), (Some("Shopping".into()), -25.5)]);
+    }
+
+    #[test]
+    fn choosing_one_category_ends_a_split() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        set_category(&conn, id, seed::category_id(&conn, "Groceries").unwrap(), false).unwrap();
+
+        assert!(splits_of(&conn, "c1").is_empty());
+        assert_eq!(row(&conn, "c1").0.as_deref(), Some("Groceries"));
+    }
+
+    #[test]
+    fn a_refused_category_leaves_the_split_in_place() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+
+        assert!(set_category(&conn, id, Some(99_999), false).is_err());
+
+        assert_eq!(splits_of(&conn, "c1").len(), 2, "a failed change keeps the pieces");
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), true));
+    }
+
+    #[test]
+    fn a_split_that_fails_part_way_changes_nothing() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
+        let gone = NewSplit { category_id: Some(99_999), amount: -5.5, note: None };
+
+        let err = set_splits(&conn, id, &[piece(&conn, Some("Dining"), -80.0), gone]).unwrap_err();
+
+        assert_eq!(err, "That category no longer exists.");
+        assert_eq!(splits_of(&conn, "c1"), vec![(Some("Groceries".into()), -60.0), (Some("Shopping".into()), -25.5)]);
+        assert_eq!(row(&conn, "c1"), (None, "manual".into(), true));
+    }
+
+    #[test]
+    fn pieces_are_stored_to_the_cent() {
+        let conn = db::open_in_memory().unwrap();
+        let (_, id) = costco(&conn);
+
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.004), piece(&conn, Some("Shopping"), -25.496)]).unwrap();
+
+        assert_eq!(splits_of(&conn, "c1"), vec![(Some("Groceries".into()), -60.0), (Some("Shopping".into()), -25.5)]);
+    }
+
+    #[test]
+    fn a_refund_splits_into_positive_pieces() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("r1", "2026-10-04", 30.0, "Costco")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='r1'", [], |r| r.get(0)).unwrap();
+
+        set_splits(&conn, id, &[piece(&conn, Some("Groceries"), 20.0), piece(&conn, Some("Shopping"), 10.0)]).unwrap();
+
+        assert_eq!(splits_of(&conn, "r1"), vec![(Some("Groceries".into()), 20.0), (Some("Shopping".into()), 10.0)]);
+    }
+
+    #[test]
+    fn three_pieces_that_add_up_to_the_cent_save() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-05", -100.0, "Costco")], &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='t1'", [], |r| r.get(0)).unwrap();
+
+        set_splits(&conn, id, &[
+            piece(&conn, Some("Groceries"), -33.33),
+            piece(&conn, Some("Shopping"), -33.33),
+            piece(&conn, None, -33.34),
+        ]).unwrap();
+
+        assert_eq!(splits_of(&conn, "t1").len(), 3);
     }
 
     use crate::budget::copilot;
@@ -762,6 +1081,28 @@ mod tests {
         apply_copilot_plan(&conn, &again, &[]).unwrap();
         let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn a_re_import_leaves_a_split_history_row_alone() {
+        let conn = db::open_in_memory().unwrap();
+        let csv = format!("{COPILOT_HEADER}\n\
+            \"2026-01-05\",\"Haggin Oaks\",\"-20\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[]).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        let amount: f64 = conn.query_row("SELECT amount FROM bank_transactions WHERE id=?1", [id], |r| r.get(0)).unwrap();
+        let half = amount / 2.0;
+        set_splits(&conn, id, &[
+            NewSplit { category_id: seed::category_id(&conn, "Groceries").unwrap(), amount: half, note: None },
+            NewSplit { category_id: None, amount: half, note: None },
+        ]).unwrap();
+
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[]).unwrap();
+
+        let category: Option<i64> = conn.query_row("SELECT category_id FROM bank_transactions WHERE id=?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(category, None, "the pieces own the category now");
+        let n: i64 = conn.query_row("SELECT count(*) FROM bank_transaction_splits WHERE txn_id=?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
     }
 
     #[test]

@@ -120,6 +120,18 @@ pub struct BankTransaction {
     pub note: Option<String>,
     /// Left out of Spending and budgets (the owner was paid back); restorable.
     pub removed: bool,
+    /// The pieces, when the owner split it across categories; empty otherwise.
+    /// While split, `category_id` is null and the pieces are what count.
+    pub splits: Vec<TxnSplit>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxnSplit {
+    pub id: i64,
+    pub category_id: Option<i64>,
+    /// Carries the transaction's sign: a purchase splits into negative pieces.
+    pub amount: f64,
+    pub note: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -138,4 +150,28 @@ pub struct Budget {
     /// "YYYY-MM", or null for the limit that applies to every month.
     pub month: Option<String>,
     pub limit_amount: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Goal {
+    pub id: i64,
+    pub name: String,
+    pub target_amount: f64,
+    /// YYYY-MM-DD, or None for a goal with no deadline.
+    pub target_date: Option<String>,
+    /// The account whose value is the progress; None when updated by hand.
+    pub account_id: Option<i64>,
+    /// Saved so far, for a goal updated by hand. Kept while an account is
+    /// followed, so switching back to "by hand" finds it again.
+    pub saved_amount: f64,
+    pub created_at: String,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct NewGoal {
+    pub name: String,
+    pub target_amount: f64,
+    pub target_date: Option<String>,
+    pub account_id: Option<i64>,
+    pub saved_amount: f64,
 }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// Each file and the query that fills it. Columns are named for a person
 /// reading the file in Excel, and IDs are joined to names for the same reason.
 /// Market caches and snapshots are left out: they are re-fetchable or derived.
-pub const EXPORTS: [(&str, &str); 7] = [
+pub const EXPORTS: [(&str, &str); 9] = [
     (
         "accounts.csv",
         "SELECT name, type, institution, currency, source, hidden, synced_balance,
@@ -27,7 +27,9 @@ pub const EXPORTS: [(&str, &str); 7] = [
     (
         "bank-transactions.csv",
         "SELECT b.posted AS date, a.name AS account, b.description, b.payee, b.memo, b.amount,
-                c.name AS category, b.category_source, b.mcc, b.pending
+                CASE WHEN EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.txn_id = b.id)
+                     THEN 'Split' ELSE c.name END AS category,
+                b.category_source, b.mcc, b.pending
          FROM bank_transactions b
          JOIN accounts a ON a.id = b.account_id
          LEFT JOIN categories c ON c.id = b.category_id
@@ -56,6 +58,27 @@ pub const EXPORTS: [(&str, &str); 7] = [
         "SELECT r.match_type, r.pattern, c.name AS category, r.created_at
          FROM category_rules r JOIN categories c ON c.id = r.category_id
          ORDER BY r.match_type, r.pattern",
+    ),
+    // One line per piece, beside the transaction it came from, so a split can
+    // be rebuilt from bank-transactions.csv and this file alone.
+    (
+        "transaction-splits.csv",
+        "SELECT b.posted AS date, a.name AS account, COALESCE(b.payee, b.description) AS payee,
+                b.amount AS transaction_amount, c.name AS category, s.amount, s.note
+         FROM bank_transaction_splits s
+         JOIN bank_transactions b ON b.id = s.txn_id
+         JOIN accounts a ON a.id = b.account_id
+         LEFT JOIN categories c ON c.id = s.category_id
+         ORDER BY b.posted, b.id, s.sort",
+    ),
+    // A goal that follows an account takes its progress from that account's
+    // balance, which only the app can work out, so saved_by_hand is the
+    // hand-entered figure only.
+    (
+        "goals.csv",
+        "SELECT g.name, g.target_amount, g.target_date, a.name AS account, g.saved_amount AS saved_by_hand, g.created_at
+         FROM goals g LEFT JOIN accounts a ON a.id = g.account_id
+         ORDER BY g.target_date IS NULL, g.target_date, g.id",
     ),
 ];
 
@@ -176,7 +199,9 @@ mod tests {
                VALUES (1, 1, 'buy', '2026-10-02', 2, 250, 500);
              INSERT INTO categories (id, name, kind) VALUES (900, 'Test category', 'spending');
              INSERT INTO bank_transactions (account_id, external_id, posted, amount, description, category_id)
-               VALUES (1, 'x1', '2026-10-03', -4.5, 'Coffee, large', 900);",
+               VALUES (1, 'x1', '2026-10-03', -4.5, 'Coffee, large', 900);
+             INSERT INTO bank_transaction_splits (txn_id, category_id, amount, sort)
+               VALUES (1, 900, -3, 0), (1, NULL, -1.5, 1);",
         )
         .unwrap();
         let out = tempfile::tempdir().unwrap();
@@ -191,7 +216,36 @@ mod tests {
         assert!(investments.starts_with("\u{FEFF}date,account,ticker,type,quantity,price,amount,fees,note\r\n"));
         assert!(investments.contains("2026-10-02,Checking,VTI,buy,2,250,500,0,\r\n"));
         let bank = std::fs::read_to_string(folder.join("bank-transactions.csv")).unwrap();
-        assert!(bank.contains("2026-10-03,Checking,\"Coffee, large\",,,-4.5,Test category,auto,,0\r\n"));
+        assert!(bank.contains("2026-10-03,Checking,\"Coffee, large\",,,-4.5,Split,auto,,0\r\n"), "a split row reads Split, not its own category");
+        let splits = std::fs::read_to_string(folder.join("transaction-splits.csv")).unwrap();
+        assert!(splits.starts_with("\u{FEFF}date,account,payee,transaction_amount,category,amount,note\r\n"));
+        assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,Test category,-3,\r\n"));
+        assert!(splits.contains("2026-10-03,Checking,\"Coffee, large\",-4.5,,-1.5,\r\n"));
+    }
+
+    #[test]
+    fn goals_are_exported_with_the_account_name() {
+        let conn = crate::db::open_in_memory().unwrap();
+        // Rainy day goes in first and has no date or account (the state a deleted
+        // account leaves), so the order below proves dated goals come first.
+        conn.execute_batch(
+            "INSERT INTO accounts (id, name, type, created_at) VALUES (1, 'Savings', 'cash', '2026-10-01');
+             INSERT INTO goals (name, target_amount, target_date, account_id, saved_amount, created_at)
+               VALUES ('Rainy day', 500, NULL, NULL, 125.5, '2026-10-25'),
+                      ('Trip', 2000, '2027-03-01', 1, 0, '2026-10-25');",
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let folder = export_all(&conn, out.path(), day()).unwrap();
+
+        let goals = std::fs::read_to_string(folder.join("goals.csv")).unwrap();
+        assert_eq!(
+            goals,
+            "\u{FEFF}name,target_amount,target_date,account,saved_by_hand,created_at\r\n\
+             Trip,2000,2027-03-01,Savings,0,2026-10-25\r\n\
+             Rainy day,500,,,125.5,2026-10-25\r\n"
+        );
     }
 
     #[test]

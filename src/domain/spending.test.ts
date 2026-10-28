@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { monthWindow, monthLabel, shiftMonth, summariseMonth, limitFor, fromVisibleAccounts } from "./spending";
+import { monthWindow, monthLabel, shiftMonth, summariseMonth, limitFor, fromVisibleAccounts, inVisibleAccounts } from "./spending";
 import type { Account, BankTransaction, Budget, Category } from "./types";
 
 const cats: Category[] = [
@@ -13,7 +13,7 @@ let n = 0;
 const txn = (amount: number, category_id: number | null, posted = "2026-09-10"): BankTransaction => ({
   id: ++n, account_id: 1, external_id: `e${n}`, posted, amount,
   description: "x", payee: null, memo: null, mcc: null, pending: false,
-  category_id, category_source: "auto", reviewed: true, note: null, removed: false,
+  category_id, category_source: "auto", reviewed: true, note: null, removed: false, splits: [],
 });
 
 describe("month helpers", () => {
@@ -105,6 +105,68 @@ describe("summariseMonth", () => {
   });
 });
 
+const split = (amount: number, pieces: [number | null, number][]): BankTransaction => ({
+  ...txn(amount, null), category_source: "manual",
+  splits: pieces.map(([category_id, a], i) => ({ id: 100 + i, category_id, amount: a, note: null })),
+});
+
+describe("summariseMonth with split transactions", () => {
+  it("counts each piece in its own category", () => {
+    const s = summariseMonth([split(-85.5, [[1, -60], [2, -25.5]])], cats, [], "2026-09");
+    const groceries = s.categories.find((c) => c.category.id === 1)!;
+    const dining = s.categories.find((c) => c.category.id === 2)!;
+    expect([groceries.spent, groceries.count]).toEqual([60, 1]);
+    expect([dining.spent, dining.count]).toEqual([25.5, 1]);
+    expect(s.spent).toBe(85.5);
+    expect(s.uncategorisedCount).toBe(0);
+  });
+
+  it("puts an income piece in income", () => {
+    const s = summariseMonth([split(100, [[3, 120], [1, -20]])], cats, [], "2026-09");
+    expect(s.income).toBe(120);
+    expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(20);
+    expect(s.uncategorisedCount).toBe(0);
+  });
+
+  it("shows a settled-lower split's overage under Needs a category, not income", () => {
+    const s = summariseMonth([split(-85, [[1, -60], [2, -30]])], cats, [], "2026-09");
+    expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(60);
+    expect(s.categories.find((c) => c.category.id === 2)?.spent).toBe(30);
+    expect(s.income).toBe(0);
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(-5);
+  });
+
+  it("reduces each category by its piece of a split refund", () => {
+    const s = summariseMonth([split(30, [[1, 20], [2, 10]])], cats, [], "2026-09");
+    expect(s.categories.find((c) => c.category.id === 1)?.spent).toBe(-20);
+    expect(s.categories.find((c) => c.category.id === 2)?.spent).toBe(-10);
+    expect(s.income).toBe(0);
+    expect(s.uncategorisedCount).toBe(0);
+  });
+
+  it("counts a split with several uncategorised pieces once", () => {
+    const s = summariseMonth([split(-90, [[null, -60], [null, -30]])], cats, [], "2026-09");
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(90);
+  });
+
+  it("does not count an uncategorised piece of the opposite sign as income", () => {
+    // An Undo of an Unsplit after the bank's amount went down stores the gap as a real piece.
+    const s = summariseMonth([split(-80, [[1, -60], [2, -25.5], [null, 5.5]])], cats, [], "2026-09");
+    expect(s.income).toBe(0);
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(-5.5);
+  });
+
+  it("treats what the pieces no longer cover as needing a category", () => {
+    const s = summariseMonth([split(-90, [[1, -60], [2, -25.5]])], cats, [], "2026-09");
+    expect(s.spent).toBe(85.5);
+    expect(s.uncategorisedCount).toBe(1);
+    expect(s.uncategorisedTotal).toBe(4.5);
+  });
+});
+
 describe("limitFor", () => {
   const budgets: Budget[] = [
     { id: 1, category_id: 1, month: null, limit_amount: 400 },
@@ -155,5 +217,21 @@ describe("fromVisibleAccounts", () => {
     // Robinhood interest and crypto sales are neither spending nor income.
     const brokerage: Account = { ...accounts[1], type: "brokerage", hidden: false };
     expect(fromVisibleAccounts(rows, [accounts[0], brokerage]).map((t) => t.id)).toEqual([1]);
+  });
+});
+
+describe("inVisibleAccounts", () => {
+  const acct = (id: number, over: Partial<Account>): Account => ({
+    id, name: `A${id}`, type: "cash", institution: null, currency: "USD", created_at: "",
+    source: "simplefin", external_id: `e${id}`, synced_balance: 0, last_synced_at: null, hidden: false, ...over,
+  });
+  const row = (id: number, account_id: number, removed = false) =>
+    ({ id, account_id, removed, posted: "2026-09-01", amount: -5 }) as BankTransaction;
+
+  it("drops hidden and investment accounts but keeps removed rows", () => {
+    const accounts = [acct(1, {}), acct(2, { hidden: true }), acct(3, { type: "brokerage" })];
+    const rows = [row(1, 1), row(2, 1, true), row(3, 2), row(4, 3), row(5, 9)];
+    expect(inVisibleAccounts(rows, accounts).map((t) => t.id)).toEqual([1, 2, 5]);
+    expect(fromVisibleAccounts(rows, accounts).map((t) => t.id)).toEqual([1, 5]);
   });
 });

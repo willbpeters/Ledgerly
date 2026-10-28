@@ -3,19 +3,32 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   useBankTransactions, useCategories, useBudgets, useAccounts, useBankTransactionRange,
   useBankTransactionsToReview, useApproveTransactions, useSetRemoved,
+  useRecurringDismissed, useSetRecurringDismissed,
 } from "../../data/queries";
-import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts } from "../../domain/spending";
+import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVisibleAccounts, inVisibleAccounts } from "../../domain/spending";
+import { inCategory } from "../../domain/splits";
 import { money } from "../../ui/format";
 import { Card, Button, EmptyState, Segmented } from "../../ui/components";
 import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
 import { SearchPanel } from "./SearchPanel";
+import { RecurringPanel } from "./RecurringPanel";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
+import type { Account, BankTransaction, Category } from "../../domain/types";
 
-type View = "month" | "review" | "search";
+type View = "month" | "review" | "search" | "recurring";
+
+// One array for "no dismissed bills yet", so the panel's detection (which
+// depends on this list) isn't re-run over the whole history on every render.
+const NO_KEYS: string[] = [];
+// The same for the query data the every-month list is filtered from: a fresh
+// `= []` each render would make that list a new array each render.
+const NO_TXNS: BankTransaction[] = [];
+const NO_ACCOUNTS: Account[] = [];
+const NO_CATEGORIES: Category[] = [];
 
 export function Spending() {
   // The command bar's search sends you here with ?q=…, straight into Search.
@@ -28,21 +41,30 @@ export function Spending() {
   const { from, to } = monthWindow(month);
 
   const { data: allTxns = [], isLoading } = useBankTransactions(from, to);
-  const { data: categories = [] } = useCategories();
+  const { data: categories = NO_CATEGORIES } = useCategories();
   const { data: budgets = [] } = useBudgets();
-  const { data: allAccounts = [] } = useAccounts();
+  const { data: allAccounts = NO_ACCOUNTS } = useAccounts();
   // A hidden account is out of every total, and spending is a total.
   const accounts = allAccounts.filter((a) => !a.hidden);
   const txns = fromVisibleAccounts(allTxns, allAccounts);
-  const { data: range } = useBankTransactionRange();
+  const { data: range, isLoading: loadingRange } = useBankTransactionRange();
   const colours = useChartColors();
 
-  // Search covers every month, so it loads the whole range, but only once
-  // the Search view is opened.
+  // Search and Recurring cover every month, so they load the whole range,
+  // but only once one of them is opened. Both read the same cached query.
   const [first, last] = range ?? [null, null];
-  const { data: everyTxn = [], isLoading: loadingEvery } =
-    useBankTransactions(first ?? "", last ?? "", view === "search" && first != null && last != null);
-  const searchable = fromVisibleAccounts(everyTxn, allAccounts);
+  const everyMonth = view === "search" || view === "recurring";
+  const { data: everyTxn = NO_TXNS, isLoading: loadingEvery } =
+    useBankTransactions(first ?? "", last ?? "", everyMonth && first != null && last != null);
+  const searchable = useMemo(() => fromVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
+  // Recurring keeps removed rows: a bill whose charge was paid back was still charged.
+  const recurringTxns = useMemo(() => inVisibleAccounts(everyTxn, allAccounts), [everyTxn, allAccounts]);
+  // The every-month list is not ready until the range is known and then loaded.
+  const loadingAll = everyMonth && (loadingRange || loadingEvery);
+
+  const { data: dismissedKeys, isLoading: loadingDismissed } = useRecurringDismissed();
+  const dismissed = dismissedKeys ?? NO_KEYS;
+  const setDismissed = useSetRecurringDismissed();
 
   // The review list obeys the same filter as the month: a hidden account or an
   // investment account has nothing to review here.
@@ -90,10 +112,10 @@ export function Spending() {
     return colours.series[Number.isFinite(i) && i >= 0 ? i % colours.series.length : 0];
   };
 
-  const shown = txns.filter((t) =>
-    focus == null ? true : focus === "uncategorised" ? t.category_id == null : t.category_id === focus);
+  // A split purchase shows under every category it was split into.
+  const shown = txns.filter((t) => focus == null || inCategory(t, focus));
 
-  const nothingImported = (range?.[0] ?? null) == null;
+  const nothingImported = range !== undefined && range[0] == null;
 
   if (nothingImported && !isLoading) {
     return (
@@ -115,6 +137,7 @@ export function Spending() {
             { value: "month", label: "Month" },
             { value: "review", label: `To review (${toReview.length})` },
             { value: "search", label: "Search" },
+            { value: "recurring", label: "Recurring" },
           ]} />
           {view === "month" && (
             <div className="row center" style={{ gap: 8 }}>
@@ -137,11 +160,20 @@ export function Spending() {
           key={q}
           initialText={q}
           transactions={searchable}
-          loading={loadingEvery}
+          loading={loadingAll}
           categories={categories}
           accounts={accounts}
           colourOf={colourOf}
           onRemove={removeOne}
+        />
+      ) : view === "recurring" ? (
+        <RecurringPanel
+          transactions={recurringTxns}
+          loading={loadingAll || loadingDismissed}
+          categories={categories}
+          accounts={accounts}
+          dismissed={dismissed}
+          onSetDismissed={(key, d) => setDismissed.mutateAsync({ key, dismissed: d })}
         />
       ) : view === "review" ? (
         <Card

@@ -15,7 +15,7 @@ let n = 0;
 const txn = (over: Partial<BankTransaction>): BankTransaction => ({
   id: ++n, account_id: 1, external_id: `e${n}`, posted: "2026-09-10", amount: -10,
   description: "x", payee: null, memo: null, mcc: null, pending: false,
-  category_id: null, category_source: "auto", reviewed: true, note: null, removed: false,
+  category_id: null, category_source: "auto", reviewed: true, note: null, removed: false, splits: [],
   ...over,
 });
 
@@ -86,6 +86,18 @@ describe("searchTransactions", () => {
     expect(searchTransactions([groceries, none], { ...all, categoryId: 1 }, ctx)).toEqual([groceries]);
     expect(searchTransactions([groceries, none], { ...all, categoryId: "uncategorised" }, ctx)).toEqual([none]);
     expect(searchTransactions([groceries, none], { ...all, accountId: 2 }, ctx)).toEqual([none]);
+  });
+
+  it("finds a split transaction by any piece's category or note", () => {
+    const costco = txn({ amount: -85.5, splits: [
+      { id: 1, category_id: 1, amount: -60, note: null },
+      { id: 2, category_id: 2, amount: -25.5, note: "pizza" },
+    ] });
+    const dinner = txn({ category_id: 2 });
+    expect(searchTransactions([costco, dinner], { ...all, categoryId: 1 }, ctx)).toEqual([costco]);
+    expect(searchTransactions([costco, dinner], { ...all, text: "groceries" }, ctx)).toEqual([costco]);
+    expect(searchTransactions([costco, dinner], { ...all, text: "pizza" }, ctx)).toEqual([costco]);
+    expect(searchTransactions([costco], { ...all, categoryId: "uncategorised" }, ctx)).toEqual([]);
   });
 
   it("puts the newest first", () => {

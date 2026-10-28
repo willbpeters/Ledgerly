@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useToast } from "../ui/toast";
+import { splitRemainder } from "../domain/splits";
 import type { BankTransaction } from "../domain/types";
 
 /** The parts of a transaction an action in Spending can change — what Undo
@@ -41,6 +42,48 @@ export function useOfferUndo() {
         onClick: () => restore.mutate(states, {
           onError: (e) => toast.push({ tone: "neg", title: "Couldn't undo", body: String(e) }),
         }),
+      },
+    });
+  };
+}
+
+/** Undo for a split or an unsplit: the pieces go back first, then the row's
+ *  own category, source and review state. The pieces must come first, because
+ *  saving pieces empties the row's category. */
+async function undoSplit(before: BankTransaction): Promise<void> {
+  const pieces = before.splits.map(({ category_id, amount, note }) => ({ category_id, amount, note }));
+  // A sync may have changed the amount since the split, leaving the pieces short
+  // of it. Rust only accepts pieces that add up, so put the difference back as an
+  // uncategorised piece. Totals are unchanged: `piecesOf` already counted that
+  // remainder as uncategorised. That holds only because `summariseMonth` treats
+  // an uncategorised piece of the opposite sign to its transaction as needing a
+  // category, as it does a remainder; otherwise a positive piece would be income.
+  const remainder = splitRemainder(before);
+  if (remainder !== 0) pieces.push({ category_id: null, amount: remainder, note: null });
+  await api.bankTransactions.setSplits(before.id, pieces);
+  await api.bankTransactions.restore([stateOf(before)]);
+}
+
+/**
+ * After saving or clearing a split, offer Undo. Plain promises rather than a
+ * mutation: the editor that called this has closed by the time Undo is
+ * clicked, and the query client and toasts outlive it.
+ */
+export function useOfferSplitUndo() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  return (title: string, before: BankTransaction) => {
+    toast.push({
+      tone: "neutral",
+      title,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          undoSplit(before)
+            .catch((e) => toast.push({ tone: "neg", title: "Couldn't undo", body: String(e) }))
+            // Reload either way: the pieces may have been put back even if restore failed.
+            .finally(() => qc.invalidateQueries({ queryKey: ["bankTxns"] }));
+        },
       },
     });
   };

@@ -65,6 +65,7 @@ pub fn run() {
             commands::budget::bank_transactions_list,
             commands::budget::bank_transactions_range,
             commands::budget::bank_transaction_set_category,
+            commands::budget::bank_transaction_set_splits,
             commands::budget::bank_transactions_to_review,
             commands::budget::bank_transactions_approve,
             commands::budget::bank_transactions_set_removed,
@@ -74,6 +75,9 @@ pub fn run() {
             commands::budget::budgets_list,
             commands::budget::budget_set,
             commands::budget::accounts_set_type,
+            commands::recurring::recurring_dismissed_list,
+            commands::recurring::recurring_dismiss,
+            commands::recurring::recurring_undismiss,
             commands::market::market_news_list,
             commands::market::market_earnings_list,
             commands::market::market_profiles_list,
@@ -91,6 +95,10 @@ pub fn run() {
             commands::backup::reveal_path,
             commands::copilot::copilot_preview,
             commands::copilot::copilot_import,
+            commands::goals::goals_list,
+            commands::goals::goals_create,
+            commands::goals::goals_update,
+            commands::goals::goals_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

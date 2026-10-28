@@ -43,8 +43,8 @@ budgeting and spending module.
   unsigned `-setup.exe` + `.msi` under `src-tauri/target/release/bundle/`.
 
 ### What's built
-- **Markets**: a screen answering "what happened to what I own?" and "is this
-  me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
+- **Markets**: a screen (titled "Markets"; it used to say "Dashboard") answering
+  "what happened to what I own?" and "is this me or the whole market?". A full-width **Today board** (S&P 500, Nasdaq, Dow,
   Russell 2000, International via VXUS, VIX, 10- and 5-year yields; level,
   move and a one-month sparkline; VIX and yields uncoloured, yields in basis
   points) with your own day change in its header; an **S&P sector heatmap** (the
@@ -77,6 +77,30 @@ budgeting and spending module.
   Investment accounts are left out of Spending. Every sync re-sorts all
   automatic rows, so a list change reaches history. Spec:
   `docs/superpowers/specs/2026-10-14-copilot-style-categories-design.md`
+- **Goals** (`/goals`, on the rail below Spending): savings targets with an
+  optional date (exactly `YYYY-MM-DD`, a real day). A goal **follows an
+  account** — its progress is that account's value from `derivePortfolio()`
+  (at least $0; a visible account with no value yet counts as $0), so it moves
+  with each sync — or holds an amount the owner updates by hand ("Saved so
+  far"). Only visible cash and brokerage accounts can be followed (a card
+  balance is a debt). The screen shows saved of target, a bar, and what to set
+  aside each month to make the date: what is left divided by the months to go.
+  Months are counted by the calendar (`monthsUntil` in `src/domain/dates.ts`;
+  a part month counts as a whole one), and the line names the day ("by March
+  1, 2027"). On the target day it says "Due today — $Z to go"; once the date
+  has passed it says "The date has passed — $Z to go" and gives no monthly
+  figure. Done is decided in cents. Maths is pure in `src/domain/goals.ts`;
+  storage and the rules in `src-tauri/src/commands/goals.rs`, mirrored by
+  `readGoal` in `src/features/goals/GoalForm.tsx` so mistakes are explained
+  beside the form. A target must be at least $0.01. A goal whose account was
+  retyped to Credit card can't follow it any more: `savedFor` takes the
+  followable ids and the visible ids, and gives `not-followable` (hand-kept
+  amount, "is now a credit card" line, and `GoalForm`'s `otherAccounts`
+  names it) as opposed to `missing-account` for a hidden one. Deleting a
+  followed account in the Accounts screen first stores the amount the goal
+  shows (at least $0) as its `saved_amount`, and the confirmation says so; if
+  that fails the account is not deleted. A sync that removes a followed
+  account does not do this yet (TODO 15c).
 - **Import from Copilot** (Settings): reads Copilot's CSV export, matches
   rows to transactions SimpleFIN already has (same account by mask, same
   amount, within 3 days) and gives them the owner's Copilot category and note;
@@ -95,6 +119,73 @@ budgeting and spending module.
   and a category change each show a toast with **Undo**, which puts the rows
   back exactly as they were (`bank_transactions_restore`). The remove question
   has "Remove, don't ask again"; Settings → Spending turns it back on.
+- **Recurring** (Spending → Recurring): bills and subscriptions spotted from
+  every month's history by `detectRecurring` in `src/domain/recurring.ts`
+  (pure, tested). Money out only; transfer and income rows are left out (a
+  split is skipped only when every piece is one); uncategorised ones are kept.
+  A split counts whole, and its series is filed under the largest piece of its
+  latest charge. Charges are grouped by `recurringKey` (payee, or the
+  description when the payee is blank or nothing but runs of three or more
+  digits; lowercased, runs of 3+ digits removed, spaces collapsed; the display
+  name falls back the same way). Same-day rows from one payee are one bill:
+  their amounts are summed into one charge. Two subscriptions to the same payee
+  on different days are merged into one key (a known limit). A bill needs
+  **3+ charges**; the median gap picks the cadence (weekly 6–8 days, every two
+  weeks 13–16, monthly 27–33, every three months 84–98, yearly 350–380) and
+  **75%** of gaps must fit it. Amount steadiness is judged on the **last six
+  charges** (**75%** within **25% or $2** of their median), so a price rise
+  settles in within six charges however long the history; the usual amount is
+  the median of the last three.
+  - **Pending** rows never make a bill or shape its cadence or amount. But once
+    a bill is detected from posted charges, a pending charge dated after its
+    last one is its latest charge: the last date, the next date and "Paid this
+    month" all use it, so a bill is not "Late" while its charge is only pending.
+  - **Removed** rows (the owner was paid back) still count for timing: cadence,
+    last and next date, and whether the bill is still active. They do not count
+    for money: the amount uses the non-removed charges, "Paid this month" leaves
+    removed charges out (a bill with none this month is not counted as charging),
+    and a series whose every charge was removed is not a bill. The Recurring panel therefore
+    gets the rows of visible accounts with removed ones kept
+    (`inVisibleAccounts`), not `fromVisibleAccounts`.
+  - The next date steps by days or calendar months from the last charge's own
+    day of the month (clamped to the target month). Only when that charge fell
+    on the last day of its month, so its day may have been clamped, is the
+    largest day among the last three charges used instead: Jan 31, Feb 28,
+    Mar 31, Apr 30 is followed by May 31, not the 28th for ever after, while a
+    billing day that moved from the 28th to the 5th stays on the 5th.
+  - A bill shows **Late** only when today is more than **2 days** past its next
+    date (`LATE_AFTER_DAYS`: weekends and posting lag); within that it is Due on
+    that date, and the badge reads "Expected <date>" once that date has passed.
+    A bill charged this month whose charges this month were all removed shows
+    **Paid back this month** (`paidBack`), not paid: it is in neither "Still
+    due" nor "Paid this month". Past the next date by more than its grace
+    (3/5/10/20/30 days) a bill is "Not seen lately" ("Probably cancelled";
+    newest last charge first) and drops out of the month's figures.
+  - `monthOutlook`: "Still due" lists every expected unpaid charge this month,
+    a late bill's missed date from last month included; "Paid this month" sums
+    every charge this month from bills still being charged (a weekly bill
+    charged three times counts all three). The distinct-bill count under "Still
+    due" is done by the panel, not `monthOutlook`. Totals are summed in whole
+    cents. "Not recurring" stores the key in `recurring_dismissed` (v10), with
+    Undo once it has landed; dismissed bills are listed with Restore. Rust never
+    builds keys, it only stores what `recurringKey` made.
+- **Split transactions** (Spending): Split on a row opens `SplitEditor`
+  beneath it; the pieces (category + amount, carrying the transaction's sign)
+  must add up to the cent, and Rust checks again (`store::set_splits`), storing
+  each piece rounded to the cent and rejecting an unknown category with "That
+  category no longer exists." They live in `bank_transaction_splits` (v9) and
+  arrive on every listed row as `splits`. While split, the row's own
+  `category_id` is NULL and `category_source` is `manual`, so syncs, re-sorts,
+  transfer pairing and the Copilot import (a repeat import included) leave it
+  alone. If a later sync changes the amount, whatever the pieces no longer
+  cover counts under "Needs a category" (once per transaction), whichever way
+  the amount moved, and the row says so: "$X not assigned — the bank changed
+  the amount" when it grew, "The pieces are $X more than the bank's amount —
+  edit the split" when it shrank. Unsplit and Undo both work (undoing an
+  Unsplit adds an uncategorised piece for any remainder so the sum check
+  passes); choosing one category for the row ends a split, inside one
+  database transaction. The CSV export includes the pieces in
+  `transaction-splits.csv`.
 - **Accounts**: create/list/delete, types `brokerage`, `cash` and `credit`, with
   the type editable because SimpleFIN never says which accounts are cards.
   Each account can be **hidden**: a hidden account keeps syncing and keeps its
@@ -174,8 +265,8 @@ budgeting and spending module.
   kept and every other kind is kept for good. An optional extra folder gets a
   copy of each. **Restore** stages the chosen file as
   `finance.sqlite.restore-pending`, lets go of the database and restarts; the
-  swap happens at launch, before `db::open`. **Export to CSV** writes seven
-  spreadsheet-ready files. Settings → Backups. Spec:
+  swap happens at launch, before `db::open`. **Export to CSV** writes nine
+  spreadsheet-ready files, among them `transaction-splits.csv` and `goals.csv`. Settings → Backups. Spec:
   `docs/superpowers/specs/2026-10-14-backup-and-export-design.md`
 
 ### Reliability pass (2026-09-08)
@@ -263,6 +354,19 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **A pending SimpleFIN transaction arrives with `posted: 0`**; it is dated
   from `transacted_at` (it used to land on 1970-01-01).
 
+- **Never total or filter bank transactions by `category_id` alone.** A split
+  row's own category is NULL; its pieces are what count. Read rows through
+  `piecesOf()` / `inCategory()` in `src/domain/splits.ts`, as
+  `summariseMonth`, search and Spending's category focus do.
+- **v11 adds `goals`.** `account_id` is `ON DELETE SET NULL`: deleting the
+  followed account keeps the goal as a by-hand one with its last
+  `saved_amount`, and the Goals query is refetched after an account delete or
+  a sync for that reason. **A goal following a hidden account** has no value in
+  `derivePortfolio()` (hidden accounts are filtered there) and falls back to
+  `saved_amount`, saying so on the card — showing $0 would read as lost money.
+  (A *visible* account with no value yet is the opposite case: $0, from the
+  account.) `goals.csv`'s `saved_by_hand` is the hand-entered figure only; a
+  followed account's progress is worked out by the app, not stored.
 - **Never call the browser's `confirm()`; `await askToConfirm()` from
   `src/ui/confirm.ts`.** The dialog plugin replaces `window.confirm` with an
   async version whose Promise is always truthy, so `if (confirm(...))` deletes
@@ -344,6 +448,10 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **v5 adds the Markets tables** (`news_items`, `earnings_events`,
   `security_profile`, `index_quotes`). Every statement is `IF NOT EXISTS` and
   the completeness check is `v5_is_complete`.
+- **v10 adds `recurring_dismissed`** (`payee_key` primary key,
+  `dismissed_at`), `IF NOT EXISTS`, checked by `v10_is_complete`. Its keys
+  are made only by `recurringKey` in TypeScript: change that normalisation
+  and every dismissed bill reappears, so treat it like a stored format.
 - **Today and All time on the Dashboard describe the investments, not net
   worth.** `dayChangePct` divides by `priorInvested`, never by net worth —
   dividing by net worth lets a cash balance shrink the percentage, so a 2% day
@@ -389,7 +497,8 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
 - **Money is stored/handled as `f64`** (a deliberate v1 simplification). Round at
   display time via the `money()` / `pct()` helpers.
 - **Database location:** `%APPDATA%\com.ledgerly.app\finance.sqlite` — currently
-  **unencrypted**. The schema is at `user_version` **5**; migrations are
+  **unencrypted**. The schema is at `user_version` **11** (v9 adds `bank_transaction_splits`, v10 adds
+  `recurring_dismissed`, v11 adds `goals`); migrations are
   version-gated in `db.rs`, so bump `TARGET_VERSION` and add a block to change it.
   A pre-migration backup sits beside it as `finance.sqlite.backup-pre-v2`.
 - **v3 rebuilds the accounts table** to widen its `type` CHECK to accept

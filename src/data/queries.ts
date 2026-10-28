@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
+import type { NewGoal, NewSplit } from "../domain/types";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
@@ -43,6 +44,8 @@ function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
     qc.invalidateQueries({ queryKey: k });
   }
   qc.invalidateQueries({ queryKey: ["bankTxns"] });
+  // A sync can remove an account, which unlinks any goal following it.
+  qc.invalidateQueries({ queryKey: ["goals"] });
 }
 export function useSimplefinConnect() {
   const qc = useQueryClient();
@@ -120,6 +123,8 @@ export function useDeleteAccount() {
       qc.invalidateQueries({ queryKey: keys.accounts });
       qc.invalidateQueries({ queryKey: keys.transactions });
       qc.invalidateQueries({ queryKey: keys.synced });
+      // Its goals now follow nothing: the database set their account to null.
+      qc.invalidateQueries({ queryKey: ["goals"] });
     },
   });
 }
@@ -192,6 +197,14 @@ export function useSetTransactionCategory() {
     onSuccess: () => invalidateSpending(qc),
   });
 }
+/** Splitting changes what each category holds, like a category change. */
+export function useSetSplits() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; splits: NewSplit[] }) => api.bankTransactions.setSplits(v.id, v.splits),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
 export function useCreateCategory() {
   const qc = useQueryClient();
   return useMutation({
@@ -230,6 +243,24 @@ export function useSetBudget() {
     onSuccess: () => qc.invalidateQueries({ queryKey: budgetKeys.budgets }),
   });
 }
+export const recurringKeys = { dismissed: ["recurring", "dismissed"] as const };
+
+export const useRecurringDismissed = () =>
+  useQuery({ queryKey: recurringKeys.dismissed, queryFn: api.recurring.dismissed });
+
+/** Dismiss a bill (not recurring) or put it back. Detection runs in the UI
+ *  over transactions already loaded, so only the dismissed list refetches. */
+export function useSetRecurringDismissed() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { key: string; dismissed: boolean }) =>
+      v.dismissed ? api.recurring.dismiss(v.key) : api.recurring.undismiss(v.key),
+    // Returned, not fired and forgotten: mutateAsync then resolves only once the
+    // dismissed list has refetched, so the row is gone before any Undo toast.
+    onSuccess: () => qc.invalidateQueries({ queryKey: recurringKeys.dismissed }),
+  });
+}
+
 export function useSetAccountType() {
   const qc = useQueryClient();
   return useMutation({
@@ -343,5 +374,33 @@ export function useSetRemoved() {
   return useMutation({
     mutationFn: (v: { ids: number[]; removed: boolean }) => api.bankTransactions.setRemoved(v.ids, v.removed),
     onSuccess: () => invalidateSpending(qc),
+  });
+}
+
+// ---------- goals ----------
+
+const goalsKey = ["goals"] as const;
+
+export const useGoals = () => useQuery({ queryKey: goalsKey, queryFn: api.goals.list });
+
+export function useCreateGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (goal: NewGoal) => api.goals.create(goal),
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey }),
+  });
+}
+export function useUpdateGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; goal: NewGoal }) => api.goals.update(v.id, v.goal),
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey }),
+  });
+}
+export function useDeleteGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.goals.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey }),
   });
 }

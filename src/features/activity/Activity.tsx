@@ -70,7 +70,9 @@ export function Activity() {
           <div className="cell-primary">{t.description}</div>
           {t.pending && <div className="cell-secondary">Pending</div>}
         </div>) },
-    { key: "category", label: "Category", align: "left", render: (t) => <Badge>{categoryName(t.category_id)}</Badge> },
+    // A split row's own category is empty; its pieces are shown in Spending.
+    { key: "category", label: "Category", align: "left", render: (t) => (
+        <Badge>{t.splits.length > 0 ? "Split" : categoryName(t.category_id)}</Badge>) },
     { key: "amount", label: "Amount", render: (t) => (
         <span className={t.amount < 0 ? "neg" : "pos"}>{money(t.amount)}</span>) },
   ];

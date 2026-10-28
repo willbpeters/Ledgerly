@@ -8,6 +8,7 @@ const links = [
   { to: "/accounts", label: "Accounts", icon: Icons.accounts },
   { to: "/activity", label: "Activity", icon: Icons.activity },
   { to: "/spending", label: "Spending", icon: Icons.budget },
+  { to: "/goals", label: "Goals", icon: Icons.goal },
 ];
 
 export function IconRail() {

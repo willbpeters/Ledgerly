@@ -86,7 +86,19 @@ export interface BankTransaction {
   note: string | null;
   /** Left out of Spending and budgets (paid back); restorable. */
   removed: boolean;
+  /** The pieces, when split across categories; empty otherwise. While split,
+   *  `category_id` is null and the pieces are what count — read them through
+   *  `piecesOf()` in `splits.ts`, never `category_id` alone. */
+  splits: TxnSplit[];
 }
+
+/** One piece of a split transaction. The amount carries the transaction's
+ *  sign: a purchase splits into negative pieces. */
+export interface TxnSplit {
+  id: number; category_id: number | null; amount: number; note: string | null;
+}
+/** A piece on its way to the database, before it has an id. */
+export type NewSplit = Omit<TxnSplit, "id">;
 
 /** What an import from Copilot would do. See `budget/copilot.rs`. */
 export interface CopilotPlan {
@@ -169,4 +181,21 @@ export interface BackupStatus {
   restore_error: string | null;
   extra_folder: string | null;
   backups_folder: string;
+}
+
+/** A savings goal. It follows one account's value, or an amount kept up to date by hand. */
+export interface Goal {
+  id: number; name: string; target_amount: number;
+  /** `YYYY-MM-DD`, or null for a goal with no deadline. */
+  target_date: string | null;
+  /** The account whose value is the progress; null when updated by hand. */
+  account_id: number | null;
+  /** Saved so far, for a goal updated by hand. */
+  saved_amount: number;
+  created_at: string;
+}
+/** A goal on its way to the database, before it has an id. */
+export interface NewGoal {
+  name: string; target_amount: number; target_date: string | null;
+  account_id: number | null; saved_amount: number;
 }
