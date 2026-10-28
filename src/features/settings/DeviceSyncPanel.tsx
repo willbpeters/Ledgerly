@@ -25,7 +25,7 @@ export function DeviceSyncPanel(p: DeviceSyncPanelProps) {
 
   if (!status.enabled) {
     return (
-      <Card title="Sync between computers" subtitle="Keep your budgets, categories and edits the same on your PC and laptop.">
+      <Card title="Sync between computers" subtitle="Keep your budgets, goals, categories and edits the same on your PC and laptop.">
         <p className="muted">
           Both computers need a place they can both see, such as My Drive in Google Drive. Start on the
           computer whose data you want to keep and pick that place: Tally makes a "Tally Sync" folder

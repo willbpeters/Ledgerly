@@ -201,6 +201,107 @@ mod tests {
         assert_eq!(text(&pc, "SELECT value FROM sync_meta WHERE name='enabled'").as_deref(), Some("0"));
     }
 
+    fn count(c: &Computer, sql: &str) -> i64 {
+        c.db.0.lock().unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn a_goal_its_edits_and_its_deletion_reach_the_other_computer() {
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+
+        exec(&pc, "INSERT INTO goals (name,target_amount,target_date,account_id,saved_amount,created_at)
+                     VALUES ('Holiday',2000,'2027-06-01',(SELECT id FROM accounts WHERE external_id='ACT-1'),0,'2026-10-20');");
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        assert_eq!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().applied, 1);
+        assert_eq!(
+            text(&laptop, "SELECT g.name || ' ' || a.external_id FROM goals g JOIN accounts a ON a.id=g.account_id").as_deref(),
+            Some("Holiday ACT-1"),
+            "the goal follows the same card there"
+        );
+
+        exec(&laptop, "UPDATE goals SET target_amount=2500, account_id=NULL, saved_amount=300;");
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        assert_eq!(
+            text(&pc, "SELECT target_amount || ' ' || saved_amount || ' ' || coalesce(account_id,'by hand') FROM goals").as_deref(),
+            Some("2500.0 300.0 by hand")
+        );
+
+        exec(&pc, "DELETE FROM goals;");
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        assert_eq!(count(&laptop, "SELECT count(*) FROM goals"), 0);
+    }
+
+    #[test]
+    fn a_split_and_its_undoing_reach_the_other_computer() {
+        use crate::budget::store::{self, NewSplit};
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+        let cat = |c: &Computer, name: &str| -> i64 { count(c, &format!("SELECT id FROM categories WHERE name='{name}'")) };
+        let (dining, groceries) = (cat(&pc, "Dining"), cat(&pc, "Groceries"));
+        let txn = count(&pc, "SELECT id FROM bank_transactions WHERE external_id='TRN-1'");
+
+        store::set_splits(&pc.db.0.lock().unwrap(), txn, &[
+            NewSplit { category_id: Some(dining), amount: -3.0, note: Some("lunch".into()) },
+            NewSplit { category_id: Some(groceries), amount: -2.0, note: None },
+        ]).unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        let pieces = "SELECT group_concat(c.name || ' ' || s.amount || ' ' || coalesce(s.note,'-'), ', ')
+                        FROM (SELECT * FROM bank_transaction_splits ORDER BY sort) s JOIN categories c ON c.id=s.category_id";
+        assert_eq!(text(&laptop, pieces).as_deref(), Some("Dining -3.0 lunch, Groceries -2.0 -"));
+        assert_eq!(text(&laptop, "SELECT category_id FROM bank_transactions"), None, "the row itself has no category while split");
+
+        // One category for the whole row ends the split, there too.
+        let laptop_txn = count(&laptop, "SELECT id FROM bank_transactions WHERE external_id='TRN-1'");
+        let laptop_dining = cat(&laptop, "Dining");
+        store::set_category(&laptop.db.0.lock().unwrap(), laptop_txn, Some(laptop_dining), false).unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        assert_eq!(count(&pc, "SELECT count(*) FROM bank_transaction_splits"), 0);
+        assert_eq!(text(&pc, "SELECT c.name FROM bank_transactions b JOIN categories c ON c.id=b.category_id").as_deref(), Some("Dining"));
+    }
+
+    #[test]
+    fn a_split_on_a_transaction_the_laptop_has_not_fetched_waits_for_it() {
+        use crate::budget::store::{self, NewSplit};
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+        let new_row = "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+                         VALUES ((SELECT id FROM accounts WHERE external_id='ACT-1'),'TRN-2','2026-10-02',-30,'Dinner');";
+        exec(&pc, new_row);
+        let txn = count(&pc, "SELECT id FROM bank_transactions WHERE external_id='TRN-2'");
+        store::set_splits(&pc.db.0.lock().unwrap(), txn, &[
+            NewSplit { category_id: None, amount: -20.0, note: None },
+            NewSplit { category_id: None, amount: -10.0, note: Some("Sam's half".into()) },
+        ]).unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        assert!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().waiting > 0);
+
+        exec(&laptop, new_row); // the laptop's SimpleFIN sync
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        assert_eq!(count(&laptop, "SELECT count(*) FROM bank_transaction_splits"), 2);
+    }
+
+    #[test]
+    fn dismissing_a_bill_and_bringing_it_back_reach_the_other_computer() {
+        use crate::commands::recurring;
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+
+        recurring::dismiss(&pc.db.0.lock().unwrap(), "netflix").unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        assert_eq!(recurring::dismissed(&laptop.db.0.lock().unwrap()).unwrap(), vec!["netflix".to_string()]);
+
+        recurring::undismiss(&laptop.db.0.lock().unwrap(), "netflix").unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        assert!(recurring::dismissed(&pc.db.0.lock().unwrap()).unwrap().is_empty());
+    }
+
     #[test]
     fn each_computer_sees_the_other_in_the_folder() {
         let drive = tempfile::tempdir().unwrap();

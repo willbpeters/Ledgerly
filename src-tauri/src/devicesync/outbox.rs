@@ -4,6 +4,7 @@
 use super::clock;
 use super::files::Change;
 use rusqlite::Connection;
+use std::collections::hash_map::{Entry, HashMap};
 
 pub struct Taken {
     pub last_seq: i64,
@@ -11,6 +12,9 @@ pub struct Taken {
 }
 
 /// Everything waiting to be sent, oldest first. `None` when there is nothing.
+/// A field recorded more than once sends only its last value, in its first
+/// place: a split writes its pieces one by one, and the sets in between must
+/// not reach the other computer, where a retry could keep one of them.
 pub fn take(conn: &Connection) -> rusqlite::Result<Option<Taken>> {
     let mut stmt = conn.prepare("SELECT seq, tbl, key, field, value, at FROM sync_outbox ORDER BY seq")?;
     let rows = stmt.query_map([], |r| {
@@ -34,11 +38,18 @@ pub fn take(conn: &Connection) -> rusqlite::Result<Option<Taken>> {
         ))
     })?;
     let mut last_seq = 0;
-    let mut changes = Vec::new();
+    let mut changes: Vec<Change> = Vec::new();
+    let mut place: HashMap<(String, String, String), usize> = HashMap::new();
     for row in rows {
         let (seq, change) = row?;
         last_seq = seq;
-        changes.push(change);
+        match place.entry((change.tbl.clone(), change.key.clone(), change.field.clone())) {
+            Entry::Occupied(at) => changes[*at.get()] = change,
+            Entry::Vacant(slot) => {
+                slot.insert(changes.len());
+                changes.push(change);
+            }
+        }
     }
     Ok(if changes.is_empty() { None } else { Some(Taken { last_seq, changes }) })
 }
@@ -73,6 +84,24 @@ mod tests {
     #[test]
     fn an_empty_outbox_takes_nothing() {
         assert!(take(&recording()).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_field_recorded_twice_is_taken_once_with_its_last_value() {
+        let conn = recording();
+        conn.execute_batch(
+            "UPDATE categories SET colour='chart-9' WHERE name='Dining';
+             UPDATE categories SET sort=1 WHERE name='Dining';
+             UPDATE categories SET colour='chart-3' WHERE name='Dining';",
+        )
+        .unwrap();
+        let taken = take(&conn).unwrap().unwrap();
+        let fields: Vec<_> = taken.changes.iter().map(|c| (c.field.as_str(), c.value.clone())).collect();
+        assert_eq!(fields, vec![("colour", serde_json::json!("chart-3")), ("sort", serde_json::json!(1))]);
+
+        // All three are done with once the file is written.
+        commit(&conn, "pc", "pc/1.json", &taken).unwrap();
+        assert!(take(&conn).unwrap().is_none());
     }
 
     #[test]

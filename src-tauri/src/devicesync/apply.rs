@@ -28,6 +28,8 @@ pub fn apply(conn: &Connection, device: &str, c: &Change) -> rusqlite::Result<Ou
         "category_rules" => rules(conn, c)?,
         "budgets" => budgets(conn, c)?,
         "transactions" => transactions(conn, c)?,
+        "goals" => goals(conn, c)?,
+        "recurring_dismissed" => dismissed(conn, c)?,
         // A table this build does not know. Files from a newer schema are set
         // aside before reaching here, so this is only ever a retired table.
         _ => true,
@@ -225,8 +227,30 @@ fn bank_transactions(conn: &Connection, device: &str, c: &Change) -> rusqlite::R
             )?;
             Ok(n > 0)
         }
+        "splits" => splits(conn, c),
         _ => Ok(true),
     }
+}
+
+/// The transaction's whole set of pieces, replacing what is here. The row's
+/// own category travels separately, as the `category` field.
+fn splits(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
+    let Some(txn_id) = id_by_key(conn, "bank_transactions", &c.key)? else { return Ok(false) };
+    let pieces = c.value.as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut categories = Vec::with_capacity(pieces.len());
+    for p in pieces {
+        let Some(category) = category_ref(conn, p.get("category"))? else { return Ok(false) };
+        categories.push(category);
+    }
+    conn.execute("DELETE FROM bank_transaction_splits WHERE txn_id=?1", [txn_id])?;
+    for (p, category) in pieces.iter().zip(categories) {
+        conn.execute(
+            "INSERT INTO bank_transaction_splits (txn_id, category_id, amount, note, sort)
+             VALUES (?1, ?2, ?3, ?4, coalesce(?5, 0))",
+            params![txn_id, category, field(p, "amount"), field(p, "note"), field(p, "sort")],
+        )?;
+    }
+    Ok(true)
 }
 
 /// A row SimpleFIN cannot supply here: a manual account's, or Copilot history.
@@ -393,6 +417,68 @@ fn transactions(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
         params![account_id, security_id, field(v, "type"), field(v, "date"), field(v, "quantity"),
                 field(v, "price"), field(v, "amount"), field(v, "fees"), field(v, "note"), c.key],
     )?;
+    Ok(true)
+}
+
+/// An account reference: `Ok(Some(None))` for none, `Ok(None)` when the
+/// account has not reached this computer yet.
+fn account_ref(conn: &Connection, v: Option<&Value>) -> rusqlite::Result<Option<Option<i64>>> {
+    match v.and_then(Value::as_str) {
+        None => Ok(Some(None)),
+        Some(key) => Ok(id_by_key(conn, "accounts", key)?.map(Some)),
+    }
+}
+
+fn goals(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
+    match c.field.as_str() {
+        "_row" if c.value.is_null() => {
+            conn.execute("DELETE FROM goals WHERE sync_key=?1", [&c.key])?;
+            Ok(true)
+        }
+        "_row" => {
+            if id_by_key(conn, "goals", &c.key)?.is_some() {
+                return Ok(true);
+            }
+            let v = &c.value;
+            let Some(account) = account_ref(conn, v.get("account"))? else { return Ok(false) };
+            conn.execute(
+                "INSERT INTO goals (name, target_amount, target_date, account_id, saved_amount, created_at, sync_key)
+                 VALUES (?1, ?2, ?3, ?4, coalesce(?5, 0), ?6, ?7)",
+                params![field(v, "name"), field(v, "target_amount"), field(v, "target_date"), account,
+                        field(v, "saved_amount"), field(v, "created_at"), c.key],
+            )?;
+            Ok(true)
+        }
+        "account" => {
+            let Some(account) = account_ref(conn, Some(&c.value))? else { return Ok(false) };
+            let n = conn.execute("UPDATE goals SET account_id=?1 WHERE sync_key=?2", params![account, c.key])?;
+            Ok(n > 0)
+        }
+        name @ ("name" | "target_amount" | "target_date" | "saved_amount") => {
+            let n = conn.execute(&format!("UPDATE goals SET {name}=?1 WHERE sync_key=?2"), params![sql(&c.value), c.key])?;
+            Ok(n > 0)
+        }
+        _ => Ok(true),
+    }
+}
+
+/// Keyed by the payee key itself, the same text on both computers.
+fn dismissed(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
+    if c.field != "_row" {
+        return Ok(true);
+    }
+    if c.value.is_null() {
+        conn.execute("DELETE FROM recurring_dismissed WHERE payee_key=?1", [&c.key])?;
+    } else {
+        let at = c.value.get("dismissed_at").and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        conn.execute(
+            "INSERT INTO recurring_dismissed (payee_key, dismissed_at) VALUES (?1, ?2)
+             ON CONFLICT(payee_key) DO NOTHING",
+            params![c.key, at],
+        )?;
+    }
     Ok(true)
 }
 

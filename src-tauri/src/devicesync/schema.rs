@@ -4,9 +4,10 @@
 //! applied from the other computer.
 use rusqlite::Connection;
 
-/// Tables whose rows carry a `sync_key` column. Budgets and rules need none:
-/// their natural keys (category + month; type + pattern) already agree.
-pub const KEYED_TABLES: &[&str] = &["accounts", "categories", "bank_transactions", "transactions"];
+/// Tables whose rows carry a `sync_key` column. Budgets, rules and dismissed
+/// bills need none: their natural keys (category + month; type + pattern; the
+/// payee key) already agree. Splits travel as a field of their transaction.
+pub const KEYED_TABLES: &[&str] = &["accounts", "categories", "bank_transactions", "transactions", "goals"];
 
 const SYNC_TABLES: &[&str] = &["sync_meta", "sync_outbox", "sync_clock", "sync_files_applied", "sync_pending"];
 
@@ -36,7 +37,7 @@ CREATE VIEW sync_on AS SELECT
   AND coalesce((SELECT value FROM sync_meta WHERE name='applying'), '0') <> '1' AS yes;
 ";
 
-/// Keys for rows that existed before v9. SimpleFIN accounts, their
+/// Keys for rows that existed before v12. SimpleFIN accounts, their
 /// transactions and categories get keys the other computer derives the same
 /// way; manual rows get random ones, which reach the other computer in the
 /// seed copy.
@@ -56,7 +57,9 @@ UPDATE bank_transactions SET sync_key =
     (SELECT a.sync_key FROM accounts a WHERE a.id = bank_transactions.account_id) || '|' || external_id
   WHERE sync_key IS NULL;
 UPDATE transactions SET sync_key = 'txn:' || lower(hex(randomblob(16))) WHERE sync_key IS NULL;
+UPDATE goals SET sync_key = 'goal:' || lower(hex(randomblob(16))) WHERE sync_key IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_sync_key ON accounts(sync_key);
+CREATE UNIQUE INDEX IF NOT EXISTS goals_sync_key ON goals(sync_key);
 CREATE UNIQUE INDEX IF NOT EXISTS categories_sync_key ON categories(sync_key);
 CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_sync_key ON bank_transactions(sync_key);
 CREATE UNIQUE INDEX IF NOT EXISTS transactions_sync_key ON transactions(sync_key);
@@ -72,7 +75,17 @@ const TRIGGER_NAMES: &[&str] = &[
     "category_rules_sync_insert", "category_rules_sync_update", "category_rules_sync_delete",
     "budgets_sync_insert", "budgets_sync_update", "budgets_sync_delete",
     "transactions_sync_insert", "transactions_sync_delete",
+    "goals_sync_insert", "goals_sync_update", "goals_sync_delete",
+    "splits_sync_insert", "splits_sync_update", "splits_sync_delete",
+    "recurring_dismissed_sync_insert", "recurring_dismissed_sync_delete",
 ];
+
+/// A transaction's whole set of split pieces, as one JSON array, for the row
+/// `b`. `[]` once it is unsplit.
+const SPLITS: &str = "(SELECT json_group_array(json(piece)) FROM (
+    SELECT json_object('category', c.sync_key, 'amount', s.amount, 'note', s.note, 'sort', s.sort) AS piece
+    FROM bank_transaction_splits s LEFT JOIN categories c ON c.id = s.category_id
+    WHERE s.txn_id = b.id ORDER BY s.sort, s.id))";
 
 /// Every insert trigger first gives the new row its key (always, so keys
 /// exist before sync is ever turned on), then records it if it is the
@@ -255,6 +268,83 @@ WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on)
   AND EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('transactions', OLD.sync_key, '_row', NULL, {NOW});
 END;
+
+CREATE TRIGGER goals_sync_insert AFTER INSERT ON goals BEGIN
+  UPDATE goals SET sync_key = 'goal:' || lower(hex(randomblob(16)))
+    WHERE id = NEW.id AND sync_key IS NULL;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'goals', g.sync_key, '_row',
+      json_object('name', g.name, 'target_amount', g.target_amount, 'target_date', g.target_date,
+        'account', (SELECT a.sync_key FROM accounts a WHERE a.id = g.account_id),
+        'saved_amount', g.saved_amount, 'created_at', g.created_at), {NOW}
+    FROM goals g WHERE g.id = NEW.id AND (SELECT yes FROM sync_on);
+END;
+
+CREATE TRIGGER goals_sync_update AFTER UPDATE OF name, target_amount, target_date, account_id, saved_amount ON goals
+WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'goals', NEW.sync_key, 'name', json_quote(NEW.name), {NOW} WHERE OLD.name IS NOT NEW.name;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'goals', NEW.sync_key, 'target_amount', json_quote(NEW.target_amount), {NOW}
+    WHERE OLD.target_amount IS NOT NEW.target_amount;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'goals', NEW.sync_key, 'target_date', json_quote(NEW.target_date), {NOW}
+    WHERE OLD.target_date IS NOT NEW.target_date;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'goals', NEW.sync_key, 'saved_amount', json_quote(NEW.saved_amount), {NOW}
+    WHERE OLD.saved_amount IS NOT NEW.saved_amount;
+  -- An account delete sets account_id NULL after the account is gone: that
+  -- is a cascade, not an edit.
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'goals', NEW.sync_key, 'account',
+      json_quote((SELECT a.sync_key FROM accounts a WHERE a.id = NEW.account_id)), {NOW}
+    WHERE OLD.account_id IS NOT NEW.account_id
+      AND (OLD.account_id IS NULL OR EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id));
+END;
+
+CREATE TRIGGER goals_sync_delete AFTER DELETE ON goals
+WHEN OLD.sync_key IS NOT NULL AND (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('goals', OLD.sync_key, '_row', NULL, {NOW});
+END;
+
+-- Splits are replaced as a set, so every piece written or removed records the
+-- transaction's whole set as it now stands; the last one recorded is the
+-- finished set. A transaction deleted out from under its pieces finds no
+-- row here and records nothing.
+CREATE TRIGGER splits_sync_insert AFTER INSERT ON bank_transaction_splits
+WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', b.sync_key, 'splits', {SPLITS}, {NOW}
+    FROM bank_transactions b WHERE b.id = NEW.txn_id AND b.sync_key IS NOT NULL;
+END;
+
+-- A category delete sets a piece's category NULL after the category is gone:
+-- a cascade, which the category's own deletion carries.
+CREATE TRIGGER splits_sync_update AFTER UPDATE OF category_id, amount, note, sort ON bank_transaction_splits
+WHEN (SELECT yes FROM sync_on)
+  AND (OLD.category_id IS NULL OR EXISTS (SELECT 1 FROM categories WHERE id = OLD.category_id)) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', b.sync_key, 'splits', {SPLITS}, {NOW}
+    FROM bank_transactions b WHERE b.id = NEW.txn_id AND b.sync_key IS NOT NULL;
+END;
+
+CREATE TRIGGER splits_sync_delete AFTER DELETE ON bank_transaction_splits
+WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'bank_transactions', b.sync_key, 'splits', {SPLITS}, {NOW}
+    FROM bank_transactions b WHERE b.id = OLD.txn_id AND b.sync_key IS NOT NULL;
+END;
+
+CREATE TRIGGER recurring_dismissed_sync_insert AFTER INSERT ON recurring_dismissed
+WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    VALUES ('recurring_dismissed', NEW.payee_key, '_row', json_object('dismissed_at', NEW.dismissed_at), {NOW});
+END;
+
+CREATE TRIGGER recurring_dismissed_sync_delete AFTER DELETE ON recurring_dismissed
+WHEN (SELECT yes FROM sync_on) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('recurring_dismissed', OLD.payee_key, '_row', NULL, {NOW});
+END;
 ";
 
 fn trigger_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
@@ -275,7 +365,7 @@ pub(crate) fn drop_triggers(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Whether every v9 object is really present, whatever the version stamp says.
+/// Whether every v12 object is really present, whatever the version stamp says.
 pub fn is_complete(conn: &Connection) -> rusqlite::Result<bool> {
     for table in KEYED_TABLES {
         if !crate::db::column_exists(conn, table, "sync_key")? {
@@ -305,7 +395,7 @@ pub fn is_complete(conn: &Connection) -> rusqlite::Result<bool> {
 }
 
 /// Safe to re-run: every step is conditional. One transaction, so an
-/// interruption leaves v8 or the finished v9.
+/// interruption leaves v11 or the finished v12.
 pub fn install(conn: &Connection) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
     for table in KEYED_TABLES {
@@ -317,7 +407,7 @@ pub fn install(conn: &Connection) -> rusqlite::Result<()> {
     // them from the current text, so a changed body reaches existing
     // databases. The drop here keeps install safe to call on its own.
     drop_triggers(&tx)?;
-    tx.execute_batch(&TRIGGERS.replace("{NOW}", NOW))?;
+    tx.execute_batch(&TRIGGERS.replace("{SPLITS}", SPLITS).replace("{NOW}", NOW))?;
     tx.commit()
 }
 
@@ -641,6 +731,55 @@ mod tests {
         .unwrap();
         let rows = outbox(&conn);
         assert_eq!(rows, vec![("categories".into(), "cat:Dining".into(), "_row".into(), None)]);
+    }
+
+    #[test]
+    fn deleting_a_category_does_not_record_the_splits_it_empties() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "INSERT INTO bank_transaction_splits (txn_id, category_id, amount, sort)
+               VALUES (1, (SELECT id FROM categories WHERE name='Dining'), -3, 0), (1, NULL, -2, 1);
+             DELETE FROM sync_outbox;
+             DELETE FROM categories WHERE name='Dining';",
+        )
+        .unwrap();
+        assert_eq!(outbox(&conn), vec![("categories".into(), "cat:Dining".into(), "_row".into(), None)]);
+    }
+
+    #[test]
+    fn a_split_is_recorded_as_the_whole_set_on_its_transaction() {
+        let conn = enabled();
+        simplefin_txn(&conn);
+        conn.execute_batch(
+            "DELETE FROM sync_outbox;
+             INSERT INTO bank_transaction_splits (txn_id, category_id, amount, note, sort)
+               VALUES (1, (SELECT id FROM categories WHERE name='Dining'), -3, 'lunch', 0), (1, NULL, -2, NULL, 1);",
+        )
+        .unwrap();
+        let (tbl, key, field, value) = outbox(&conn).pop().unwrap();
+        assert_eq!((tbl.as_str(), key.as_str(), field.as_str()), ("bank_transactions", "sf:ACT-1|TRN-1", "splits"));
+        let value: serde_json::Value = serde_json::from_str(&value.unwrap()).unwrap();
+        assert_eq!(value, serde_json::json!([
+            {"category": "cat:Dining", "amount": -3.0, "note": "lunch", "sort": 0},
+            {"category": null, "amount": -2.0, "note": null, "sort": 1},
+        ]));
+    }
+
+    #[test]
+    fn deleting_an_account_records_the_account_not_its_goals() {
+        let conn = enabled();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Savings','cash','USD','2026-01-01');
+             INSERT INTO goals (name,target_amount,account_id,saved_amount,created_at)
+               VALUES ('Holiday',2000,1,0,'2026-10-20');
+             DELETE FROM sync_outbox;
+             DELETE FROM accounts;",
+        )
+        .unwrap();
+        let rows = outbox(&conn);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, "accounts");
     }
 
     #[test]
