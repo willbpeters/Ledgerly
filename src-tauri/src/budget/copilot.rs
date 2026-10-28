@@ -84,6 +84,9 @@ pub struct CategoryHold {
     pub kept_rows: usize,
     /// Rows holding it from `not_in_copilot`, by `txn_id`.
     pub removable: Vec<i64>,
+    /// Split pieces and budgets in it. These keep it unless all categories
+    /// are replaced.
+    pub pinned: usize,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NewCategory { pub name: String, pub kind: String }
@@ -345,6 +348,14 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut uses: BTreeMap<String, (String, usize)> = BTreeMap::new();
     for c in rows.iter().filter(|r| !r.pending && !r.excluded).filter_map(category_for) {
         uses.entry(c.to_lowercase()).or_insert_with(|| (c.clone(), 0)).1 += 1;
+    }
+    // A transfer's own category (one Copilot has, like Car) is still one of
+    // Copilot's categories, though the row itself is an internal transfer.
+    for r in rows.iter().filter(|r| !r.pending && !r.excluded && r.kind == "internal transfer") {
+        let c = r.category.trim();
+        if !c.is_empty() {
+            uses.entry(c.to_lowercase()).or_insert_with(|| (c.to_string(), 0)).1 += 1;
+        }
     }
     let mut order: Vec<(String, usize)> = uses.values().cloned().collect();
     order.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -797,5 +808,16 @@ mod tests {
             &row("2026-01-05", "D", "5", "", "internal transfer", ""),
         ])).unwrap();
         assert_eq!(plan(&rows, &snap()).export_categories, vec!["Shops", "Golf", "Internal transfer"]);
+    }
+
+    #[test]
+    fn a_category_only_a_transfer_carries_is_still_copilots() {
+        let rows = parse_csv(&csv(&[
+            &row("2026-01-02", "A", "5", "Golf", "regular", ""),
+            &row("2026-01-05", "Smog", "5", "Car", "internal transfer", ""),
+        ])).unwrap();
+        let p = plan(&rows, &snap());
+        assert!(p.export_categories.contains(&"Car".to_string()));
+        assert!(p.new_categories.iter().any(|c| c.name == "Car"), "made, so it isn't lost");
     }
 }

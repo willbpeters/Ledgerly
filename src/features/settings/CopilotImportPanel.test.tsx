@@ -21,9 +21,9 @@ const plan: CopilotPlan = {
   // Travel holds nothing; Poker only a row offered for removal; Subscriptions
   // one row Copilot doesn't cover, and one offered.
   category_holds: [
-    { name: "Travel", kept_rows: 0, removable: [] },
-    { name: "Poker", kept_rows: 0, removable: [41] },
-    { name: "Subscriptions", kept_rows: 1, removable: [42] },
+    { name: "Travel", kept_rows: 0, removable: [], pinned: 0 },
+    { name: "Poker", kept_rows: 0, removable: [41], pinned: 0 },
+    { name: "Subscriptions", kept_rows: 1, removable: [42], pinned: 0 },
   ],
   recategorised: 12,
   untouched_after_cutoff: 5,
@@ -31,10 +31,49 @@ const plan: CopilotPlan = {
 };
 const base = {
   plan: null, result: null, busy: false, removeIds: new Set<number>(), mode: "remove" as const, onModeChange: vi.fn(),
+  categoryMode: "keep" as const, onCategoryModeChange: vi.fn(), keepNames: new Set<string>(), onToggleKeep: vi.fn(),
   onChoose: vi.fn(), onImport: vi.fn(), onToggleRemove: vi.fn(), onSetAllRemove: vi.fn(),
 };
 
 describe("CopilotImportPanel", () => {
+  it("replacing all offers each category it removes to keep, and says what loses one", () => {
+    render(<CopilotImportPanel {...base} plan={plan} removeIds={new Set([41])} categoryMode="replace" />);
+    expect(screen.getByText(/Removes every category Copilot doesn't use\. Tick any to keep/)).toBeInTheDocument();
+    for (const name of ["Travel", "Poker", "Subscriptions"]) {
+      expect(screen.getByRole("checkbox", { name: `Keep ${name}` })).not.toBeChecked();
+    }
+    expect(screen.getByText("2 transactions in the removed ones become uncategorised and go back to To review")).toBeInTheDocument();
+    expect(screen.queryByText(/^Kept:/)).toBeNull();
+  });
+
+  it("a category ticked to keep loses none of its transactions", () => {
+    const onToggleKeep = vi.fn();
+    const { rerender } = render(
+      <CopilotImportPanel {...base} plan={plan} categoryMode="replace" onToggleKeep={onToggleKeep} />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep Subscriptions" }));
+    expect(onToggleKeep).toHaveBeenCalledWith("Subscriptions");
+    rerender(<CopilotImportPanel {...base} plan={plan} categoryMode="replace" keepNames={new Set(["Subscriptions"])} />);
+    expect(screen.getByRole("checkbox", { name: "Keep Subscriptions" })).toBeChecked();
+    // Poker's one row is the only one left to lose a category.
+    expect(screen.getByText("1 transaction in the removed ones becomes uncategorised and goes back to To review")).toBeInTheDocument();
+  });
+
+  it("keeps a category that only splits or budgets hold, unless replacing all", () => {
+    const pinned: CopilotPlan = { ...plan, category_holds: [{ name: "Travel", kept_rows: 0, removable: [], pinned: 2 }] };
+    const { rerender } = render(<CopilotImportPanel {...base} plan={pinned} />);
+    expect(screen.getByText("Kept: Travel — used by splits or budgets")).toBeInTheDocument();
+    rerender(<CopilotImportPanel {...base} plan={pinned} categoryMode="replace" />);
+    expect(screen.getByRole("checkbox", { name: "Keep Travel" })).not.toBeChecked();
+  });
+
+  it("switches between only Copilot's categories and keeping ones in use", () => {
+    const onCategoryModeChange = vi.fn();
+    render(<CopilotImportPanel {...base} plan={plan} onCategoryModeChange={onCategoryModeChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Only Copilot's" }));
+    expect(onCategoryModeChange).toHaveBeenCalledWith("replace");
+  });
+
   it("only offers to choose a file before a preview", () => {
     render(<CopilotImportPanel {...base} />);
     expect(screen.getByRole("button", { name: /Choose Copilot export/ })).toBeInTheDocument();

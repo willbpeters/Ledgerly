@@ -228,6 +228,18 @@ export function useDeleteCategory() {
     onSuccess: () => { invalidateSpending(qc); qc.invalidateQueries({ queryKey: budgetKeys.budgets }); },
   });
 }
+/** Removing every category also takes the rules and budgets, and backs up. */
+export function useClearCategories() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.categories.clear(),
+    onSuccess: () => {
+      invalidateSpending(qc);
+      qc.invalidateQueries({ queryKey: budgetKeys.budgets });
+      qc.invalidateQueries({ queryKey: ["backup"] });
+    },
+  });
+}
 export function useDeleteRule() {
   const qc = useQueryClient();
   return useMutation({
@@ -358,7 +370,8 @@ export function useCopilotPreview() {
 export function useCopilotImport() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { path: string; removeIds: number[] }) => api.copilot.import(v.path, v.removeIds),
+    mutationFn: (v: { path: string; removeIds: number[]; replaceAll: boolean; keep: string[] }) =>
+      api.copilot.import(v.path, v.removeIds, v.replaceAll, v.keep),
     onSuccess: () => {
       invalidateSpending(qc);
       qc.invalidateQueries({ queryKey: budgetKeys.budgets });

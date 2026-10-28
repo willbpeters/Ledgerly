@@ -71,7 +71,10 @@ export const api = {
     /** A dry run: what importing this Copilot export would do. */
     preview: (path: string) => invoke<CopilotPlan>("copilot_preview", { path }),
     /** Backs up, then imports in one transaction. */
-    import: (path: string, removeIds: number[]) => invoke<CopilotCounts>("copilot_import", { path, removeIds }),
+    /** With `replaceAll`, every category the export doesn't use goes, apart
+     *  from those named in `keep`. */
+    import: (path: string, removeIds: number[], replaceAll: boolean, keep: string[]) =>
+      invoke<CopilotCounts>("copilot_import", { path, removeIds, replaceAll, keep }),
   },
   backup: {
     status: () => invoke<BackupStatus>("backup_status"),
@@ -90,6 +93,8 @@ export const api = {
     update: (id: number, name: string, colour: string) =>
       invoke<void>("categories_update", { id, name, colour }),
     delete: (id: number) => invoke<void>("categories_delete", { id }),
+    /** Backs up, then removes every category; returns how many went. */
+    clear: () => invoke<number>("categories_clear"),
   },
   bankTransactions: {
     list: (from: string, to: string) =>
