@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { PageHeader, Card, Button, Badge, EmptyState } from "../../ui/components";
 import { money, pct, timeAgo } from "../../ui/format";
 import { useMarketRefresh } from "../../data/queries";
+import { useRefreshPrices } from "../../data/useRefresh";
 import { planNextMarketTick } from "../../data/marketSchedule";
 import { useMarketView } from "./useMarketView";
 import { TodayBoard } from "./TodayBoard";
@@ -46,6 +47,9 @@ function CompanyRow({ r }: { r: MarketRow }) {
 export function Markets() {
   const { view, you } = useMarketView();
   const refresh = useMarketRefresh();
+  const prices = useRefreshPrices();
+  // One button for everything Markets shows: headlines and your prices.
+  const refreshAll = () => { refresh.mutate(); prices.mutate(); };
 
   // A slow poll while the screen is open. The cadence is decided by a pure
   // function so it is unit-tested; this effect only obeys it. Nothing fetches
@@ -72,7 +76,7 @@ export function Markets() {
       <PageHeader subtitle="The market today, and what happened to what you own" />
 
       <TodayBoard rows={view.indices} you={you}
-        actions={<Button size="sm" loading={refresh.isPending} onClick={() => refresh.mutate()}>Refresh</Button>}
+        actions={<Button size="sm" loading={refresh.isPending || prices.isPending} onClick={refreshAll}>Refresh</Button>}
         footer={<>
           {view.newestFetch
             ? <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
@@ -81,6 +85,15 @@ export function Markets() {
             : <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
                 Nothing fetched yet — press Refresh.
               </p>}
+          <p className="muted" style={{ fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+            {prices.isSuccess ? `Updated ${prices.data} prices. ` : ""}
+            Prices also refresh on their own: every few seconds during US market hours, every 15 minutes otherwise.
+          </p>
+          {prices.isError && (
+            <div className="notice neg" style={{ marginTop: 8 }}>
+              Couldn't refresh prices. Check your connection and try again.
+            </div>
+          )}
           {refresh.data && refresh.data.errors.length > 0 && (
             <div className="notice warn" style={{ marginTop: 8 }}>
               {refresh.data.errors.length} source{refresh.data.errors.length === 1 ? "" : "s"} could

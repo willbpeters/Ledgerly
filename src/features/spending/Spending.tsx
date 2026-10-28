@@ -13,12 +13,13 @@ import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
 import { SearchPanel } from "./SearchPanel";
 import { RecurringPanel } from "./RecurringPanel";
+import { CategoriesCard } from "./CategoriesCard";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
 import type { Account, BankTransaction, Category } from "../../domain/types";
 
-type View = "month" | "review" | "search" | "recurring";
+type View = "month" | "review" | "search" | "recurring" | "categories";
 
 // One array for "no dismissed bills yet", so the panel's detection (which
 // depends on this list) isn't re-run over the whole history on every render.
@@ -131,6 +132,7 @@ export function Spending() {
             { value: "review", label: `To review (${toReview.length})` },
             { value: "search", label: "Search" },
             { value: "recurring", label: "Recurring" },
+            { value: "categories", label: "Categories & rules" },
           ]} />
           {view === "month" && (
             <div className="row center" style={{ gap: 8 }}>
@@ -148,7 +150,9 @@ export function Spending() {
         )}
       </div>
 
-      {view === "search" ? (
+      {view === "categories" ? (
+        <CategoriesCard />
+      ) : view === "search" ? (
         <SearchPanel
           key={q}
           initialText={q}

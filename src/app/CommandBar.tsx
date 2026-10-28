@@ -5,6 +5,7 @@ import { useToast } from "../ui/toast";
 import { timeAgo } from "../ui/format";
 import { Button } from "../ui/components";
 import { Icons } from "./icons";
+import { WindowControls } from "./WindowControls";
 
 const TITLES: { path: string; title: string }[] = [
   { path: "/holdings", title: "Holdings" },
@@ -65,15 +66,17 @@ export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void })
   }
 
   return (
-    <header className="cmdbar">
-      <h1 className="cmd-title">{titleFor(pathname)}</h1>
+    // With no native title bar, the bar's empty space drags the window
+    // (double-click maximises); the attribute only applies where it is set.
+    <header className="cmdbar" data-tauri-drag-region>
+      <h1 className="cmd-title" data-tauri-drag-region>{titleFor(pathname)}</h1>
       <form className="cmd-search" onSubmit={submit}>
         <Icons.search size={14} />
         <input ref={input} value={term} onChange={(e) => setTerm(e.target.value)}
           placeholder={onSpending ? "Search transactions" : "Search a ticker or account"} aria-label="Search" />
         <span className="kbd">Ctrl K</span>
       </form>
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+      <div data-tauri-drag-region style={{ marginLeft: "auto", alignSelf: "stretch", display: "flex", alignItems: "center", gap: 12 }}>
         {status?.connected && (
           <>
             <span className="cmd-status"><span className="dot" />Synced {timeAgo(status.last_synced_at)}</span>
@@ -86,6 +89,7 @@ export function CommandBar({ onToggleInsight }: { onToggleInsight: () => void })
           <Icons.panel size={15} />
         </Button>
       </div>
+      <WindowControls />
     </header>
   );
 }

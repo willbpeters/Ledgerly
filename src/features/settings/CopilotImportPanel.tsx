@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Card, Button } from "../../ui/components";
 import { money, fmtDate } from "../../ui/format";
 import type { CopilotCounts, CopilotPlan } from "../../domain/types";
@@ -9,6 +10,8 @@ export interface CopilotImportPanelProps {
   busy: boolean;
   onChoose: () => void;
   onImport: () => void;
+  /** Small print under the card, e.g. the ask-before-removing option. */
+  children?: ReactNode;
 }
 
 /** Copilot's name for what it excluded: the import's category for them. */
@@ -29,7 +32,7 @@ const transactions = (n: number) => `${n} ${n === 1 ? "transaction" : "transacti
  *  without Tauri; `CopilotImportCard` wires it to the real calls. The import
  *  makes Tally a copy of Copilot up to the export's last day: every row,
  *  Copilot's names, and exactly Copilot's categories. */
-export function CopilotImportPanel({ plan, result, busy, onChoose, onImport }: CopilotImportPanelProps) {
+export function CopilotImportPanel({ plan, result, busy, onChoose, onImport, children }: CopilotImportPanelProps) {
   return (
     <Card title="Import from Copilot"
       subtitle="Make Tally a copy of Copilot: every transaction, with Copilot's names, categories and notes.">
@@ -126,6 +129,10 @@ export function CopilotImportPanel({ plan, result, busy, onChoose, onImport }: C
               </div>
             </details>
           </div>
+        )}
+
+        {children && (
+          <div style={{ paddingTop: 10, borderTop: "1px solid var(--line)" }}>{children}</div>
         )}
       </div>
     </Card>
