@@ -426,8 +426,8 @@ fn apply_v3(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         result?;
     }
+    // No preset categories: they come from the owner or a Copilot import.
     conn.execute_batch(MIGRATION_3_BUDGET)?;
-    crate::budget::seed::insert_builtin_categories(conn)?;
     Ok(())
 }
 
@@ -622,6 +622,7 @@ mod tests {
     fn v6_re_sorts_existing_rows_and_reviews_only_the_categorised_ones() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
+        crate::budget::seed::test_categories(&conn);
         // Undo v6 to stand in for a v5 database with rows from an older build.
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN reviewed;
@@ -759,16 +760,17 @@ mod tests {
     }
 
     #[test]
-    fn v3_seeds_the_builtin_categories_once() {
+    fn v3_seeds_no_categories_and_a_rerun_keeps_the_owners() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
-        let n: i64 = conn.query_row("SELECT count(*) FROM categories WHERE is_builtin=1", [], |r| r.get(0)).unwrap();
-        assert_eq!(n as usize, crate::budget::seed::BUILTIN.len());
+        let n: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "categories come from the owner or a Copilot import");
 
-        // Running migrations again must not duplicate them.
+        // Running migrations again must neither add nor duplicate anything.
+        conn.execute("INSERT INTO categories (name,kind) VALUES ('Mine','spending')", []).unwrap();
         apply_migrations(&conn).unwrap();
         let again: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
-        assert_eq!(again, n);
+        assert_eq!(again, 1);
     }
 
     /// Exactly the state found on the owner's machine: a v2 schema carrying a
@@ -815,11 +817,11 @@ mod tests {
     }
 
     #[test]
-    fn the_repair_seeds_the_builtin_categories() {
+    fn the_repair_seeds_no_categories() {
         let conn = v2_schema_mis_stamped_as_v3();
         apply_migrations(&conn).unwrap();
         let n: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
-        assert_eq!(n as usize, crate::budget::seed::BUILTIN.len());
+        assert_eq!(n, 0);
     }
 
     #[test]

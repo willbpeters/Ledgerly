@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn every_mapped_name_is_a_real_builtin_category() {
-        let names: Vec<&str> = super::super::seed::BUILTIN.iter().map(|(n, ..)| *n).collect();
+        let names: Vec<&str> = super::super::seed::TEST_CATEGORIES.iter().map(|(n, _)| *n).collect();
         for (_, name) in EXACT {
             assert!(names.contains(name), "{name} is not a built-in category");
         }

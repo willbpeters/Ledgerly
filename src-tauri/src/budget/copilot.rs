@@ -149,6 +149,17 @@ pub fn category_for(r: &CopilotRow) -> Option<String> {
     (r.kind == "income").then(|| "Income".to_string())
 }
 
+/// The system category kind a `category_for` name stands for, if any.
+pub fn system_kind(name: &str) -> Option<&'static str> {
+    if name.eq_ignore_ascii_case("Transfer") {
+        Some("transfer")
+    } else if name.eq_ignore_ascii_case("Income") {
+        Some("income")
+    } else {
+        None
+    }
+}
+
 fn day(s: &str) -> Option<i64> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(|d| d.num_days_from_ce() as i64)
 }
@@ -251,7 +262,10 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         .chain(p.additions.iter().map(|a| a.category.clone())).flatten().collect();
     wanted.sort();
     wanted.dedup();
-    p.new_categories = wanted.into_iter().filter(|c| !have.contains(&c.to_lowercase()))
+    // Transfer and Income are Tally's system categories, made when first
+    // needed with the right kind, so they are never offered as new spending.
+    p.new_categories = wanted.into_iter()
+        .filter(|c| !have.contains(&c.to_lowercase()) && system_kind(c).is_none())
         .map(|name| NewCategory {
             // Money moved into the owner's own investments is not spending.
             kind: if name.eq_ignore_ascii_case("investments") { "transfer" } else { "spending" }.into(),

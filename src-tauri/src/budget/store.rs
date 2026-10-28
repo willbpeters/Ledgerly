@@ -33,12 +33,18 @@ pub fn load_rules(conn: &Connection) -> rusqlite::Result<Vec<Rule>> {
     rows.collect()
 }
 
-/// Resolve a decision to a category id, creating nothing.
+/// Resolve a decision to a category id.
+///
+/// The sorter speaks Tally's old category names, so each is mapped onto
+/// whatever the owner has ("Dining" onto "Eating Out"). No match leaves the
+/// row uncategorised for To review: a spending category is never made here.
+/// Only income and internal transfer, which mirror Copilot's own transaction
+/// types, are made the first time a row needs one.
 fn resolve(conn: &Connection, decision: Decision) -> rusqlite::Result<Option<i64>> {
     Ok(match decision {
         Decision::Rule(id) => Some(id),
-        Decision::Builtin(name) => seed::category_id(conn, name)?,
-        Decision::Income => seed::category_id(conn, "Income")?,
+        Decision::Builtin(name) => seed::sorter_category(conn, name)?,
+        Decision::Income => Some(seed::system_category(conn, "income")?),
         Decision::None => None,
     })
 }
@@ -272,12 +278,11 @@ pub fn set_splits(conn: &Connection, txn_id: i64, pieces: &[NewSplit]) -> Result
     tx.commit().map_err(|e| e.to_string())
 }
 
-/// File as Transfer every automatic row, posted on or after `since`, that has
-/// an equal-and-opposite partner in another of the owner's accounts. Payments
-/// to people never pair: a friend repaying dinner is not a transfer.
-/// Returns how many rows it marked.
+/// File as an internal transfer every automatic row, posted on or after
+/// `since`, that has an equal-and-opposite partner in another of the owner's
+/// accounts. Payments to people never pair: a friend repaying dinner is not a
+/// transfer. Returns how many rows it marked.
 pub fn mark_transfer_pairs(conn: &Connection, since: &str) -> rusqlite::Result<usize> {
-    let Some(transfer) = seed::category_id(conn, "Transfer")? else { return Ok(0) };
     let mut stmt = conn.prepare(
         "SELECT id, account_id, posted, amount, payee, description FROM bank_transactions
          WHERE category_source='auto' AND removed=0 AND posted >= ?1",
@@ -296,6 +301,11 @@ pub fn mark_transfer_pairs(conn: &Connection, since: &str) -> rusqlite::Result<u
         .map(|(leg, _, _)| leg)
         .collect();
     let ids = transfers::pair(&legs);
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    // Looked up (or made) only now, so a database with no pairs never gains it.
+    let transfer = seed::system_category(conn, "transfer")?;
     for id in &ids {
         conn.execute("UPDATE bank_transactions SET category_id=?1 WHERE id=?2", params![transfer, id])?;
     }
@@ -422,7 +432,12 @@ pub fn copilot_snapshot(conn: &Connection) -> rusqlite::Result<copilot::Snapshot
     Ok(copilot::Snapshot { accounts, txns, category_names, rule_patterns })
 }
 
+/// The category a Copilot name lands in. Transfer and Income are the system
+/// categories, found or made by kind; anything else must already exist.
 fn category_named(conn: &Connection, name: &str) -> rusqlite::Result<Option<i64>> {
+    if let Some(kind) = copilot::system_kind(name) {
+        return seed::system_category(conn, kind).map(Some);
+    }
     conn.query_row("SELECT id FROM categories WHERE lower(name)=lower(?1)", [name], |r| r.get(0))
         .optional()
 }
@@ -452,11 +467,11 @@ pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan, remove: &[i64
     let tx = conn.unchecked_transaction()?;
     let mut counts = CopilotCounts::default();
 
-    for (i, c) in plan.new_categories.iter().enumerate() {
+    for c in &plan.new_categories {
         let sort: i64 = tx.query_row("SELECT COALESCE(MAX(sort),0)+10 FROM categories", [], |r| r.get(0))?;
         counts.categories += tx.execute(
             "INSERT OR IGNORE INTO categories (name,kind,colour,sort,is_builtin) VALUES (?1,?2,?3,?4,0)",
-            params![c.name, c.kind, format!("chart-{}", i % 6 + 1), sort],
+            params![c.name, c.kind, seed::next_colour(&tx)?, sort],
         )?;
     }
 
@@ -523,6 +538,89 @@ mod tests {
     use super::*;
     use crate::db;
 
+    /// A database holding Tally's old built-in categories, which the sorter's
+    /// names still come from.
+    fn seeded() -> Connection {
+        let conn = db::open_in_memory().unwrap();
+        seed::test_categories(&conn);
+        conn
+    }
+
+    #[test]
+    fn the_sorter_files_dining_under_the_owners_eating_out() {
+        let conn = db::open_in_memory().unwrap();
+        conn.execute("INSERT INTO categories (name,kind) VALUES ('Eating Out','spending')", []).unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[txn("t1", -12.0, "Local Diner", Some("5812"))], &[]).unwrap();
+        assert_eq!(category_of(&conn, "t1").as_deref(), Some("Eating Out"));
+    }
+
+    #[test]
+    fn with_no_matching_category_the_row_waits_uncategorised() {
+        let conn = db::open_in_memory().unwrap();
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, card, &[txn("t1", -12.0, "Local Diner", Some("5812"))], &[]).unwrap();
+        assert_eq!(category_of(&conn, "t1"), None);
+        let categories: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(categories, 0, "the sorter never makes a spending category");
+    }
+
+    #[test]
+    fn money_in_makes_the_income_category_on_first_need() {
+        let conn = db::open_in_memory().unwrap();
+        let bank = account(&conn, "Checking", "cash");
+        upsert_transactions(&conn, bank, &[
+            txn("p1", 1500.0, "Zqx Holdings", None),
+            txn("p2", 1500.0, "Zqx Holdings Two", None),
+        ], &[]).unwrap();
+        assert_eq!(category_of(&conn, "p1").as_deref(), Some("Income"));
+        assert_eq!(category_of(&conn, "p2").as_deref(), Some("Income"));
+        let n: i64 = conn.query_row("SELECT count(*) FROM categories WHERE kind='income'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn transfer_pairing_works_with_no_categories_at_all() {
+        let conn = db::open_in_memory().unwrap();
+        let bank = account(&conn, "Checking", "cash");
+        let card = account(&conn, "Card", "credit");
+        upsert_transactions(&conn, bank, &[payee_txn("out", "2026-10-12", -40.59, "Zqx Holdings")], &[]).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("in", "2026-10-11", 40.59, "Zqx Holdings")], &[]).unwrap();
+
+        assert_eq!(mark_transfer_pairs(&conn, "2026-01-01").unwrap(), 2);
+        assert_eq!(category_of(&conn, "out").as_deref(), Some("Internal transfer"));
+        assert_eq!(category_of(&conn, "in").as_deref(), Some("Internal transfer"));
+        let kind: String = conn.query_row("SELECT kind FROM categories WHERE name='Internal transfer'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kind, "transfer");
+    }
+
+    #[test]
+    fn transfer_pairing_with_nothing_to_pair_makes_no_category() {
+        let conn = db::open_in_memory().unwrap();
+        assert_eq!(mark_transfer_pairs(&conn, "2026-01-01").unwrap(), 0);
+        let n: i64 = conn.query_row("SELECT count(*) FROM categories", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn a_copilot_internal_transfer_lands_in_the_system_category() {
+        let conn = db::open_in_memory().unwrap();
+        let csv = format!("{COPILOT_HEADER}\n\
+            \"2026-01-05\",\"To savings\",\"-200\",\"posted\",\"\",\"\",\"false\",\"\",\"internal transfer\",\"\",\"\",\"\",\"\"\n\
+            \"2026-01-06\",\"Payroll\",\"900\",\"posted\",\"\",\"\",\"false\",\"\",\"income\",\"\",\"\",\"\",\"\"\n");
+        let plan = copilot_plan(&conn, &csv);
+        assert!(plan.new_categories.is_empty(), "transfer and income are never offered as new spending");
+
+        apply_copilot_plan(&conn, &plan, &[]).unwrap();
+
+        let kinds: Vec<(String, String)> = conn.prepare("SELECT name, kind FROM categories ORDER BY name").unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(kinds, vec![
+            ("Income".to_string(), "income".to_string()),
+            ("Internal transfer".to_string(), "transfer".to_string()),
+        ]);
+    }
+
     fn account(conn: &Connection, name: &str, type_: &str) -> i64 {
         conn.execute(
             "INSERT INTO accounts (name,type,currency,created_at,source) VALUES (?1,?2,'USD','2026-01-01','simplefin')",
@@ -547,7 +645,7 @@ mod tests {
 
     #[test]
     fn inserts_and_categorises_from_the_merchant_code() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         let counts = upsert_transactions(&conn, a, &[
             txn("t1", -85.5, "Local Grocer", Some("5411")),
@@ -565,7 +663,7 @@ mod tests {
 
     #[test]
     fn a_second_sync_updates_rather_than_duplicating() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         upsert_transactions(&conn, a, &[txn("t1", -10.0, "Shop", Some("5411"))], &[]).unwrap();
         let mut changed = txn("t1", -12.5, "Shop", Some("5411"));
@@ -580,7 +678,7 @@ mod tests {
 
     #[test]
     fn a_manual_category_survives_a_later_sync() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         upsert_transactions(&conn, a, &[txn("t1", -20.0, "Shop", Some("5411"))], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -595,7 +693,7 @@ mod tests {
 
     #[test]
     fn applying_to_a_payee_writes_a_rule_and_fixes_the_others() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         upsert_transactions(&conn, a, &[
             txn("t1", -55.5, "John's Fishin Shack", Some("5812")),
@@ -619,7 +717,7 @@ mod tests {
 
     #[test]
     fn a_stored_rule_is_used_on_the_next_sync() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         let shopping = seed::category_id(&conn, "Shopping").unwrap().unwrap();
         conn.execute(
@@ -633,7 +731,7 @@ mod tests {
 
     #[test]
     fn newest_posted_drives_incremental_syncing() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         assert_eq!(newest_posted(&conn, a).unwrap(), None);
         let mut older = txn("t1", -1.0, "A", None);
@@ -646,7 +744,7 @@ mod tests {
 
     #[test]
     fn clearing_a_category_is_allowed() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let a = account(&conn, "Card", "credit");
         upsert_transactions(&conn, a, &[txn("t1", -20.0, "Shop", Some("5411"))], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -676,7 +774,7 @@ mod tests {
 
     #[test]
     fn money_in_on_a_card_is_not_income_when_synced() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("r1", "2026-10-01", 12.0, "Zqx Holdings")], &[]).unwrap();
         assert_eq!(row(&conn, "r1").0, None);
@@ -684,7 +782,7 @@ mod tests {
 
     #[test]
     fn a_new_transaction_arrives_unreviewed() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
         assert_eq!(row(&conn, "t1"), (Some("Shopping".into()), "auto".into(), false));
@@ -692,7 +790,7 @@ mod tests {
 
     #[test]
     fn matched_legs_across_accounts_become_transfers() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let bank = account(&conn, "Checking", "cash");
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, bank, &[payee_txn("out", "2026-10-12", -40.59, "Zqx Holdings")], &[]).unwrap();
@@ -705,7 +803,7 @@ mod tests {
 
     #[test]
     fn payments_to_people_and_manual_rows_never_pair() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let bank = account(&conn, "Checking", "cash");
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, bank, &[payee_txn("venmo", "2026-10-12", -20.0, "Transfer to Venmo")], &[]).unwrap();
@@ -720,7 +818,7 @@ mod tests {
 
     #[test]
     fn the_re_sort_updates_automatic_rows_and_leaves_manual_ones() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         // Rows written as an older build would have left them: no category.
         for (ext, payee) in [("a", "Target"), ("m", "Costco")] {
@@ -741,7 +839,7 @@ mod tests {
 
     #[test]
     fn choosing_a_category_marks_the_row_reviewed() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Zqx Holdings")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -752,7 +850,7 @@ mod tests {
 
     #[test]
     fn approving_marks_reviewed_and_locks_the_category() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -763,7 +861,7 @@ mod tests {
 
     #[test]
     fn a_later_sync_does_not_unreview_a_row() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
         conn.execute("UPDATE bank_transactions SET reviewed=1", []).unwrap();
@@ -777,7 +875,7 @@ mod tests {
 
     #[test]
     fn a_removed_transaction_stays_removed_through_a_sync_until_restored() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -30.0, "Target")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -792,7 +890,7 @@ mod tests {
 
     #[test]
     fn undo_puts_a_row_back_exactly_as_it_was() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-01", -9.0, "Target")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -811,7 +909,7 @@ mod tests {
 
     #[test]
     fn undoing_an_earlier_action_never_gives_a_split_row_a_category() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         let groceries = seed::category_id(&conn, "Groceries").unwrap();
         // How the row looked before it was split: an automatic category, unreviewed.
@@ -827,14 +925,14 @@ mod tests {
 
     #[test]
     fn undo_refuses_a_source_that_is_not_auto_or_manual() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let bad = RowState { id: 1, category_id: None, category_source: "bogus".into(), reviewed: false, removed: false };
         assert!(restore_rows(&conn, &[bad]).is_err());
     }
 
     #[test]
     fn removed_rows_never_pair_as_transfers() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let bank = account(&conn, "Checking", "cash");
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, bank, &[payee_txn("out", "2026-10-12", -40.0, "Zqx Holdings")], &[]).unwrap();
@@ -870,7 +968,7 @@ mod tests {
 
     #[test]
     fn a_split_stores_its_pieces_and_empties_the_rows_own_category() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
 
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
@@ -881,7 +979,7 @@ mod tests {
 
     #[test]
     fn a_split_must_add_up_to_the_transaction() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
 
         let err = set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, None, -25.0)]).unwrap_err();
@@ -893,7 +991,7 @@ mod tests {
 
     #[test]
     fn a_split_needs_two_pieces_each_with_an_amount() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
 
         assert_eq!(
@@ -912,7 +1010,7 @@ mod tests {
 
     #[test]
     fn splitting_again_replaces_the_pieces() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -923,7 +1021,7 @@ mod tests {
 
     #[test]
     fn unsplitting_removes_the_pieces_and_leaves_the_row_uncategorised() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -935,7 +1033,7 @@ mod tests {
 
     #[test]
     fn a_later_sync_and_a_re_sort_leave_a_split_alone() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (card, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -948,7 +1046,7 @@ mod tests {
 
     #[test]
     fn deleting_the_account_deletes_the_pieces() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (card, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -960,7 +1058,7 @@ mod tests {
 
     #[test]
     fn deleting_a_category_leaves_its_piece_uncategorised() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -971,7 +1069,7 @@ mod tests {
 
     #[test]
     fn choosing_one_category_ends_a_split() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -983,7 +1081,7 @@ mod tests {
 
     #[test]
     fn a_refused_category_leaves_the_split_in_place() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
 
@@ -995,7 +1093,7 @@ mod tests {
 
     #[test]
     fn a_split_that_fails_part_way_changes_nothing() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.0), piece(&conn, Some("Shopping"), -25.5)]).unwrap();
         let gone = NewSplit { category_id: Some(99_999), amount: -5.5, note: None };
@@ -1009,7 +1107,7 @@ mod tests {
 
     #[test]
     fn pieces_are_stored_to_the_cent() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let (_, id) = costco(&conn);
 
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -60.004), piece(&conn, Some("Shopping"), -25.496)]).unwrap();
@@ -1019,7 +1117,7 @@ mod tests {
 
     #[test]
     fn a_refund_splits_into_positive_pieces() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("r1", "2026-10-04", 30.0, "Costco")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='r1'", [], |r| r.get(0)).unwrap();
@@ -1031,7 +1129,7 @@ mod tests {
 
     #[test]
     fn three_pieces_that_add_up_to_the_cent_save() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card", "credit");
         upsert_transactions(&conn, card, &[payee_txn("t1", "2026-10-05", -100.0, "Costco")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='t1'", [], |r| r.get(0)).unwrap();
@@ -1055,7 +1153,7 @@ mod tests {
 
     #[test]
     fn applying_a_plan_matches_adds_creates_and_learns() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[payee_txn("sf1", "2026-07-02", -12.5, "Zqx Diner")], &[]).unwrap();
         let csv = format!("{COPILOT_HEADER}\n\
@@ -1085,7 +1183,7 @@ mod tests {
 
     #[test]
     fn a_re_import_leaves_a_split_history_row_alone() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let csv = format!("{COPILOT_HEADER}\n\
             \"2026-01-05\",\"Haggin Oaks\",\"-20\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
         apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[]).unwrap();
@@ -1107,7 +1205,7 @@ mod tests {
 
     #[test]
     fn an_import_never_overrides_a_category_chosen_in_ledgerly() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[payee_txn("sf1", "2026-07-02", -12.5, "Zqx Diner")], &[]).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -1123,7 +1221,7 @@ mod tests {
 
     #[test]
     fn the_import_removes_only_rows_it_offered_and_the_owner_ticked() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[
             payee_txn("kept", "2026-07-01", -12.5, "Zqx Diner"),
@@ -1149,7 +1247,7 @@ mod tests {
 
     #[test]
     fn a_sync_adopts_an_imported_row_instead_of_duplicating_it() {
-        let conn = db::open_in_memory().unwrap();
+        let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[payee_txn("sf-new", "2026-07-02", -1.0, "Zqx")], &[]).unwrap();
         let csv = format!("{COPILOT_HEADER}\n\"2026-01-05\",\"Old Diner\",\"8\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
