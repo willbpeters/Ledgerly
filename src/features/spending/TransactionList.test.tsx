@@ -1,11 +1,19 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi } from "vitest";
-import { TransactionList } from "./TransactionList";
 import { ToastProvider } from "../../ui/toast";
 import type { Account, BankTransaction, Category } from "../../domain/types";
 
+// Category changes are saved through Tauri; record them instead.
+const setCategory = vi.hoisted(() => vi.fn());
+vi.mock("../../data/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../data/queries")>()),
+  useSetTransactionCategory: () => ({ mutate: setCategory }),
+}));
+const { TransactionList } = await import("./TransactionList");
+
 const category: Category = { id: 1, name: "Shopping", kind: "spending", colour: "chart-2", sort: 70, is_builtin: true };
+const dining: Category = { id: 2, name: "Dining", kind: "spending", colour: "cat-11", sort: 80, is_builtin: false };
 const split = (over: Partial<BankTransaction> = {}): BankTransaction => txn({
   amount: -85.5, category_id: null, category_source: "manual", reviewed: true,
   splits: [{ id: 1, category_id: 1, amount: -60, note: null }, { id: 2, category_id: null, amount: -25.5, note: null }],
@@ -21,8 +29,7 @@ const txn = (over: Partial<BankTransaction> = {}): BankTransaction => ({
 function renderList(props: Partial<Parameters<typeof TransactionList>[0]> = {}) {
   return render(
     <QueryClientProvider client={new QueryClient()}><ToastProvider>
-      <TransactionList transactions={[txn()]} categories={[category]} accounts={[account]}
-        colourOf={() => "#000"} {...props} />
+      <TransactionList transactions={[txn()]} categories={[category]} accounts={[account]} {...props} />
     </ToastProvider></QueryClientProvider>,
   );
 }
@@ -62,6 +69,45 @@ describe("TransactionList review", () => {
   it("has no tick buttons when approving is not offered", () => {
     renderList();
     expect(screen.queryByRole("button", { name: /Approve/ })).toBeNull();
+  });
+});
+
+describe("TransactionList categories", () => {
+  const pillOf = (el: HTMLElement) => el.closest(".cat-pill") as HTMLElement;
+
+  it("shows the category picker as a pill in the category's colour", () => {
+    renderList();
+    const select = screen.getByRole("combobox", { name: "Category for Target" });
+    expect(select).toHaveValue("1");
+    expect(pillOf(select).style.getPropertyValue("--pill")).toBe("var(--cat-2)");
+  });
+
+  it("shows an uncategorised row as the muted Uncategorised pill", () => {
+    renderList({ transactions: [txn({ category_id: null })] });
+    const select = screen.getByRole("combobox", { name: "Category for Target" });
+    expect(select).toHaveValue("");
+    expect(pillOf(select)).toHaveClass("none");
+  });
+
+  it("saves a new category and offers to apply it to the payee", () => {
+    setCategory.mockClear();
+    renderList({ categories: [category, dining] });
+    fireEvent.change(screen.getByLabelText("Category for Target"), { target: { value: "2" } });
+    expect(setCategory).toHaveBeenCalledWith(
+      { id: 7, categoryId: 2, applyToPayee: false }, expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(screen.getByRole("button", { name: "Apply to all “Target”" })).toBeInTheDocument();
+  });
+
+  it("marks a category chosen by hand", () => {
+    renderList({ transactions: [txn({ category_source: "manual" })] });
+    expect(screen.getByTitle("You chose this category")).toBeInTheDocument();
+  });
+
+  it("shows a split row's pieces as pills", () => {
+    renderList({ transactions: [split()] });
+    expect(pillOf(screen.getByText("Shopping")).style.getPropertyValue("--pill")).toBe("var(--cat-2)");
+    expect(pillOf(screen.getByText("Uncategorised"))).toHaveClass("none");
   });
 });
 
@@ -141,8 +187,7 @@ describe("TransactionList splits", () => {
   it("stays closed when its row leaves the list and comes back", () => {
     const ui = (transactions: BankTransaction[]) => (
       <QueryClientProvider client={client}><ToastProvider>
-        <TransactionList transactions={transactions} categories={[category]} accounts={[account]}
-          colourOf={() => "#000"} />
+        <TransactionList transactions={transactions} categories={[category]} accounts={[account]} />
       </ToastProvider></QueryClientProvider>
     );
     const client = new QueryClient();

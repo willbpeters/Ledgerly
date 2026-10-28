@@ -1,20 +1,21 @@
 import { useEffect, useState } from "react";
 import { useSetBudget } from "../../data/queries";
 import { money } from "../../ui/format";
+import { categoryColour } from "../../ui/categoryColour";
 import type { CategorySpend } from "../../domain/spending";
 
 /**
  * One category in the month view: what was spent, its limit, and how far
  * through that limit you are. Clicking the amount lets you set the limit.
  */
-export function BudgetRow({ row, month, colour, selected, onSelect }: {
+export function BudgetRow({ row, month, selected, onSelect }: {
   row: CategorySpend;
   month: string;
-  colour: string;
   selected: boolean;
   onSelect: () => void;
 }) {
   const setBudget = useSetBudget();
+  const colour = categoryColour(row.category.colour);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [everyMonth, setEveryMonth] = useState(true);

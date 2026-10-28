@@ -4,6 +4,7 @@ import { useOfferUndo } from "../../data/undo";
 import { splitRemainder } from "../../domain/splits";
 import { money, fmtDate } from "../../ui/format";
 import { Badge } from "../../ui/components";
+import { CategoryPill, CategorySelect } from "../../ui/CategoryPill";
 import { SplitEditor } from "./SplitEditor";
 import type { Account, BankTransaction, Category } from "../../domain/types";
 
@@ -14,11 +15,10 @@ import type { Account, BankTransaction, Category } from "../../domain/types";
  * divides it across categories; a split row lists its pieces in place of the
  * picker.
  */
-export function TransactionList({ transactions, categories, accounts, colourOf, onApprove, onRemove, onRestore }: {
+export function TransactionList({ transactions, categories, accounts, onApprove, onRemove, onRestore }: {
   transactions: BankTransaction[];
   categories: Category[];
   accounts: Account[];
-  colourOf: (token: string) => string;
   /** Offered on the To review list: accept a row as it is. */
   onApprove?: (id: number) => void;
   /** Take a row out of Spending — the owner was paid back. Restorable. */
@@ -40,8 +40,7 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
   const openSplit = (id: number) => { setTeaching(null); setSplitting(id); };
   const columns = 5 + (onApprove ? 1 : 0) + (onRemove || onRestore ? 1 : 0);
 
-  function choose(t: BankTransaction, value: string) {
-    const categoryId = value === "" ? null : Number(value);
+  function choose(t: BankTransaction, categoryId: number | null) {
     const payee = t.payee?.trim();
     // Offering to learn only makes sense when there is a payee to key off.
     if (categoryId != null && payee) {
@@ -89,16 +88,12 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                   <td className="left cell-secondary">{accountName(t.account_id)}</td>
                   <td className="left">
                     {t.splits.length > 0 ? (
-                      <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ display: "grid", gap: 4 }}>
                         {t.splits.map((s) => {
                           const c = s.category_id == null ? null : byId.get(s.category_id) ?? null;
                           return (
                             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-                              <span style={{
-                                width: 8, height: 8, borderRadius: 2, flexShrink: 0,
-                                background: c ? colourOf(c.colour) : "var(--line)",
-                              }} />
-                              <span>{c?.name ?? "Uncategorised"}</span>
+                              <CategoryPill category={c} />
                               <span className="muted n">{s.amount > 0 ? "+" : ""}{money(Math.abs(s.amount))}</span>
                             </div>
                           );
@@ -126,23 +121,12 @@ export function TransactionList({ transactions, categories, accounts, colourOf, 
                     ) : (
                       <>
                         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                          {category && (
-                            <span style={{
-                              width: 8, height: 8, borderRadius: 2, flexShrink: 0,
-                              background: colourOf(category.colour),
-                            }} />
-                          )}
-                          <select
-                            value={t.category_id ?? ""}
-                            onChange={(e) => choose(t, e.target.value)}
+                          <CategorySelect
+                            categories={categories}
+                            value={category ? category.id : null}
+                            onChange={(categoryId) => choose(t, categoryId)}
                             aria-label={`Category for ${name}`}
-                            style={{ padding: "4px 6px", fontSize: 12, maxWidth: 168 }}
-                          >
-                            <option value="">Uncategorised</option>
-                            {categories.map((c) => (
-                              <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                          </select>
+                          />
                           {t.category_source === "manual" && (
                             <span className="muted" style={{ fontSize: 10 }} title="You chose this category">·</span>
                           )}
