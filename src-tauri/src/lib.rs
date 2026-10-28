@@ -62,6 +62,7 @@ pub fn run() {
             commands::budget::categories_create,
             commands::budget::categories_update,
             commands::budget::categories_delete,
+            commands::budget::categories_clear,
             commands::budget::bank_transactions_list,
             commands::budget::bank_transactions_range,
             commands::budget::bank_transaction_set_category,

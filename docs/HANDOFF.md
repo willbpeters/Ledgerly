@@ -159,6 +159,20 @@ budgeting and spending module.
     tells the preview which). The survivors are put in Copilot's order (most
     used first, then Internal transfer / Income, then the rest) and given
     `cat-1`, `cat-2`… in that order (`order_categories`).
+  - **"Only Copilot's" (the default, 2026-10-28).** `apply_copilot_plan(..,
+    replace: Some(keep))` also deletes every category the export doesn't use
+    even while it holds rows, splits or budgets (`drop_unwanted_categories`):
+    its rows go uncategorised and back to To review. The export only names
+    categories some transaction uses, so a Copilot category with nothing in
+    it can't be seen: the preview lists each category it would remove with a
+    Keep tick-box, and ticked names (`keep`) stay. A category written on a
+    transfer row (Copilot's "Car" on a smog payment) counts as one of
+    Copilot's, though the row itself is Internal transfer. "Keep ones still
+    in use" (`replace: None`) is the older tidy-only behaviour.
+  - **Remove all categories** (Settings → Categories, `categories_clear`):
+    backs up, then deletes every category; all rows go uncategorised and back
+    to To review, split pieces go uncategorised, rules and budgets go. No
+    transaction is deleted.
   - **Rules follow Copilot.** Payee rules learned from the export (2+ uses,
     90% one category, never for Apple Pay / Venmo / Zelle) now replace an
     existing rule for that payee, then the automatic rows up to the cutoff are

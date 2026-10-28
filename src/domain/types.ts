@@ -127,7 +127,7 @@ export interface CopilotPlan {
   /** Each category the export doesn't use that only rows Copilot doesn't
    *  cover keep. It goes when `kept_rows` is 0 and every `removable` row
    *  (txn ids from `not_in_copilot`) is removed. */
-  category_holds: { name: string; kept_rows: number; removable: number[] }[];
+  category_holds: { name: string; kept_rows: number; removable: number[]; pinned: number }[];
   /** Matched rows whose category changes to Copilot's. */
   recategorised: number;
   /** Rows in Tally dated after `cutoff`, left as they are. */

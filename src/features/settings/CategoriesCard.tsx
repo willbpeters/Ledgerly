@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   useCategories, useRules, useCreateCategory, useUpdateCategory, useDeleteCategory, useDeleteRule,
+  useClearCategories,
 } from "../../data/queries";
 import { Card, Button, Badge, EmptyState } from "../../ui/components";
 import { CategoryPill } from "../../ui/CategoryPill";
@@ -40,6 +41,7 @@ export function CategoriesCard() {
   const update = useUpdateCategory();
   const remove = useDeleteCategory();
   const removeRule = useDeleteRule();
+  const clear = useClearCategories();
 
   const [newName, setNewName] = useState("");
   const [newColour, setNewColour] = useState("auto");
@@ -67,7 +69,21 @@ export function CategoriesCard() {
 
   return (
     <>
-      <Card title="Categories" subtitle="Used to sort your spending. Rename or recolour any of them, including the ones Tally ships with.">
+      <Card title="Categories" subtitle="Used to sort your spending. Add your own, or import Copilot's; rename or recolour any of them."
+        actions={categories.length > 0 && (
+          <Button variant="danger" size="sm" loading={clear.isPending} onClick={async () => {
+            const ok = await askToConfirm(
+              `Remove all ${categories.length} categories? Every transaction becomes uncategorised and goes back to To review, ` +
+              "and learned rules and budgets go too. No transaction is deleted, and a backup is taken first.",
+              { okLabel: "Remove all" },
+            );
+            if (ok) clear.mutate(undefined, { onError: (e) => setError(String(e)) });
+          }}>Remove all categories</Button>
+        )}>
+        {categories.length === 0 && (
+          <EmptyState title="No categories yet"
+            body="Add one below, or import your categories from Copilot. New transactions wait in To review until they have one." />
+        )}
         <div style={{ display: "grid", gap: 2 }}>
           {categories.map((c) => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 4px" }}>
@@ -84,7 +100,6 @@ export function CategoriesCard() {
                 <>
                   <CategoryPill category={c} />
                   {c.kind !== "spending" && <Badge>{c.kind}</Badge>}
-                  {!c.is_builtin && <Badge tone="accent">yours</Badge>}
                   <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
                     <Button variant="ghost" size="sm" onClick={() => setEditing({ ...c, colour: categoryToken(c.colour) })}>Edit</Button>
                     <Button variant="ghost" size="sm" onClick={async () => {

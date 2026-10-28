@@ -98,6 +98,26 @@ pub fn categories_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove every category, to start sorting again from nothing. Backs up
+/// first, like an import, since this can't be undone any other way.
+#[tauri::command]
+pub async fn categories_clear(app: tauri::AppHandle) -> Result<usize, String> {
+    use crate::backup::{self, naming::Kind, snapshot, BackupState};
+    use tauri::Manager;
+    super::off_main_thread(move || {
+        let state = app.state::<BackupState>();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        let safety = snapshot::attempt(&conn, &state.paths, Kind::Manual, backup::now());
+        state.record(&safety);
+        if let Some(e) = safety.error {
+            return Err(format!("Didn't remove anything, because the backup before it failed: {e}"));
+        }
+        store::clear_categories(&conn).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 // ---------- transactions ----------
 
 const TXN_COLUMNS: &str = "id,account_id,external_id,posted,amount,description,payee,memo,mcc,pending,

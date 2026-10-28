@@ -24,12 +24,16 @@ pub async fn copilot_preview(app: tauri::AppHandle, path: String) -> Result<copi
 /// Backs up first, then writes the whole import in one transaction. The plan
 /// is made again here rather than trusted from the preview, so it reflects the
 /// database as it is at the moment of writing. `remove_ids` are the rows
-/// Copilot does not have that the owner left ticked.
+/// Copilot does not have that the owner left ticked. With `replace_all`, every
+/// category the export doesn't use goes, whatever it holds, apart from those
+/// named in `keep`.
 #[tauri::command]
 pub async fn copilot_import(
     app: tauri::AppHandle,
     path: String,
     remove_ids: Vec<i64>,
+    replace_all: bool,
+    keep: Vec<String>,
 ) -> Result<store::CopilotCounts, String> {
     super::off_main_thread(move || {
         let state = app.state::<BackupState>();
@@ -41,7 +45,8 @@ pub async fn copilot_import(
         if let Some(e) = safety.error {
             return Err(format!("Didn't import, because the backup before it failed: {e}"));
         }
-        store::apply_copilot_plan(&conn, &plan, &remove_ids).map_err(|e| e.to_string())
+        let replace = replace_all.then_some(keep.as_slice());
+        store::apply_copilot_plan(&conn, &plan, &remove_ids, replace).map_err(|e| e.to_string())
     })
     .await
 }

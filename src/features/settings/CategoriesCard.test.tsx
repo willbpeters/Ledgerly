@@ -8,9 +8,16 @@ const categories: Category[] = [
 ];
 const create = vi.hoisted(() => vi.fn());
 const update = vi.hoisted(() => vi.fn());
+const clear = vi.hoisted(() => vi.fn());
+const answer = vi.hoisted(() => ({ ok: true, shown: [] as string[] }));
+const listed = vi.hoisted(() => ({ empty: false }));
 
+vi.mock("../../ui/confirm", () => ({
+  askToConfirm: async (message: string) => { answer.shown.push(message); return answer.ok; },
+}));
 vi.mock("../../data/queries", () => ({
-  useCategories: () => ({ data: categories }),
+  useCategories: () => ({ data: listed.empty ? [] : categories }),
+  useClearCategories: () => ({ mutate: clear, isPending: false }),
   useRules: () => ({ data: [] }),
   useCreateCategory: () => ({ mutate: create, isPending: false }),
   useUpdateCategory: () => ({ mutate: update, isPending: false }),
@@ -23,6 +30,27 @@ const twelve = Array.from({ length: 12 }, (_, i) => `cat-${i + 1}`);
 const pillOf = (el: HTMLElement) => el.closest(".cat-pill") as HTMLElement;
 
 describe("CategoriesCard", () => {
+  it("removes every category only after asking", async () => {
+    clear.mockClear();
+    answer.ok = false;
+    render(<CategoriesCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove all categories" }));
+    await vi.waitFor(() => expect(answer.shown[answer.shown.length - 1]).toMatch(/Remove all 2 categories\?.*No transaction is deleted/));
+    expect(clear).not.toHaveBeenCalled();
+
+    answer.ok = true;
+    fireEvent.click(screen.getByRole("button", { name: "Remove all categories" }));
+    await vi.waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+  });
+
+  it("with no categories, says how to get some and offers nothing to remove", () => {
+    listed.empty = true;
+    render(<CategoriesCard />);
+    expect(screen.getByText("No categories yet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove all categories" })).toBeNull();
+    listed.empty = false;
+  });
+
   it("lists each category as a pill in its colour", () => {
     render(<CategoriesCard />);
     expect(pillOf(screen.getByText("Groceries")).style.getPropertyValue("--pill")).toBe("var(--cat-3)");
