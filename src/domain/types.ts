@@ -106,12 +106,34 @@ export interface CopilotPlan {
   additions: { external_id: string; posted: string; amount: number; name: string; category: string | null }[];
   skipped: { date: string; name: string; amount: number; account: string }[];
   /** Tally rows Copilot does not have: usually deleted there after being paid back. */
-  not_in_copilot: { txn_id: number; date: string; name: string; amount: number; account: string }[];
+  not_in_copilot: {
+    txn_id: number; date: string; name: string; amount: number; account: string;
+    /** Added by an earlier Copilot import, and no longer in Copilot. */
+    earlier_export: boolean;
+  }[];
   pending_or_excluded: number;
   new_categories: { name: string; kind: string }[];
   rules: { pattern: string; category: string }[];
   /** Copilot account → the Tally account it maps to. */
   accounts: [string, string][];
+  /** The export's newest day (YYYY-MM-DD). Nothing in Tally after it changes,
+   *  apart from a rename in `merges`. */
+  cutoff: string;
+  /** Tally's old category name → Copilot's, merged or renamed first. */
+  merges: [string, string][];
+  /** Categories left holding nothing that the export doesn't use, with no
+   *  rows removed: deleted. */
+  deletions: string[];
+  /** Each category the export doesn't use that only rows Copilot doesn't
+   *  cover keep. It goes when `kept_rows` is 0 and every `removable` row
+   *  (txn ids from `not_in_copilot`) is removed. */
+  category_holds: { name: string; kept_rows: number; removable: number[] }[];
+  /** Matched rows whose category changes to Copilot's. */
+  recategorised: number;
+  /** Rows in Tally dated after `cutoff`, left as they are. */
+  untouched_after_cutoff: number;
+  /** Every category name the export uses, most used first. */
+  export_categories: string[];
 }
 export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }
 export interface CategoryRule {

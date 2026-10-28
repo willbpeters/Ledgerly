@@ -11,6 +11,7 @@ import { money, fmtDate } from "../../ui/format";
 import { PageHeader, Card, Button, Badge, Tabs, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { askToConfirm } from "../../ui/confirm";
+import { CategoryPill } from "../../ui/CategoryPill";
 import type { BankTransaction, Transaction } from "../../domain/types";
 
 type Tab = "position" | "transaction" | "csv";
@@ -42,7 +43,7 @@ export function Activity() {
   }, [accounts, accountId]);
 
   const secTicker = (id: number | null) => securities.find((s) => s.id === id)?.ticker ?? "—";
-  const categoryName = (id: number | null) => categories.find((c) => c.id === id)?.name ?? "Uncategorised";
+  const categoryOf = (id: number | null) => categories.find((c) => c.id === id) ?? null;
   const account = accounts.find((a) => a.id === accountId) ?? null;
   const synced = account?.source === "simplefin";
   const accountTxns = accountId == null ? [] : txns.filter((t) => t.account_id === accountId);
@@ -72,7 +73,7 @@ export function Activity() {
         </div>) },
     // A split row's own category is empty; its pieces are shown in Spending.
     { key: "category", label: "Category", align: "left", render: (t) => (
-        <Badge>{t.splits.length > 0 ? "Split" : categoryName(t.category_id)}</Badge>) },
+        t.splits.length > 0 ? <Badge>Split</Badge> : <CategoryPill category={categoryOf(t.category_id)} />) },
     { key: "amount", label: "Amount", render: (t) => (
         <span className={t.amount < 0 ? "neg" : "pos"}>{money(t.amount)}</span>) },
   ];

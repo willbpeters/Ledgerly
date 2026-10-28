@@ -52,6 +52,20 @@
   --chart-5: #4d7c0f;
   --chart-6: #475569;
   --chart-grid: #eae5da;
+  /* Category colours, in the order new categories take them. Neighbours stay
+     apart under colour blindness; every pill also carries its name. */
+  --cat-1: #2a78d6;  /* blue */
+  --cat-2: #eb6834;  /* orange */
+  --cat-3: #1baf7a;  /* aqua */
+  --cat-4: #eda100;  /* yellow */
+  --cat-5: #e87ba4;  /* pink */
+  --cat-6: #008300;  /* green */
+  --cat-7: #6250d6;  /* violet */
+  --cat-8: #e34948;  /* red */
+  --cat-9: #0e9fc0;  /* sky */
+  --cat-10: #7ca10a; /* lime */
+  --cat-11: #a347c0; /* plum */
+  --cat-12: #a0652b; /* brown */
 }
 :root[data-theme="dark"] {
   --bg: #131211;
@@ -83,6 +97,18 @@
   --chart-5: #a3e635;
   --chart-6: #94a3b8;
   --chart-grid: #2b2825;
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
+  --cat-8: #e66767;
+  --cat-9: #1aa3c4;
+  --cat-10: #7f9f1a;
+  --cat-11: #b866d4;
+  --cat-12: #bf7632;
 }
 
 /* ---------- Base ---------- */
@@ -237,6 +263,39 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .badge.neg { background: var(--neg-soft); color: var(--neg); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 
+/* A category as a pill: its colour (--pill, set inline) tinted behind the
+   name; the name in the colour mixed with the ink, so deeper on paper and
+   lighter in the dark, and readable on the tint either way. */
+.cat-pill {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  padding: 1px 9px 1px 8px; border-radius: 999px; border: 1px solid transparent;
+  font-size: 12px; font-weight: 600; line-height: 18px; white-space: nowrap;
+  background: color-mix(in srgb, var(--pill) 18%, var(--surface));
+  color: color-mix(in srgb, var(--pill) 50%, var(--ink));
+}
+.cat-pill.none { background: transparent; border: 1px dashed var(--line-2); color: var(--mut); font-weight: 500; }
+.cat-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pill); flex-shrink: 0; }
+.cat-pill-name { overflow: hidden; text-overflow: ellipsis; }
+/* The picker: a native select laid over the pill, its dot and chevron drawn
+   around it, so it still behaves exactly like a select. */
+.cat-select { position: relative; padding: 0; gap: 0; }
+.cat-select select {
+  appearance: none; -webkit-appearance: none; font: inherit; color: inherit; line-height: inherit;
+  background: transparent; border: 0; border-radius: 999px; cursor: pointer;
+  padding: 1px 22px 1px 20px; max-width: 176px; text-overflow: ellipsis;
+}
+.cat-select.none select { padding-left: 9px; }
+.cat-select select:focus { outline: none; border: 0; }
+/* The transparent outline is what forced-colours (High Contrast) mode draws,
+   since it drops the box-shadow. */
+.cat-select:focus-within {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+  outline: 2px solid transparent; outline-offset: 2px;
+}
+.cat-select option { color: var(--ink); background: var(--surface); font-weight: 400; }
+.cat-select .cat-pill-dot { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.cat-select-chevron { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; opacity: .75; }
+
 /* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
@@ -293,7 +352,7 @@ textarea { resize: vertical; font-family: ui-monospace, Consolas, monospace; fon
 label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--mut); font-weight: 500; }
 .field-hint { font-size: 11px; color: var(--mut); font-weight: 400; }
 .field-error { font-size: 11px; color: var(--neg); }
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.row { display: flex; flex-direction: row; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .row.center { align-items: center; }
 .between { justify-content: space-between; }
 

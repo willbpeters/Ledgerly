@@ -54,7 +54,11 @@ it on your own computer. There are no accounts, no cloud and no subscription.
   expected date and what is still due this month
 - Split one purchase across several categories
 - Undo after every change
-- A one-time import of your history and categories from Copilot
+- Categories show as coloured pills, so they stand out in the list
+- Starts with no preset categories: you make your own, or bring Copilot's
+- A one-time import of your history and categories from Copilot; afterwards
+  your categories match Copilot's exactly, and nothing newer than the export
+  is touched
 
 **Goals**
 - Savings goals with a target and an optional date

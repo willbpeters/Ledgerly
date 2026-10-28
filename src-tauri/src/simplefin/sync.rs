@@ -312,6 +312,7 @@ mod tests {
     #[test]
     fn account_type_is_inferred_from_holdings_and_balance_sign() {
         let mut conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         let mut card = account("card1", -240.10, vec![]);
         card.transactions = vec![crate::simplefin::parse::SfTransaction {
             id: "t1".into(), posted: "2026-09-01".into(), amount: -55.5,
@@ -364,6 +365,7 @@ mod tests {
         // An improvement to the merchant list must reach history, not only the
         // few days an incremental sync fetches.
         let mut conn = db::open_in_memory().unwrap();
+        crate::budget::seed::test_categories(&conn);
         apply(&mut conn, &SfAccountSet { errors: vec![], accounts: vec![account("card1", -10.0, vec![])] }).unwrap();
         conn.execute(
             "INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee)

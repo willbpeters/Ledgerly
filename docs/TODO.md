@@ -68,6 +68,16 @@ These are the gaps a former Copilot user would notice first.
       Copilot-style To review list. See HANDOFF "Copilot-style sorting".
 - [x] **9b. Import from Copilot.** Done 2026-10-15, with Remove and Undo in
       Spending. See HANDOFF "Import from Copilot" and "Remove and Undo".
+- [x] **9c. Categories that match Copilot, shown as coloured pills.** Done
+      2026-10-28: Tally no longer starts with preset categories (only Internal
+      transfer and Income appear, when first needed). An import from Copilot
+      now leaves your categories exactly as Copilot has them: its names, its
+      choice for every transaction up to the export's last day (even over one
+      you picked in Tally), old names like Dining merged in, empty leftovers
+      tidied away, and nothing after that day touched. Nothing is deleted, the
+      preview is exact, and importing the same file twice changes nothing.
+      Categories show as coloured pills, twelve colours. See HANDOFF "No preset
+      categories", "Import from Copilot" and "Category pills".
 - [x] **10. Search and filter transactions.** Done 2026-10-25: Spending →
       Search finds words, exact amounts and >/< sizes across every month, with
       category and account filters; the command bar's search box goes there

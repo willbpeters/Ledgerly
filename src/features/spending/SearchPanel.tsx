@@ -14,14 +14,13 @@ const SHOW_AT_MOST = 200;
  * categories and accounts; a number finds that amount; >100 or <20 compare
  * sizes. `transactions` is everything that counts toward spending.
  */
-export function SearchPanel({ initialText = "", transactions, loading, categories, accounts, colourOf, onRemove }: {
+export function SearchPanel({ initialText = "", transactions, loading, categories, accounts, onRemove }: {
   /** What was typed in the command bar's search box, if that is how we got here. */
   initialText?: string;
   transactions: BankTransaction[];
   loading: boolean;
   categories: Category[];
   accounts: Account[];
-  colourOf: (token: string) => string;
   onRemove: (id: number) => void;
 }) {
   const [search, setSearch] = useState<TxnSearch>({ text: initialText, categoryId: null, accountId: null });
@@ -93,7 +92,6 @@ export function SearchPanel({ initialText = "", transactions, loading, categorie
             transactions={matches.slice(0, SHOW_AT_MOST)}
             categories={categories}
             accounts={accounts}
-            colourOf={colourOf}
             onRemove={onRemove}
           />
         </>

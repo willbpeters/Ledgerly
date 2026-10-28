@@ -9,7 +9,6 @@ import { monthWindow, monthLabel, shiftMonth, thisMonth, summariseMonth, fromVis
 import { inCategory } from "../../domain/splits";
 import { money } from "../../ui/format";
 import { Card, Button, EmptyState, Segmented } from "../../ui/components";
-import { useChartColors } from "../../ui/chartColors";
 import { TransactionList } from "./TransactionList";
 import { BudgetRow } from "./BudgetRow";
 import { SearchPanel } from "./SearchPanel";
@@ -48,7 +47,6 @@ export function Spending() {
   const accounts = allAccounts.filter((a) => !a.hidden);
   const txns = fromVisibleAccounts(allTxns, allAccounts);
   const { data: range, isLoading: loadingRange } = useBankTransactionRange();
-  const colours = useChartColors();
 
   // Search and Recurring cover every month, so they load the whole range,
   // but only once one of them is opened. Both read the same cached query.
@@ -107,11 +105,6 @@ export function Spending() {
     [txns, categories, budgets, month],
   );
 
-  const colourOf = (token: string) => {
-    const i = Number(token.replace("chart-", "")) - 1;
-    return colours.series[Number.isFinite(i) && i >= 0 ? i % colours.series.length : 0];
-  };
-
   // A split purchase shows under every category it was split into.
   const shown = txns.filter((t) => focus == null || inCategory(t, focus));
 
@@ -163,7 +156,6 @@ export function Spending() {
           loading={loadingAll}
           categories={categories}
           accounts={accounts}
-          colourOf={colourOf}
           onRemove={removeOne}
         />
       ) : view === "recurring" ? (
@@ -193,7 +185,6 @@ export function Spending() {
               transactions={toReview}
               categories={categories}
               accounts={accounts}
-              colourOf={colourOf}
               onApprove={(id) => approveSome([id])}
               onRemove={removeOne}
             />
@@ -238,7 +229,6 @@ export function Spending() {
                     key={row.category.id}
                     row={row}
                     month={month}
-                    colour={colourOf(row.category.colour)}
                     selected={focus === row.category.id}
                     onSelect={() => setFocus(focus === row.category.id ? null : row.category.id)}
                   />
@@ -268,7 +258,6 @@ export function Spending() {
                 transactions={shown}
                 categories={categories}
                 accounts={accounts}
-                colourOf={colourOf}
                 onRemove={removeOne}
               />
             )}
@@ -281,7 +270,6 @@ export function Spending() {
                   transactions={removedThisMonth}
                   categories={categories}
                   accounts={accounts}
-                  colourOf={colourOf}
                   onRestore={restoreOne}
                 />
               </div>

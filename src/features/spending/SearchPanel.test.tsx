@@ -17,7 +17,7 @@ function renderPanel(transactions: BankTransaction[]) {
   return render(
     <QueryClientProvider client={new QueryClient()}><ToastProvider>
       <SearchPanel transactions={transactions} loading={false} categories={[category]} accounts={[account]}
-        colourOf={() => "#000"} onRemove={() => {}} />
+        onRemove={() => {}} />
     </ToastProvider></QueryClientProvider>,
   );
 }
@@ -52,7 +52,7 @@ describe("SearchPanel", () => {
     render(
       <QueryClientProvider client={new QueryClient()}><ToastProvider>
         <SearchPanel transactions={[costco]} loading={false} categories={[category, household]} accounts={[account]}
-          colourOf={() => "#000"} onRemove={() => {}} />
+          onRemove={() => {}} />
       </ToastProvider></QueryClientProvider>,
     );
     fireEvent.change(screen.getByLabelText("Filter by category"), { target: { value: "1" } });
