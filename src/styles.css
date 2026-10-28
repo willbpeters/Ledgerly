@@ -286,7 +286,12 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 }
 .cat-select.none select { padding-left: 9px; }
 .cat-select select:focus { outline: none; border: 0; }
-.cat-select:focus-within { box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+/* The transparent outline is what forced-colours (High Contrast) mode draws,
+   since it drops the box-shadow. */
+.cat-select:focus-within {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+  outline: 2px solid transparent; outline-offset: 2px;
+}
 .cat-select option { color: var(--ink); background: var(--surface); font-weight: 400; }
 .cat-select .cat-pill-dot { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .cat-select-chevron { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; opacity: .75; }

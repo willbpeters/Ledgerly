@@ -7,12 +7,13 @@ const categories: Category[] = [
   { id: 2, name: "Dining", kind: "spending", colour: "cat-11", sort: 20, is_builtin: false },
 ];
 const create = vi.hoisted(() => vi.fn());
+const update = vi.hoisted(() => vi.fn());
 
 vi.mock("../../data/queries", () => ({
   useCategories: () => ({ data: categories }),
   useRules: () => ({ data: [] }),
   useCreateCategory: () => ({ mutate: create, isPending: false }),
-  useUpdateCategory: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateCategory: () => ({ mutate: update, isPending: false }),
   useDeleteCategory: () => ({ mutate: vi.fn() }),
   useDeleteRule: () => ({ mutate: vi.fn() }),
 }));
@@ -59,5 +60,13 @@ describe("CategoriesCard", () => {
     const picker = screen.getByLabelText("Colour");
     expect(picker).toHaveValue("cat-3");
     expect(within(picker).getAllByRole("option").map((o) => (o as HTMLOptionElement).value)).toEqual(twelve);
+  });
+
+  it("saves an older chart colour as its cat colour, even when the colour was not touched", () => {
+    update.mockClear();
+    render(<CategoriesCard />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(update).toHaveBeenCalledWith({ id: 1, name: "Groceries", colour: "cat-3" }, expect.anything());
   });
 });

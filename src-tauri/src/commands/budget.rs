@@ -68,10 +68,20 @@ pub fn create_category(conn: &Connection, name: &str, kind: &str, colour: &str)
 pub fn categories_update(db: tauri::State<Db>, id: i64, name: String, colour: String)
     -> Result<(), String> {
     let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    update_category(&conn, id, &name, &colour)
+}
+
+/// Rename or recolour a category. An empty or "auto" colour picks the
+/// least-used `cat-N`, as on create, so "auto" is never stored.
+pub fn update_category(conn: &Connection, id: i64, name: &str, colour: &str) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Give the category a name.".into());
     }
+    let colour = match colour.trim() {
+        "" | "auto" => crate::budget::seed::next_colour(conn).map_err(|e| e.to_string())?,
+        explicit => explicit.to_string(),
+    };
     conn.execute("UPDATE categories SET name=?1, colour=?2 WHERE id=?3", params![name, colour, id])
         .map_err(|e| if e.to_string().contains("UNIQUE") {
             format!("There is already a category called \"{name}\".")
@@ -313,6 +323,27 @@ mod tests {
         assert_eq!(create_category(&conn, "Gifts", "spending", "auto").unwrap().colour, "cat-3");
         let c = create_category(&conn, "  Books ", "spending", "auto").unwrap();
         assert_eq!((c.name.as_str(), c.kind.as_str(), c.is_builtin), ("Books", "spending", false));
+    }
+
+    #[test]
+    fn an_update_never_stores_auto_as_a_colour() {
+        let conn = db::open_in_memory().unwrap();
+        let golf = create_category(&conn, "Golf", "spending", "cat-1").unwrap();
+        create_category(&conn, "Pets", "spending", "cat-2").unwrap();
+        let colour = |id: i64| -> String {
+            conn.query_row("SELECT colour FROM categories WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        update_category(&conn, golf.id, "Golf", "auto").unwrap();
+        assert_eq!(colour(golf.id), "cat-3");
+        // Golf moved off cat-1, so cat-1 is the least used again.
+        update_category(&conn, golf.id, "Golf", "").unwrap();
+        assert_eq!(colour(golf.id), "cat-1");
+        update_category(&conn, golf.id, "  Golfing ", "cat-9").unwrap();
+        assert_eq!(colour(golf.id), "cat-9");
+        let name: String = conn.query_row("SELECT name FROM categories WHERE id=?1", [golf.id], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Golfing");
+        assert!(update_category(&conn, golf.id, "Pets", "cat-1").err().unwrap().contains("already a category"));
+        assert!(update_category(&conn, golf.id, " ", "cat-1").is_err());
     }
 
     #[test]
