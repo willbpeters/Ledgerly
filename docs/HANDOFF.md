@@ -68,10 +68,26 @@ budgeting and spending module.
   progress bar and remainder; and the month's transactions with an inline
   category picker. Changing a category can write a payee rule that later syncs
   obey. Categories and the learned rules are managed in Settings.
+  **No preset categories (2026-10-28):** a fresh database has none; they come
+  from the owner or from the Copilot import. Only two are ever made by Tally
+  itself, **Internal transfer** (kind `transfer`) and **Income** (kind
+  `income`), because they mirror Copilot's own transaction types. They are
+  made the first time a row needs one by `seed::system_category(conn,
+  SystemKind)`, which finds an existing one **by name only** (Copilot's name,
+  or Tally's old "Transfer", ignoring case) and makes the kind right if it
+  differs. It never picks a category just because it has the same kind, so an
+  owner's "Investments" (also kind `transfer`) never receives paired
+  transfers. The auto-sorter still speaks Tally's old names (`Dining`,
+  `Shopping`, `Transfer`); `seed::sorter_category` maps them onto what the
+  owner has through aliases (Dining → Eating Out, Shopping → Shops, then the
+  old name itself) and **never makes a spending category**: with no match the
+  row stays uncategorised and waits in To review. A new category's colour is
+  the least-used one (`seed::next_colour`), counting an older `chart-N` as
+  `cat-N`.
   **Copilot-style sorting (2026-10-15):** SimpleFIN sends no category and, for
   the owner's banks, no merchant code, so `budget/merchants.rs` recognises
   merchants from SimpleFIN's clean `payee`, `budget/transfers.rs` pairs equal
-  and opposite amounts between the owner's accounts as Transfer, and payments
+  and opposite amounts between the owner's accounts as Internal transfer, and payments
   to people (Apple Pay, Venmo, Zelle) are left for the owner. A **Month / To
   review** switch lists unreviewed rows with ✓ and "Mark all reviewed".
   Investment accounts are left out of Spending. Every sync re-sorts all
@@ -101,18 +117,82 @@ budgeting and spending module.
   shows (at least $0) as its `saved_amount`, and the confirmation says so; if
   that fails the account is not deleted. A sync that removes a followed
   account does not do this yet (TODO 15c).
-- **Import from Copilot** (Settings): reads Copilot's CSV export, matches
-  rows to transactions SimpleFIN already has (same account by mask, same
-  amount, within 3 days) and gives them the owner's Copilot category and note;
-  adds older rows as history — to their own account, or to a manual
-  **"Copilot history"** account for accounts Copilot no longer has; creates
-  the owner's Copilot categories (Golf, Car, Date night…; Investments as a
-  transfer kind); learns payee rules (2+ uses, 90% one category, never for
-  Apple Pay / Venmo / Zelle). It also lists Tally rows Copilot does not have
-  (deleted there after being paid back) with checkboxes to remove them. A
-  backup is taken first; it all lands in one transaction; re-running is safe.
-  Pure planner in `budget/copilot.rs`. Spec:
-  `docs/superpowers/specs/2026-10-15-copilot-import-design.md`
+- **Import from Copilot** (Settings): reads Copilot's CSV export and leaves
+  Tally's categories matching Copilot's (2026-10-28 rework; the original was
+  2026-10-15). It matches rows to transactions SimpleFIN already has (same
+  account by mask, same amount, same day or within 3 days; on a different day
+  the two names must share a word of three or more characters, so a $10 Polymarket
+  row never takes a $10 Chick-fil-a), and adds older rows as history — to
+  their own account, or to a manual **"Copilot history"** account for accounts
+  Copilot no longer has. What it does to categories:
+  - **Copilot's names, as they are.** `category_for` returns the export's name
+    exactly (`SAME_AS`, the old Eating Out → Dining table, is gone). An
+    internal transfer is always "Internal transfer"; income with no category
+    is "Income". Categories Tally lacks are created (Investments as kind
+    `transfer`, the rest `spending`).
+  - **Old names merge first.** `OLD_NAMES` (Dining → Eating Out, Shopping →
+    Shops, Transfer → Internal transfer) are folded into Copilot's name by
+    `store::merge_category(from, to)` when the export uses it: transactions,
+    split pieces, rules and budgets move across (the target's own budget wins
+    for a month both have), then the old category is deleted; if the target
+    doesn't exist the old one is simply renamed. A spelling that differs only
+    in case is renamed to Copilot's.
+  - **Copilot wins up to the cutoff.** The `cutoff` is the export's newest
+    posted day. Every matched row dated on or before it takes Copilot's
+    category (made `manual` and reviewed, even over a choice made in Tally; no
+    category in Copilot sends it back to To review). Split rows keep their
+    pieces. **Nothing dated after the cutoff changes**, apart from a merge
+    renaming the category it points at; every write is guarded by
+    `posted <= cutoff`. A cutoff of "" (nothing posted in the export) is
+    refused with `NO_POSTED`.
+  - **Nothing is ever deleted.** "Removal" is the restorable `removed` flag.
+    Tally rows Copilot does not have are listed, ticked by default under a
+    "Remove them / Keep them" switch, for the owner to confirm: those older
+    than the export's newest day for SimpleFIN rows (Copilot runs a few hours
+    behind), and up to and including it for rows an earlier Copilot import
+    added that this export no longer has (`earlier_export`, deleted in Copilot
+    since). An id the plan did not offer is ignored.
+  - **Tidied afterwards.** After the re-sort, `tidy_categories` deletes every
+    category that holds nothing (no live transaction, split piece or budget)
+    and that the export doesn't use. A category still holding a newer row
+    stays; one only rows being removed hold goes with them (`CategoryHold`
+    tells the preview which). The survivors are put in Copilot's order (most
+    used first, then Internal transfer / Income, then the rest) and given
+    `cat-1`, `cat-2`… in that order (`order_categories`).
+  - **Rules follow Copilot.** Payee rules learned from the export (2+ uses,
+    90% one category, never for Apple Pay / Venmo / Zelle) now replace an
+    existing rule for that payee, then the automatic rows up to the cutoff are
+    re-sorted at once. Notes: Copilot's fills a blank, the owner's stays.
+  - **Transfer pairs** that straddle the cutoff keep their earlier leg a
+    transfer (`pair_transfers(.., until)`).
+
+  A backup is taken first; it all lands in one transaction. **A second import
+  of the same file changes nothing**, and its counts say so (they count rows
+  actually changed). **The preview is exact:** `store::copilot_preview` plans
+  from a snapshot, then runs the real import inside a transaction that is
+  rolled back and reads the result (rows recategorised, categories deleted,
+  holds), twice if a planned merge turned out pointless because its target is
+  deleted anyway. `CopilotImportPanel` shows renames and merges, new
+  categories, the count that get Copilot's category, and "N transactions after
+  <cutoff> keep their categories". Pure planner in `budget/copilot.rs`;
+  writing in `store::apply_copilot_plan`. Original spec:
+  `docs/superpowers/specs/2026-10-15-copilot-import-design.md` (its "the
+  owner's choice wins" and name-translation rules no longer apply)
+- **Category pills** (2026-10-28): a category shows as a pill tinted in its
+  colour with its name in a deeper shade of it; no category is a dashed,
+  muted "Uncategorised" outline. Colours are twelve tokens `--cat-1`…
+  `--cat-12` in `src/styles.css` (light and dark sets, chosen to stay apart for
+  colour-blind readers). `src/ui/categoryColour.ts` turns a stored colour into
+  `var(--cat-N)`; an older `chart-N` colour reads as the same-numbered `cat-N`
+  (before this, every `cat-N` category fell back to the first colour). The
+  pill look is `.cat-pill` in `styles.css`, set from a `--pill` variable.
+  `src/ui/CategoryPill.tsx` has the read-only `CategoryPill` (Activity, split
+  pieces in the list, the Settings category list) and `CategorySelect`, the
+  same pill over a native `<select>` so keyboard and screen readers work as
+  before (the category cell in Spending's Month, To review and Search lists).
+  `BudgetRow` keeps its bar and uses the same colour. Settings → Categories
+  offers all twelve colours by name, and a new category defaults to "let
+  Tally pick" (the least used).
 - **Remove and Undo** (Spending): × removes a transaction from spending and
   budgets (paid back) — a `removed` flag, so a sync never brings it back, and
   **Show removed** → Restore undoes it. Remove, Restore, ✓, Mark all reviewed
@@ -337,9 +417,23 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   known merchant / keyword (`budget/merchants.rs`) → money in on a *cash*
   account is Income (on a card it is a refund or payment, never income). A new
   merchant is one line in `merchants.rs`. Generic words ("shop", "store") are
-  deliberately not keywords: a blank in To review beats a wrong guess.
+  deliberately not keywords: a blank in To review beats a wrong guess. The
+  ladder still names categories the old Tally way ("Dining", "Shopping",
+  "Transfer"); `store::resolve` maps each through `seed::sorter_category` onto
+  the owner's own categories, and a name with no match leaves the row
+  uncategorised rather than inventing a category. Add a new alias in
+  `seed::ALIASES`, not a new preset.
 - **Approving a transaction makes its category `manual`**, so later list
   changes and re-sorts never move it. Only `auto` rows are ever re-decided.
+  **The one exception is the Copilot import**, which overrides a manual
+  category for every row up to its cutoff (Copilot is the source of truth for
+  the history it covers). It never touches a split row or anything dated
+  after the cutoff.
+- **There are no preset categories, so tests that need some must make them.**
+  `seed::test_categories` (test-only) inserts Tally's old set; the in-memory
+  database from `db::open_in_memory()` starts empty. The only categories code
+  may create on its own are the two from `seed::system_category`, and
+  `categories.is_builtin` is 1 for just those.
 - **A migration that runs today's code must make sure the columns that code
   reads exist.** v6 re-sorts with `recategorise_all`, which now reads v8's
   `removed`; an upgrade from v5 failed with "no such column" until v6 added
@@ -542,8 +636,10 @@ pattern (manual / CSV / SimpleFIN), `secrets.rs`, and the single DB module.
   do not put the backfill on the polling timer.
 - **Categorising happens in Rust at sync time**, not in the UI, so categories
   are right before any screen opens. The ladder is in `budget/categorize.rs`: a
-  manual choice is never overruled, then user rules (MCC, payee, description),
-  then the merchant-code map in `budget/mcc.rs`, then the sign of the amount.
+  manual choice is never overruled (the Copilot import aside), then user rules
+  (MCC, payee, description), then the merchant-code map in `budget/mcc.rs`, then
+  the sign of the amount. Its category names are mapped onto the owner's own by
+  `seed::sorter_category` (see "No preset categories" above).
 - **SimpleFIN transactions carry an `mcc`** — the card network's merchant
   category code — which is what makes auto-categorisation accurate. Do not
   replace it with text matching on the description.
