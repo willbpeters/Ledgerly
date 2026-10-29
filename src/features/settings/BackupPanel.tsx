@@ -57,21 +57,28 @@ export function BackupPanel(p: BackupPanelProps) {
         {backups.length === 0 ? (
           <EmptyState title="No backups yet" body="One is made the next time Tally opens, or now with Back up now." />
         ) : (
-          <DataTable
-            rows={backups}
-            getKey={(b) => b.file_name}
-            columns={[
-              { key: "when", label: "When", align: "left", render: (b) => whenLabel(b.date, b.time, today) },
-              { key: "kind", label: "Kind", align: "left", render: (b) => kindLabel(b.kind) },
-              { key: "size", label: "Size", render: (b) => formatBytes(b.size) },
-              {
-                key: "restore", label: "",
-                render: (b) => (
-                  <Button variant="ghost" size="sm" disabled={busy.restoring} onClick={() => p.onRestore(b)}>Restore</Button>
-                ),
-              },
-            ]}
-          />
+          // Folded away by default: the list grows by one a day and is only
+          // needed to restore.
+          <details>
+            <summary style={{ cursor: "pointer" }}>All backups ({backups.length})</summary>
+            <div style={{ paddingTop: 8 }}>
+              <DataTable
+                rows={backups}
+                getKey={(b) => b.file_name}
+                columns={[
+                  { key: "when", label: "When", align: "left", render: (b) => whenLabel(b.date, b.time, today) },
+                  { key: "kind", label: "Kind", align: "left", render: (b) => kindLabel(b.kind) },
+                  { key: "size", label: "Size", render: (b) => formatBytes(b.size) },
+                  {
+                    key: "restore", label: "",
+                    render: (b) => (
+                      <Button variant="ghost" size="sm" disabled={busy.restoring} onClick={() => p.onRestore(b)}>Restore</Button>
+                    ),
+                  },
+                ]}
+              />
+            </div>
+          </details>
         )}
         <div style={{ marginTop: 8 }}>
           <Button variant="secondary" size="sm" disabled={busy.restoring} onClick={p.onRestoreFromFile}>

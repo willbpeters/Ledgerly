@@ -37,6 +37,15 @@ describe("BackupPanel", () => {
     expect(screen.getByText("1.5 MB")).toBeInTheDocument();
   });
 
+  it("keeps the list folded away until it is opened", () => {
+    const { container } = render(<BackupPanel {...props()} />);
+    const list = container.querySelector("details")!;
+    expect(list).not.toHaveAttribute("open");
+    expect(screen.getByText("All backups (1)")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("All backups (1)"));
+    expect(list).toHaveAttribute("open");
+  });
+
   it("restores the chosen backup", () => {
     const onRestore = vi.fn();
     render(<BackupPanel {...props({ onRestore })} />);
