@@ -92,7 +92,7 @@ export function InsightRail() {
                   <div className="feed-row" key={r.key}>
                     <span className="feed-icon" style={{
                       background: inflow ? "var(--pos-soft)" : "var(--accent-soft)",
-                      color: inflow ? "var(--pos)" : "var(--accent)",
+                      color: inflow ? "var(--pos)" : "var(--accent-text)",
                     }}>
                       {inflow ? <Icons.up size={13} /> : <Icons.down size={13} />}
                     </span>

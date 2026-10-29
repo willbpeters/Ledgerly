@@ -62,12 +62,18 @@ budgeting and spending module.
   the Sync button, and a 322px **insight rail** on the right with tabs for
   recent Activity, today's Movers and Accounts, plus a "needs attention" block.
   The right rail is collapsible from the command bar (remembered in
-  `localStorage`) and hides itself under 1180px.
+  `localStorage`) and hides itself under 1180px. **No native title bar**
+  (2026-10-28, `decorations: false`): minimise, maximise and close
+  (`src/app/WindowControls.tsx`) sit in the rightmost header, the insight
+  rail's tabs when it shows, else the command bar; empty header space is a
+  `data-tauri-drag-region` (double-click maximises). The window permissions
+  for this are in `src-tauri/capabilities/default.json`.
 - **Spending** (the budgeting module): a month stepper; spent, income, left over
   and a needs-a-category count; every spending category with its monthly limit,
   progress bar and remainder; and the month's transactions with an inline
   category picker. Changing a category can write a payee rule that later syncs
-  obey. Categories and the learned rules are managed in Settings.
+  obey. Categories and the learned rules are managed in Spending →
+  Categories & rules (moved from Settings 2026-10-28).
   **No preset categories (2026-10-28):** a fresh database has none; they come
   from the owner or from the Copilot import. Only two are ever made by Tally
   itself, **Internal transfer** (kind `transfer`) and **Income** (kind
@@ -177,7 +183,7 @@ budgeting and spending module.
     in that order (`order_categories`). The keep tick-boxes and "Keep ones
     still in use" are gone. A Copilot category with nothing in it can't be
     seen in the export, so it doesn't arrive.
-  - **Remove all categories** (Settings → Categories, `categories_clear`):
+  - **Remove all categories** (Spending → Categories & rules, `categories_clear`):
     backs up, then deletes every category; all rows go uncategorised and back
     to To review, split pieces go uncategorised, rules and budgets go. No
     transaction is deleted.
@@ -208,10 +214,10 @@ budgeting and spending module.
   (before this, every `cat-N` category fell back to the first colour). The
   pill look is `.cat-pill` in `styles.css`, set from a `--pill` variable.
   `src/ui/CategoryPill.tsx` has the read-only `CategoryPill` (Activity, split
-  pieces in the list, the Settings category list) and `CategorySelect`, the
+  pieces in the list, the category list in Categories & rules) and `CategorySelect`, the
   same pill over a native `<select>` so keyboard and screen readers work as
   before (the category cell in Spending's Month, To review and Search lists).
-  `BudgetRow` keeps its bar and uses the same colour. Settings → Categories
+  `BudgetRow` keeps its bar and uses the same colour. Categories & rules
   offers all twelve colours by name, and a new category defaults to "let
   Tally pick" (the least used).
 - **Remove and Undo** (Spending): × removes a transaction from spending and
@@ -219,7 +225,8 @@ budgeting and spending module.
   **Show removed** → Restore undoes it. Remove, Restore, ✓, Mark all reviewed
   and a category change each show a toast with **Undo**, which puts the rows
   back exactly as they were (`bank_transactions_restore`). The remove question
-  has "Remove, don't ask again"; Settings → Spending turns it back on.
+  has "Remove, don't ask again"; the tick-box at the foot of Settings → Import from Copilot turns it
+  back on.
 - **Recurring** (Spending → Recurring): bills and subscriptions spotted from
   every month's history by `detectRecurring` in `src/domain/recurring.ts`
   (pure, tested). Money out only; transfer and income rows are left out (a
@@ -331,8 +338,8 @@ budgeting and spending module.
   foundation for beta, volatility, drawdown and correlation.
 - **Prices**: keyless Yahoo Finance provider; **auto-refresh** once a minute
   during US market hours and every 15 min outside them, **paused while the
-  window is hidden** and refreshed immediately on return; manual refresh in
-  Settings; daily portfolio snapshots feed the chart. The cadence decision is
+  window is hidden** and refreshed immediately on return; Markets' Refresh
+  also refreshes prices (Settings has no Prices card since 2026-10-28); daily portfolio snapshots feed the chart. The cadence decision is
   a pure function in `src/data/refreshSchedule.ts`, so it is unit-tested.
 - **Domain layer** (pure TypeScript, heavily tested): average-cost basis,
   realized/unrealized gains, positions → holdings aggregation, portfolio
