@@ -1,6 +1,6 @@
 # Tally — Handoff & Next Steps
 
-**Last updated:** 2026-10-24
+**Last updated:** 2026-10-28
 **Repo:** `C:\Users\willi\dev\Ledgerly` → GitHub `willbpeters/Tally` (public: the updater reads its Releases without signing in), branch `master`
 
 **Renamed from Ledgerly to Tally on 2026-10-24** (0.1.3). Only what the owner
@@ -369,6 +369,33 @@ budgeting and spending module.
   swap happens at launch, before `db::open`. **Export to CSV** writes nine
   spreadsheet-ready files, among them `transaction-splits.csv` and `goals.csv`. Settings → Backups. Spec:
   `docs/superpowers/specs/2026-10-14-backup-and-export-design.md`
+- **Sync between computers** (`src-tauri/src/devicesync/`, Settings card): the
+  owner's edits travel between the PC and the laptop through a shared folder
+  (Google Drive). Each computer keeps its own database and syncs SimpleFIN
+  itself. SQLite triggers record owner edits (categories, budgets, rules, a
+  transaction's category/note/reviewed/removed/name and its splits, rows the
+  Copilot import adds, account type and hidden, manual accounts, manual
+  investment transactions, goals, dismissed bills) into `sync_outbox`, keyed
+  by a `sync_key` both computers agree on; automatic re-sorting writes
+  `category_source='auto'` and is not recorded. Each round writes the outbox
+  to an immutable file in `changes/<device id>/` and applies the other
+  computer's files in one transaction, last writer wins per field
+  (`sync_clock`), then re-sorts automatic rows if a rule or category changed.
+  Edits for a transaction not fetched here yet wait in `sync_pending` until a
+  bank sync brings it (dropped after 60 days). A file from a newer schema
+  waits until this computer is updated. **Start** makes a "Tally Sync" folder
+  where the owner picks and puts `seed.sqlite` (a `VACUUM INTO` copy) in it;
+  **Join** on the other computer finds it from the same place, backs up, and
+  restores it at the restart, where `meta::adopt` gives the copy this
+  computer's own id and empties the inherited outbox. `device-sync.json`
+  beside the database says which folder and which device this is. **Stop**
+  sends what is left first, best effort. Restoring a backup turns sync off
+  (the owner joins again). The database lock is never held while reading the
+  folder. Rounds run at launch, every 30 s while visible, on hiding the
+  window, after a SimpleFIN sync and on "Sync now". A Copilot import with
+  sync on sends one large file (several changes per imported row). Plan and
+  design: `docs/superpowers/plans/2026-10-16-device-sync.md`. **Not yet
+  checked on the real two computers** (the plan's Task 12, Step 4).
 
 ### Reliability pass (2026-09-08)
 - **Error boundary** (`src/ui/ErrorBoundary.tsx`) wraps both the whole app and
