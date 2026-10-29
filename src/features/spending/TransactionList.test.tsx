@@ -7,10 +7,17 @@ import type { Account, BankTransaction, Category } from "../../domain/types";
 // Category changes are saved through Tauri; record them instead.
 const setCategory = vi.hoisted(() => vi.fn());
 const setNote = vi.hoisted(() => vi.fn());
+const deleteTxn = vi.hoisted(() => vi.fn());
+const confirmed = vi.hoisted(() => ({ ok: true, asked: [] as string[] }));
+vi.mock("../../ui/confirm", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ui/confirm")>()),
+  askToConfirm: async (message: string) => { confirmed.asked.push(message); return confirmed.ok; },
+}));
 vi.mock("../../data/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../data/queries")>()),
   useSetTransactionCategory: () => ({ mutate: setCategory }),
   useSetNote: () => ({ mutate: setNote, isPending: false }),
+  useDeleteBankTransaction: () => ({ mutate: deleteTxn }),
 }));
 const { TransactionList } = await import("./TransactionList");
 
@@ -233,5 +240,37 @@ describe("TransactionList notes", () => {
   it("offers no new note on a removed row", () => {
     renderList({ transactions: [txn({ removed: true })] });
     expect(screen.queryByRole("button", { name: "Add a note to Target" })).toBeNull();
+  });
+});
+
+describe("TransactionList rows added by hand", () => {
+  const own = (over: Partial<BankTransaction> = {}) => txn({ external_id: "manual:ab12", description: "Taco truck", payee: "Taco truck", ...over });
+
+  it("says a row was added by hand", () => {
+    renderList({ transactions: [own()] });
+    expect(screen.getByText("Added by you")).toBeInTheDocument();
+  });
+
+  it("deletes a row you added after asking, instead of removing it", async () => {
+    deleteTxn.mockClear();
+    const onRemove = vi.fn();
+    renderList({ transactions: [own()], onRemove });
+    confirmed.ok = false;
+    fireEvent.click(screen.getByRole("button", { name: "Delete Taco truck" }));
+    await vi.waitFor(() => expect(confirmed.asked[confirmed.asked.length - 1]).toMatch(/Delete "Taco truck"/));
+    expect(deleteTxn).not.toHaveBeenCalled();
+
+    confirmed.ok = true;
+    fireEvent.click(screen.getByRole("button", { name: "Delete Taco truck" }));
+    await vi.waitFor(() => expect(deleteTxn).toHaveBeenCalledWith(7, expect.anything()));
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("still removes a bank's row with ×", () => {
+    const onRemove = vi.fn();
+    renderList({ onRemove });
+    fireEvent.click(screen.getByRole("button", { name: "Remove Target" }));
+    expect(onRemove).toHaveBeenCalledWith(7);
+    expect(screen.queryByText("Added by you")).toBeNull();
   });
 });

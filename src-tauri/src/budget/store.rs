@@ -429,9 +429,11 @@ pub fn copilot_snapshot(conn: &Connection) -> rusqlite::Result<copilot::Snapshot
         .query_map([], |r| Ok(copilot::AccountRef { id: r.get(0)?, name: r.get(1)? }))?
         .collect::<rusqlite::Result<_>>()?;
     let txns = conn.prepare(
+        // Rows the owner added in Tally (cash, say) are theirs, not Copilot's
+        // or the bank's: the import neither matches nor removes them.
         "SELECT id, account_id, posted, amount, external_id, COALESCE(name, payee, description), pending, removed,
                 description
-         FROM bank_transactions",
+         FROM bank_transactions WHERE external_id NOT LIKE 'manual:%'",
     )?
         .query_map([], |r| {
             let external_id: String = r.get(4)?;

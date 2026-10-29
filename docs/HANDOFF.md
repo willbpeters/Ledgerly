@@ -82,7 +82,15 @@ budgeting and spending module.
   under "All rules (N)". **Notes:** "+ Note" (shown on row hover) or
   clicking a note edits it inline (`bank_transaction_set_note`; blank
   clears). Device sync carries a category's kind as well as its name,
-  colour and sort.
+  colour and sort. **Add transaction** (Spending's header) adds one by hand,
+  for cash say, to any visible non-investment account (a manual Cash account
+  first if there is one; `bank_transaction_add`). Its `external_id` starts
+  `manual:`: bank syncs never touch it, the Copilot import leaves it out of
+  its snapshot (never matched or removed), and device sync carries it and its
+  deletion (`bank_transactions_sync_delete`). With a category it is manual
+  and reviewed; without, rules sort it and it waits in To review. In the list
+  it says "Added by you", and its × deletes it after asking
+  (`bank_transaction_delete`, refused for any other row).
   **No preset categories (2026-10-28):** a fresh database has none; they come
   from the owner or from the Copilot import. Only two are ever made by Tally
   itself, **Internal transfer** (kind `transfer`) and **Income** (kind

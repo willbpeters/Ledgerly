@@ -14,6 +14,8 @@ import { BudgetRow } from "./BudgetRow";
 import { SearchPanel } from "./SearchPanel";
 import { RecurringPanel } from "./RecurringPanel";
 import { CategoriesCard } from "./CategoriesCard";
+import { AddTransactionForm } from "./AddTransactionForm";
+import { localIsoDate } from "../../domain/dates";
 import { Icons } from "../../app/icons";
 import { askToRemove } from "../../ui/confirm";
 import { useOfferUndo, askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
@@ -38,6 +40,7 @@ export function Spending() {
   useEffect(() => { if (q) setView("search"); }, [q]);
   const [month, setMonth] = useState(thisMonth);
   const [focus, setFocus] = useState<number | "uncategorised" | null>(null);
+  const [adding, setAdding] = useState(false);
   const { from, to } = monthWindow(month);
 
   const { data: allTxns = [], isLoading } = useBankTransactions(from, to);
@@ -145,10 +148,19 @@ export function Spending() {
             </div>
           )}
         </div>
-        {view === "month" && focus != null && (
-          <Button variant="secondary" size="sm" onClick={() => setFocus(null)}>Showing one category · clear</Button>
-        )}
+        <div className="row center" style={{ gap: 8 }}>
+          {view === "month" && focus != null && (
+            <Button variant="secondary" size="sm" onClick={() => setFocus(null)}>Showing one category · clear</Button>
+          )}
+          {view !== "categories" && !adding && (
+            <Button size="sm" onClick={() => setAdding(true)}>Add transaction</Button>
+          )}
+        </div>
       </div>
+
+      {adding && view !== "categories" && (
+        <AddTransactionForm accounts={accounts} categories={categories} today={localIsoDate()} onClose={() => setAdding(false)} />
+      )}
 
       {view === "categories" ? (
         <CategoriesCard />

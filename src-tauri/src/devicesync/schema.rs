@@ -71,7 +71,7 @@ const NOW: &str = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000.0) AS IN
 const TRIGGER_NAMES: &[&str] = &[
     "accounts_sync_insert", "accounts_sync_update", "accounts_sync_delete",
     "categories_sync_insert", "categories_sync_update", "categories_sync_delete",
-    "bank_transactions_sync_insert", "bank_transactions_sync_update",
+    "bank_transactions_sync_insert", "bank_transactions_sync_update", "bank_transactions_sync_delete",
     "category_rules_sync_insert", "category_rules_sync_update", "category_rules_sync_delete",
     "budgets_sync_insert", "budgets_sync_update", "budgets_sync_delete",
     "transactions_sync_insert", "transactions_sync_delete",
@@ -175,8 +175,16 @@ CREATE TRIGGER bank_transactions_sync_insert AFTER INSERT ON bank_transactions B
         'category_source', b.category_source, 'reviewed', b.reviewed, 'note', b.note,
         'removed', b.removed), {NOW}
     FROM bank_transactions b JOIN accounts a ON a.id = b.account_id
-    WHERE b.id = NEW.id AND (a.source = 'manual' OR b.external_id LIKE 'copilot:%')
+    WHERE b.id = NEW.id AND (a.source = 'manual' OR b.external_id LIKE 'copilot:%' OR b.external_id LIKE 'manual:%')
       AND (SELECT yes FROM sync_on);
+END;
+
+-- Only a row the owner added themselves is ever deleted. An account delete
+-- cascading to its rows is not an edit: the account's own deletion carries it.
+CREATE TRIGGER bank_transactions_sync_delete AFTER DELETE ON bank_transactions
+WHEN OLD.sync_key IS NOT NULL AND OLD.external_id LIKE 'manual:%' AND (SELECT yes FROM sync_on)
+  AND EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) BEGIN
+  INSERT INTO sync_outbox (tbl, key, field, value, at) VALUES ('bank_transactions', OLD.sync_key, '_row', NULL, {NOW});
 END;
 
 CREATE TRIGGER bank_transactions_sync_update

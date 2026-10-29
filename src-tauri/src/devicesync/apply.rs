@@ -193,11 +193,11 @@ fn categories(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
 fn bank_transactions(conn: &Connection, device: &str, c: &Change) -> rusqlite::Result<bool> {
     match c.field.as_str() {
         "_row" if c.value.is_null() => {
-            // Never a SimpleFIN row: only Copilot history or a manual account's
-            // rows are ever the owner's to delete.
+            // Never a SimpleFIN row: only rows the owner added, Copilot history
+            // or a manual account's rows are ever the owner's to delete.
             conn.execute(
                 "DELETE FROM bank_transactions WHERE sync_key=?1
-                   AND (external_id LIKE 'copilot:%'
+                   AND (external_id LIKE 'copilot:%' OR external_id LIKE 'manual:%'
                         OR account_id IN (SELECT id FROM accounts WHERE source='manual'))",
                 [&c.key],
             )?;

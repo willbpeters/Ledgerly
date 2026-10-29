@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, Security, Transaction, Snapshot,
   SyncedHolding, SyncReport, SimplefinStatus, SimplefinSample,
-  Category, CategoryKind, BankTransaction, CategoryRule, Budget, NewSplit,
+  Category, CategoryKind, BankTransaction, CategoryRule, Budget, NewSplit, NewBankTxn,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
@@ -118,6 +118,10 @@ export const api = {
       invoke<void>("bank_transaction_set_splits", { id, splits }),
     /** The owner's note; a blank one clears it. */
     setNote: (id: number, note: string) => invoke<void>("bank_transaction_set_note", { id, note }),
+    /** Add one by hand (cash, say) to any spending account. Returns its id. */
+    add: (txn: NewBankTxn) => invoke<number>("bank_transaction_add", { txn }),
+    /** Only for one added by hand; a bank's is removed instead. */
+    delete: (id: number) => invoke<void>("bank_transaction_delete", { id }),
     toReview: () => invoke<BankTransaction[]>("bank_transactions_to_review"),
     approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
     /** Remove from Spending (paid back), or restore. Never deletes. */

@@ -138,6 +138,11 @@ export interface CopilotPlan {
   not_counted: string[];
 }
 export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }
+/** A transaction the owner adds by hand, e.g. cash. Negative is money out. */
+export interface NewBankTxn {
+  account_id: number; posted: string; amount: number; payee: string;
+  category_id: number | null; note: string | null;
+}
 export interface CategoryRule {
   id: number; match_type: "payee" | "description" | "mcc";
   pattern: string; category_id: number; created_at: string;

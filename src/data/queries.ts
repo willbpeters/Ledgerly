@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
-import type { CategoryKind, NewGoal, NewSplit } from "../domain/types";
+import type { CategoryKind, NewBankTxn, NewGoal, NewSplit } from "../domain/types";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
@@ -263,6 +263,21 @@ export function useCreateRule() {
   return useMutation({
     mutationFn: (v: { matchType: "payee" | "description"; pattern: string; categoryId: number }) =>
       api.rules.create(v.matchType, v.pattern, v.categoryId),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+/** A new row changes totals, budgets, To review and the months on offer. */
+export function useAddTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (txn: NewBankTxn) => api.bankTransactions.add(txn),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+export function useDeleteBankTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.bankTransactions.delete(id),
     onSuccess: () => invalidateSpending(qc),
   });
 }

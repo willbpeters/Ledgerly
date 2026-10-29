@@ -1,7 +1,11 @@
 import { Fragment, useEffect, useState } from "react";
-import { useSetTransactionCategory, useSetNote } from "../../data/queries";
+import { useSetTransactionCategory, useSetNote, useDeleteBankTransaction } from "../../data/queries";
 import { useOfferUndo } from "../../data/undo";
 import { useToast } from "../../ui/toast";
+import { askToConfirm } from "../../ui/confirm";
+
+/** Added by the owner in Tally (cash, say), not by a bank or Copilot. */
+const isOwn = (t: BankTransaction) => t.external_id.startsWith("manual:");
 import { splitRemainder } from "../../domain/splits";
 import { money, fmtDate } from "../../ui/format";
 import { Badge } from "../../ui/components";
@@ -35,6 +39,7 @@ export function TransactionList({ transactions, categories, accounts, onApprove,
   // The row whose note is being written, and the text so far.
   const [noting, setNoting] = useState<{ id: number; text: string } | null>(null);
   const setNote = useSetNote();
+  const deleteTxn = useDeleteBankTransaction();
   const byId = new Map(categories.map((c) => [c.id, c]));
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? "—";
   // An editor must not outlive its row: the list changes under it on a month
@@ -44,6 +49,12 @@ export function TransactionList({ transactions, categories, accounts, onApprove,
     if (noting != null && !transactions.some((t) => t.id === noting.id)) setNoting(null);
   }, [transactions, splitting, noting]);
   const openSplit = (id: number) => { setTeaching(null); setSplitting(id); };
+
+  async function deleteOwn(t: BankTransaction, name: string) {
+    if (!(await askToConfirm(`Delete "${name}", ${money(t.amount)} on ${fmtDate(t.posted)}? You added it, so this can't be undone.`,
+      { okLabel: "Delete" }))) return;
+    deleteTxn.mutate(t.id, { onError: (e) => toast.push({ tone: "neg", title: "Not deleted", body: String(e) }) });
+  }
 
   function saveNote() {
     if (!noting) return;
@@ -112,6 +123,7 @@ export function TransactionList({ transactions, categories, accounts, onApprove,
                       <button className="btn btn-ghost btn-sm note-add" aria-label={`Add a note to ${name}`}
                         onClick={() => setNoting({ id: t.id, text: "" })}>+ Note</button>
                     )}
+                    {isOwn(t) && <div className="cell-secondary">Added by you</div>}
                     {t.pending && <Badge tone="warn">Pending</Badge>}
                   </td>
                   <td className="left cell-secondary">{accountName(t.account_id)}</td>
@@ -199,6 +211,11 @@ export function TransactionList({ transactions, categories, accounts, onApprove,
                           <button className="btn btn-ghost btn-sm" aria-label={`Restore ${name}`}
                             onClick={() => onRestore(t.id)}>Restore</button>
                         )
+                      ) : isOwn(t) ? (
+                        // One the owner added: no sync would bring it back, so
+                        // it is deleted outright rather than removed.
+                        <button className="btn btn-ghost btn-sm" aria-label={`Delete ${name}`}
+                          title="Delete (you added this)" onClick={() => deleteOwn(t, name)}>×</button>
                       ) : (
                         onRemove && (
                           <button className="btn btn-ghost btn-sm" aria-label={`Remove ${name}`}

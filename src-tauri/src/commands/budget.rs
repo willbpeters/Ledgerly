@@ -1,7 +1,7 @@
 use crate::budget::store;
 use crate::db::Db;
 use crate::models::{BankTransaction, Budget, Category, CategoryRule, TxnSplit};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 
 // ---------- categories ----------
@@ -269,6 +269,89 @@ pub fn set_note(conn: &Connection, id: i64, note: &str) -> rusqlite::Result<()> 
     Ok(())
 }
 
+/// A transaction the owner adds by hand: cash, say, which no bank reports.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct NewBankTxn {
+    pub account_id: i64,
+    /// `YYYY-MM-DD`.
+    pub posted: String,
+    /// Negative is money out.
+    pub amount: f64,
+    pub payee: String,
+    pub category_id: Option<i64>,
+    pub note: Option<String>,
+}
+
+#[tauri::command]
+pub fn bank_transaction_add(db: tauri::State<Db>, txn: NewBankTxn) -> Result<i64, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    add_own_transaction(&conn, &txn)
+}
+
+/// Add a transaction by hand, to any account Spending shows. Its id starts
+/// `manual:`, so bank syncs and the Copilot import leave it alone. With a
+/// category it counts as chosen and reviewed; without one, rules may sort it
+/// and it waits in To review.
+pub fn add_own_transaction(conn: &Connection, t: &NewBankTxn) -> Result<i64, String> {
+    let payee = t.payee.trim();
+    if payee.is_empty() {
+        return Err("Say who it was paid to or from.".into());
+    }
+    if chrono::NaiveDate::parse_from_str(&t.posted, "%Y-%m-%d").is_err() || t.posted.len() != 10 {
+        return Err("Give a date like 2026-10-28.".into());
+    }
+    if !t.amount.is_finite() || (t.amount * 100.0).round() == 0.0 {
+        return Err("Give an amount of at least $0.01.".into());
+    }
+    let account_type: Option<String> = conn
+        .query_row("SELECT type FROM accounts WHERE id=?1", [t.account_id], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    match account_type.as_deref() {
+        None => return Err("That account no longer exists.".into()),
+        Some("brokerage") => return Err("Spending doesn't show investment accounts. Choose a cash or card account.".into()),
+        Some(_) => {}
+    }
+    let note = t.note.as_deref().map(str::trim).filter(|n| !n.is_empty());
+    let amount = (t.amount * 100.0).round() / 100.0;
+    let run = || -> rusqlite::Result<i64> {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO bank_transactions
+               (account_id, external_id, posted, amount, description, payee, category_id, category_source, reviewed, note)
+             VALUES (?1, 'manual:' || lower(hex(randomblob(16))), ?2, ?3, ?4, ?4, ?5,
+                     CASE WHEN ?5 IS NULL THEN 'auto' ELSE 'manual' END, ?5 IS NOT NULL, ?6)",
+            params![t.account_id, t.posted, amount, payee, t.category_id, note],
+        )?;
+        let id = tx.last_insert_rowid();
+        if t.category_id.is_none() {
+            store::recategorise_all(&tx)?;
+        }
+        tx.commit()?;
+        Ok(id)
+    };
+    run().map_err(|e| if e.to_string().contains("FOREIGN KEY") {
+        "That category no longer exists.".to_string()
+    } else { e.to_string() })
+}
+
+#[tauri::command]
+pub fn bank_transaction_delete(db: tauri::State<Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    delete_own_transaction(&conn, id)
+}
+
+/// Delete a transaction the owner added. A bank's or Copilot's is never
+/// deleted, only removed (restorably), or the next sync would bring it back.
+pub fn delete_own_transaction(conn: &Connection, id: i64) -> Result<(), String> {
+    let n = conn
+        .execute("DELETE FROM bank_transactions WHERE id=?1 AND external_id LIKE 'manual:%'", [id])
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("Only a transaction you added can be deleted. Remove this one with × instead.".into());
+    }
+    Ok(())
+}
+
 /// Split a transaction across categories; an empty list unsplits it.
 #[tauri::command]
 pub fn bank_transaction_set_splits(db: tauri::State<Db>, id: i64, splits: Vec<store::NewSplit>)
@@ -459,6 +542,79 @@ mod tests {
         assert_eq!(note(&conn).as_deref(), Some("Bonus week"));
         set_note(&conn, 1, "   ").unwrap();
         assert_eq!(note(&conn), None);
+    }
+
+    fn cash(conn: &Connection, over: impl FnOnce(&mut NewBankTxn)) -> Result<i64, String> {
+        let mut t = NewBankTxn {
+            account_id: 1, posted: "2026-10-20".into(), amount: -12.5, payee: " Farmers market ".into(),
+            category_id: crate::budget::seed::category_id(conn, "Groceries").unwrap(), note: Some("  eggs ".into()),
+        };
+        over(&mut t);
+        add_own_transaction(conn, &t)
+    }
+
+    #[test]
+    fn a_transaction_added_by_hand_lands_in_the_chosen_account_as_chosen() {
+        let conn = with_target_paycheck();
+        let id = cash(&conn, |_| {}).unwrap();
+        let (ext, payee, amount, source, reviewed, note): (String, String, f64, String, i64, String) = conn.query_row(
+            "SELECT external_id, payee, amount, category_source, reviewed, note FROM bank_transactions WHERE id=?1",
+            [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).unwrap();
+        assert!(ext.starts_with("manual:"), "{ext}");
+        assert_eq!((payee.as_str(), amount, source.as_str(), reviewed, note.as_str()),
+                   ("Farmers market", -12.5, "manual", 1, "eggs"));
+        let other = cash(&conn, |_| {}).unwrap();
+        let ext2: String = conn.query_row("SELECT external_id FROM bank_transactions WHERE id=?1", [other], |r| r.get(0)).unwrap();
+        assert_ne!(ext, ext2, "the same cash purchase twice is two rows");
+    }
+
+    #[test]
+    fn one_added_without_a_category_is_sorted_by_rules_and_waits_for_review() {
+        let conn = with_target_paycheck();
+        let income = crate::budget::seed::category_id(&conn, "Income").unwrap().unwrap();
+        create_rule(&conn, "payee", "tips", income).unwrap();
+        let id = cash(&conn, |t| { t.payee = "Tips jar".into(); t.amount = 40.0; t.category_id = None; }).unwrap();
+        let (category, reviewed): (Option<i64>, i64) = conn.query_row(
+            "SELECT category_id, reviewed FROM bank_transactions WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!((category, reviewed), (Some(income), 0));
+    }
+
+    #[test]
+    fn a_hand_added_transaction_needs_a_payee_a_date_an_amount_and_a_spending_account() {
+        let conn = with_target_paycheck();
+        conn.execute("INSERT INTO accounts (name,type,currency,created_at) VALUES ('Brokerage','brokerage','USD','2026-01-01')", []).unwrap();
+        assert!(cash(&conn, |t| t.payee = "  ".into()).unwrap_err().contains("paid to or from"));
+        assert!(cash(&conn, |t| t.posted = "2026-02-30".into()).unwrap_err().contains("date"));
+        assert!(cash(&conn, |t| t.amount = 0.001).unwrap_err().contains("$0.01"));
+        assert!(cash(&conn, |t| t.account_id = 2).unwrap_err().contains("investment"));
+        assert!(cash(&conn, |t| t.account_id = 99).unwrap_err().contains("no longer exists"));
+    }
+
+    #[test]
+    fn only_a_transaction_added_by_hand_can_be_deleted() {
+        let conn = with_target_paycheck();
+        let id = cash(&conn, |_| {}).unwrap();
+        delete_own_transaction(&conn, id).unwrap();
+        let left: i64 = conn.query_row("SELECT count(*) FROM bank_transactions WHERE id=?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
+        assert!(delete_own_transaction(&conn, 1).unwrap_err().contains("Remove this one"), "the bank's row stays");
+    }
+
+    #[test]
+    fn the_copilot_import_leaves_hand_added_transactions_alone() {
+        let conn = with_target_paycheck();
+        conn.execute("UPDATE accounts SET name='Checking (2175)'", []).unwrap();
+        let id = cash(&conn, |t| t.posted = "2026-10-05".into()).unwrap();
+        let header = "\"date\",\"name\",\"amount\",\"status\",\"category\",\"parent category\",\"excluded\",\"tags\",\"type\",\"account\",\"account mask\",\"note\",\"recurring\"";
+        let csv = format!("{header}\n\"2026-10-01\",\"Target\",-500,\"posted\",\"\",\"\",false,,\"income\",\"Checking\",\"2175\",,\n\
+                           \"2026-10-15\",\"Target\",-500,\"posted\",\"\",\"\",false,,\"income\",\"Checking\",\"2175\",,\n");
+        let plan = crate::budget::store::copilot_preview(&conn, &crate::budget::copilot::parse_csv(&csv).unwrap()).unwrap();
+        assert!(plan.not_in_copilot.iter().all(|n| n.txn_id != id), "not offered for removal");
+        crate::budget::store::apply_copilot_plan(&conn, &plan).unwrap();
+        let removed: i64 = conn.query_row("SELECT removed FROM bank_transactions WHERE id=?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(removed, 0);
     }
 
     #[test]

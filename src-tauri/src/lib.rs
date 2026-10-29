@@ -80,6 +80,8 @@ pub fn run() {
             commands::budget::bank_transaction_set_category,
             commands::budget::bank_transaction_set_splits,
             commands::budget::bank_transaction_set_note,
+            commands::budget::bank_transaction_add,
+            commands::budget::bank_transaction_delete,
             commands::budget::bank_transactions_to_review,
             commands::budget::bank_transactions_approve,
             commands::budget::bank_transactions_set_removed,

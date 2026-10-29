@@ -315,6 +315,31 @@ mod tests {
     }
 
     #[test]
+    fn a_cash_transaction_added_by_hand_and_its_deletion_reach_the_other_computer() {
+        use crate::commands::budget::{add_own_transaction, delete_own_transaction, NewBankTxn};
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+        // Into the SimpleFIN card, which both computers have by its sf: key.
+        let id = add_own_transaction(&pc.db.0.lock().unwrap(), &NewBankTxn {
+            account_id: 1, posted: "2026-10-03".into(), amount: -4.0, payee: "Lemonade stand".into(),
+            category_id: None, note: Some("cash".into()),
+        }).unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        assert_eq!(
+            text(&laptop, "SELECT payee || ' ' || note || ' ' || a.external_id FROM bank_transactions b
+                           JOIN accounts a ON a.id=b.account_id WHERE b.external_id LIKE 'manual:%'").as_deref(),
+            Some("Lemonade stand cash ACT-1")
+        );
+
+        delete_own_transaction(&pc.db.0.lock().unwrap(), id).unwrap();
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap();
+        assert_eq!(count(&laptop, "SELECT count(*) FROM bank_transactions WHERE external_id LIKE 'manual:%'"), 0);
+        assert_eq!(count(&laptop, "SELECT count(*) FROM bank_transactions"), 1, "the bank's coffee stays");
+    }
+
+    #[test]
     fn each_computer_sees_the_other_in_the_folder() {
         let drive = tempfile::tempdir().unwrap();
         let (pc, laptop) = pair_up(drive.path());
