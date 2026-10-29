@@ -24,7 +24,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="layout">
+    <div className={open ? "layout with-insight" : "layout"}>
       <IconRail />
       <div className="centre">
         <CommandBar onToggleInsight={toggle} />

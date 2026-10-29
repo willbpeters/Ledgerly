@@ -26,7 +26,7 @@ export function BackupCard() {
   // On success the app restarts, so only failure needs handling here.
   const restoreFrom = async (path: string, what: string) => {
     const ok = await askToConfirm(
-      `Replace everything in Tally with ${what}?\n\nYour current data is backed up first, so this can be undone. Tally restarts to finish.`,
+      `Replace everything in Tally with ${what}?\n\nYour current data is backed up first, so this can be undone. If sync between computers is on, it is turned off; join again afterwards. Tally restarts to finish.`,
       { okLabel: "Restore", cancelLabel: "Cancel" },
     );
     if (!ok) return;

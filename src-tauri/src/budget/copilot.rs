@@ -15,6 +15,9 @@ const HEADER: [&str; 13] = [
 const MATCH_DAYS: i64 = 3;
 /// The account that collects rows whose Copilot account no longer exists.
 pub const HISTORY_ACCOUNT: &str = "Copilot history";
+/// Where rows Copilot excluded go: the owner excluded purchases they were paid
+/// back for. Kind `transfer`, so they show but never count as spending.
+pub const EXCLUDED: &str = "Excluded";
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CopilotRow {
@@ -58,35 +61,23 @@ pub struct Snapshot {
 pub enum Target { Account(i64), History }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Match { pub txn_id: i64, pub category: Option<String>, pub note: Option<String> }
+pub struct Match {
+    pub txn_id: i64, pub category: Option<String>, pub note: Option<String>,
+    /// Copilot's name for it, shown in place of the bank's.
+    pub name: String,
+}
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Addition {
     pub external_id: String, pub account: Target, pub posted: String, pub amount: f64,
     pub name: String, pub category: Option<String>, pub note: Option<String>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Skipped { pub date: String, pub name: String, pub amount: f64, pub account: String }
 /// A Tally transaction Copilot does not have — usually one the owner deleted
-/// there after being paid back. Offered for removal, never removed unasked.
+/// there after being paid back. The import removes it (restorably).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NotInCopilot {
     pub txn_id: i64, pub date: String, pub name: String, pub amount: f64, pub account: String,
     /// Added by an earlier Copilot import, and no longer in Copilot.
     pub earlier_export: bool,
-}
-/// A category the export doesn't use, no budget or split piece keeps, and
-/// that rows Copilot doesn't cover still hold once the import is done.
-/// It goes if `kept_rows` is 0 and every one of `removable` is removed.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct CategoryHold {
-    pub name: String,
-    /// Rows holding it that the import doesn't offer to remove.
-    pub kept_rows: usize,
-    /// Rows holding it from `not_in_copilot`, by `txn_id`.
-    pub removable: Vec<i64>,
-    /// Split pieces and budgets in it. These keep it unless all categories
-    /// are replaced.
-    pub pinned: usize,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NewCategory { pub name: String, pub kind: String }
@@ -96,11 +87,12 @@ pub struct LearnedRule { pub pattern: String, pub category: String }
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Plan {
     pub matches: Vec<Match>,
+    /// Every Copilot row Tally doesn't have yet: history from before the bank
+    /// sync, and rows the bank's own record lacks or has differently.
     pub additions: Vec<Addition>,
-    /// Inside a SimpleFIN span with no same-amount match: listed, not added.
-    pub skipped: Vec<Skipped>,
     pub not_in_copilot: Vec<NotInCopilot>,
-    pub pending_or_excluded: usize,
+    /// Pending in Copilot: left for the bank sync to bring in once posted.
+    pub pending: usize,
     pub new_categories: Vec<NewCategory>,
     pub rules: Vec<LearnedRule>,
     /// Copilot account label → the Tally account it maps to.
@@ -110,14 +102,13 @@ pub struct Plan {
     pub cutoff: String,
     /// Tally's old name → Copilot's, merged (or renamed) before anything else.
     pub merges: Vec<(String, String)>,
-    /// Categories that will hold nothing after the import and that the export
-    /// doesn't use, with nothing removed: deleted. Filled by
-    /// `store::copilot_preview`, which dry-runs the import.
+    /// Tally's categories the export doesn't use: deleted, whatever they
+    /// hold. Filled by `store::copilot_preview`, which dry-runs the import.
     pub deletions: Vec<String>,
-    /// Every category that only rows Copilot doesn't cover keep, so the
-    /// preview can say which go for whichever rows the owner ticks.
+    /// Rows the import leaves in place (after the cutoff, or in an account
+    /// Copilot doesn't have) that lose their category to those deletions.
     /// Filled by `store::copilot_preview`.
-    pub category_holds: Vec<CategoryHold>,
+    pub uncategorised: usize,
     /// Matched rows whose category changes to Copilot's. Filled by
     /// `store::copilot_preview`.
     pub recategorised: usize,
@@ -179,10 +170,14 @@ pub fn parse_csv(text: &str) -> Result<Vec<CopilotRow>, String> {
         .collect())
 }
 
-/// The category a row belongs in: Copilot's own name, exactly. An internal
-/// transfer is always "Internal transfer", whatever its category says, and
-/// income with no category is "Income" — the two system categories.
+/// The category a row belongs in: Copilot's own name, exactly. An excluded
+/// row is always "Excluded"; an internal transfer is always "Internal
+/// transfer", whatever its category says; income with no category is
+/// "Income" — the two system categories.
 pub fn category_for(r: &CopilotRow) -> Option<String> {
+    if r.excluded {
+        return Some(EXCLUDED.into());
+    }
     if r.kind == "internal transfer" {
         return Some("Internal transfer".into());
     }
@@ -227,7 +222,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut p = Plan::default();
     let cents = |a: f64| (a * 100.0).round() as i64;
     // The newest day of the whole file. Nothing in Tally after it is touched.
-    let newest = rows.iter().filter(|r| !r.pending && !r.excluded).map(|r| r.date.as_str()).max().unwrap_or("");
+    let newest = rows.iter().filter(|r| !r.pending).map(|r| r.date.as_str()).max().unwrap_or("");
     p.cutoff = newest.to_string();
 
     // Where SimpleFIN's own record of each account starts. Copilot rows from
@@ -251,7 +246,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut covers: BTreeMap<i64, (String, String)> = BTreeMap::new();
 
     for r in rows {
-        if r.pending || r.excluded { p.pending_or_excluded += 1; continue; }
+        if r.pending { p.pending += 1; continue; }
         let category = category_for(r);
         let target = account_for(r);
         if let Target::Account(id) = target {
@@ -260,7 +255,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
             if r.date > c.1 { c.1 = r.date.clone(); }
         }
         let label = if r.account.is_empty() { "(no account)".to_string() } else { r.account.clone() };
-        labels.entry(label.clone()).or_insert_with(|| match &target {
+        labels.entry(label).or_insert_with(|| match &target {
             Target::Account(id) => snap.accounts.iter().find(|a| a.id == *id).map_or(String::new(), |a| a.name.clone()),
             Target::History => HISTORY_ACCOUNT.to_string(),
         });
@@ -272,8 +267,11 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
                 // $10 Polymarket row once matched a $10 Chick-fil-a. Another
                 // day also needs a word in common with the payee or description.
                 let name_words = words(&r.name);
+                // A removed row is not matched: if Copilot has it, Copilot's
+                // copy is added and shows instead.
                 let best = snap.txns.iter()
-                    .filter(|t| t.account_id == id && !t.from_copilot && !used.contains(&t.id) && cents(t.amount) == cents(r.amount))
+                    .filter(|t| t.account_id == id && !t.from_copilot && !t.removed && !used.contains(&t.id)
+                        && cents(t.amount) == cents(r.amount))
                     .filter_map(|t| day(&t.posted).map(|td| ((td - d).abs(), t)))
                     .filter(|(gap, t)| *gap == 0 || (*gap <= MATCH_DAYS && {
                         let theirs = words(&format!("{} {}", t.label, t.description));
@@ -281,20 +279,19 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
                     }))
                     .map(|(gap, t)| (gap, t.id))
                     .min();
-                match best {
-                    Some((_, txn_id)) => {
-                        used.insert(txn_id);
-                        // Tally may date it a day or two after Copilot; past
-                        // the cutoff it is matched (so not offered for
-                        // removal) but left as it is.
-                        let posted = snap.txns.iter().find(|t| t.id == txn_id).map_or("", |t| t.posted.as_str());
-                        if posted <= newest {
-                            p.matches.push(Match { txn_id, category, note: r.note.clone() });
-                        }
+                if let Some((_, txn_id)) = best {
+                    used.insert(txn_id);
+                    // Tally may date it a day or two after Copilot; past
+                    // the cutoff it is matched (so not removed) but left as it is.
+                    let posted = snap.txns.iter().find(|t| t.id == txn_id).map_or("", |t| t.posted.as_str());
+                    if posted <= newest {
+                        p.matches.push(Match { txn_id, category, note: r.note.clone(), name: r.name.clone() });
                     }
-                    None => p.skipped.push(Skipped { date: r.date.clone(), name: r.name.clone(), amount: r.amount, account: label }),
+                    continue;
                 }
-                continue;
+                // The bank's record lacks it, or has it differently (another
+                // amount, a date too far off): Copilot's copy is added, and the
+                // bank's, if any, is removed below as one Copilot doesn't have.
             }
         }
 
@@ -320,7 +317,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     // was deleted in Copilot since: offered too, up to and including the
     // newest day (no lag here, an earlier export already had it), in a covered
     // account or in Copilot history from the export's first day on.
-    let earliest = rows.iter().filter(|r| !r.pending && !r.excluded).map(|r| r.date.as_str()).min().unwrap_or("");
+    let earliest = rows.iter().filter(|r| !r.pending).map(|r| r.date.as_str()).min().unwrap_or("");
     let history = snap.accounts.iter().find(|a| a.name == HISTORY_ACCOUNT).map(|a| a.id);
     let still: HashSet<&str> = p.additions.iter().map(|a| a.external_id.as_str()).collect();
     for t in &snap.txns {
@@ -346,12 +343,12 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
 
     // Every category the export uses, most used first, in Copilot's spelling.
     let mut uses: BTreeMap<String, (String, usize)> = BTreeMap::new();
-    for c in rows.iter().filter(|r| !r.pending && !r.excluded).filter_map(category_for) {
+    for c in rows.iter().filter(|r| !r.pending).filter_map(category_for) {
         uses.entry(c.to_lowercase()).or_insert_with(|| (c.clone(), 0)).1 += 1;
     }
-    // A transfer's own category (one Copilot has, like Car) is still one of
-    // Copilot's categories, though the row itself is an internal transfer.
-    for r in rows.iter().filter(|r| !r.pending && !r.excluded && r.kind == "internal transfer") {
+    // A transfer's or an excluded row's own category (one Copilot has, like
+    // Car) is still one of Copilot's, though the row itself goes elsewhere.
+    for r in rows.iter().filter(|r| !r.pending && (r.excluded || r.kind == "internal transfer")) {
         let c = r.category.trim();
         if !c.is_empty() {
             uses.entry(c.to_lowercase()).or_insert_with(|| (c.to_string(), 0)).1 += 1;
@@ -393,8 +390,13 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     p.new_categories = wanted.into_iter()
         .filter(|c| !have.contains(&c.to_lowercase()) && system_kind(c).is_none())
         .map(|name| NewCategory {
-            // Money moved into the owner's own investments is not spending.
-            kind: if name.eq_ignore_ascii_case("investments") { "transfer" } else { "spending" }.into(),
+            // Money moved into the owner's own investments is not spending,
+            // and nor is what they were paid back for.
+            kind: if name.eq_ignore_ascii_case("investments") || name.eq_ignore_ascii_case(EXCLUDED) {
+                "transfer"
+            } else {
+                "spending"
+            }.into(),
             name,
         })
         .collect();
@@ -404,6 +406,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     // A payee used at least twice, 90% of the time in one category. It
     // replaces any rule the payee already has: Copilot's choice wins.
     let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Excluded rows teach nothing: being paid back says nothing of the payee.
     for r in rows.iter().filter(|r| !r.pending && !r.excluded) {
         if let Some(c) = category_for(r) {
             by_name.entry(r.name.trim().to_lowercase()).or_default().push(c);
@@ -549,7 +552,8 @@ mod tests {
         s.txns.push(ExistingTxn { label: "Polymarket".into(), description: "POLYMARKET 12345".into(), ..existing(70, "2026-07-03", -10.0) });
         let p = plan(&rows, &s);
         assert!(!p.matches.iter().any(|m| m.txn_id == 70));
-        assert_eq!(p.skipped.len(), 2);
+        assert_eq!(p.additions.len(), 2, "Copilot's rows are added instead");
+        assert!(p.not_in_copilot.iter().any(|n| n.txn_id == 70), "the bank's is removed");
     }
 
     #[test]
@@ -656,15 +660,33 @@ mod tests {
         let ids: Vec<i64> = p.matches.iter().map(|m| m.txn_id).collect();
         assert_eq!(ids, vec![11, 10]);
         assert_eq!(p.matches[0].category.as_deref(), Some("Eating Out"));
-        assert!(p.additions.is_empty());
+        assert_eq!(p.additions.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), vec!["Later"], "no bank row to match");
     }
 
     #[test]
-    fn an_unmatched_row_inside_the_span_is_skipped_not_added() {
+    fn an_unmatched_row_inside_the_span_is_added_to_its_account() {
+        // The bank's record lacks it or has it differently: Copilot's copy goes in.
         let rows = parse_csv(&csv(&[&row("2026-07-10", "Mystery", "9.99", "Other", "regular", "9849")])).unwrap();
         let p = plan(&rows, &snap());
-        assert!(p.additions.is_empty());
-        assert_eq!(p.skipped.len(), 1);
+        assert_eq!(p.additions.len(), 1);
+        assert_eq!(p.additions[0].account, Target::Account(1));
+    }
+
+    #[test]
+    fn a_removed_row_is_not_matched_so_copilots_copy_shows() {
+        let rows = parse_csv(&csv(&[&row("2026-07-01", "Diner", "12.50", "Eating Out", "regular", "9849")])).unwrap();
+        let mut s = snap();
+        s.txns.iter_mut().find(|t| t.id == 10).unwrap().removed = true;
+        let p = plan(&rows, &s);
+        assert!(!p.matches.iter().any(|m| m.txn_id == 10));
+        assert_eq!(p.additions.len(), 1);
+    }
+
+    #[test]
+    fn a_match_carries_copilots_name() {
+        let rows = parse_csv(&csv(&[&row("2026-07-01", "Corner Diner", "12.50", "Eating Out", "regular", "9849")])).unwrap();
+        let p = plan(&rows, &snap());
+        assert_eq!(p.matches[0].name, "Corner Diner");
     }
 
     #[test]
@@ -684,11 +706,17 @@ mod tests {
     }
 
     #[test]
-    fn pending_and_excluded_rows_are_skipped() {
+    fn pending_rows_are_skipped_and_excluded_ones_go_in_excluded() {
         let pending = row("2026-01-02", "P", "1", "", "regular", "").replace("\"posted\"", "\"pending\"");
-        let excluded = row("2026-01-02", "E", "1", "", "regular", "").replace("\"false\"", "\"true\"");
+        // Paid back: excluded in Copilot, its own category still one of Copilot's.
+        let excluded = row("2026-01-02", "E", "1", "Concerts", "regular", "").replace("\"false\"", "\"true\"");
         let p = plan(&parse_csv(&csv(&[&pending, &excluded])).unwrap(), &snap());
-        assert_eq!((p.additions.len(), p.pending_or_excluded), (0, 2));
+        assert_eq!((p.additions.len(), p.pending), (1, 1));
+        assert_eq!(p.additions[0].category.as_deref(), Some(EXCLUDED));
+        assert!(p.export_categories.contains(&"Concerts".to_string()));
+        let kinds: Vec<(&str, &str)> = p.new_categories.iter().map(|c| (c.name.as_str(), c.kind.as_str())).collect();
+        assert_eq!(kinds, vec![("Concerts", "spending"), (EXCLUDED, "transfer")]);
+        assert!(p.rules.is_empty());
     }
 
     #[test]

@@ -29,11 +29,13 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
 /// `credit` account type; v4 adds the `hidden` flag on accounts; v5 adds the
 /// Markets tables; v6 adds `reviewed` to bank transactions and re-sorts them
 /// once; v7 adds a `note` and v8 a `removed` flag to bank transactions; v9 adds
-/// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. v11 adds the `goals` table. To add a change later: bump
+/// `bank_transaction_splits`. v10 adds the `recurring_dismissed` table. v11 adds the `goals` table. v12 adds device sync
+/// (sync keys, the outbox and its triggers). v13 adds `name` to bank
+/// transactions: Copilot's name for a row, which a bank sync never overwrites. To add a change later: bump
 /// TARGET_VERSION, add another `if current < N` block, and give it a
 /// completeness check so a mis-stamped database can still repair itself. Add
 /// the new completeness check to `migration_pending` too.
-const TARGET_VERSION: i64 = 11;
+pub(crate) const TARGET_VERSION: i64 = 13;
 
 /// v2's added columns, as (name, definition). Added one at a time and only
 /// when missing: SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, and
@@ -326,6 +328,18 @@ fn apply_v11(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(MIGRATION_11)
 }
 
+/// v13: the name Tally shows for a row in place of the bank's payee: Copilot's,
+/// from the import. The bank sync rewrites `payee` every time; never this.
+const V13_COLUMN: (&str, &str) = ("name", "name TEXT");
+
+fn v13_is_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    column_exists(conn, "bank_transactions", V13_COLUMN.0)
+}
+
+fn apply_v13(conn: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(conn, "bank_transactions", V13_COLUMN.0, V13_COLUMN.1)
+}
+
 /// The tables v3 is responsible for, used by the completeness check below.
 const V3_TABLES: &[&str] = &["categories", "bank_transactions", "category_rules", "budgets"];
 
@@ -338,7 +352,7 @@ fn set_user_version(conn: &Connection, version: i64) -> rusqlite::Result<()> {
     conn.execute_batch(&format!("PRAGMA user_version = {};", version))
 }
 
-fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+pub(crate) fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     let n: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
         [name],
@@ -347,7 +361,7 @@ fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     Ok(n > 0)
 }
 
-fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+pub(crate) fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
     let n: i64 = conn.query_row(
         "SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2",
         [table, column],
@@ -359,7 +373,7 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 /// Add a column only if it is not already there. SQLite has no
 /// `ADD COLUMN IF NOT EXISTS`, and re-adding one is a hard error that would
 /// panic the app on startup.
-fn add_column_if_missing(conn: &Connection, table: &str, column: &str, definition: &str)
+pub(crate) fn add_column_if_missing(conn: &Connection, table: &str, column: &str, definition: &str)
     -> rusqlite::Result<()> {
     if column_exists(conn, table, column)? {
         return Ok(());
@@ -431,7 +445,13 @@ fn apply_v3(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The sync triggers are dropped first, so migrations can drop columns or
+/// rebuild tables freely; the v9 step at the end recreates them from the
+/// current text (which also carries a changed trigger body to existing
+/// databases). A rebuild of accounts, categories, bank_transactions or
+/// transactions must carry `sync_key` across.
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    crate::devicesync::schema::drop_triggers(conn)?;
     // The base schema is CREATE TABLE IF NOT EXISTS throughout, so it is safe
     // against anything.
     if user_version(conn)? < 1 {
@@ -482,6 +502,12 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if !v11_is_complete(conn)? {
         apply_v11(conn)?;
     }
+    if !v13_is_complete(conn)? {
+        apply_v13(conn)?;
+    }
+    if !crate::devicesync::schema::is_complete(conn)? {
+        crate::devicesync::schema::install(conn)?;
+    }
     set_user_version(conn, TARGET_VERSION)?;
     Ok(())
 }
@@ -501,7 +527,9 @@ pub fn migration_pending(conn: &Connection) -> rusqlite::Result<bool> {
         || !v8_is_complete(conn)?
         || !v9_is_complete(conn)?
         || !v10_is_complete(conn)?
-        || !v11_is_complete(conn)?)
+        || !v11_is_complete(conn)?
+        || !v13_is_complete(conn)?
+        || !crate::devicesync::schema::is_complete(conn)?)
 }
 
 #[cfg(test)]
@@ -582,6 +610,7 @@ mod tests {
     fn v8_adds_a_removed_flag_that_starts_off() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN removed;
              INSERT INTO accounts (id,name,type,created_at) VALUES (92,'Card','credit','2026-10-01');
@@ -602,6 +631,7 @@ mod tests {
     fn v7_adds_notes_and_drops_pending_rows_dated_1970() {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN note;
              INSERT INTO accounts (id,name,type,created_at) VALUES (91,'Card','credit','2026-10-01');
@@ -623,6 +653,7 @@ mod tests {
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
         crate::budget::seed::test_categories(&conn);
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         // Undo v6 to stand in for a v5 database with rows from an older build.
         conn.execute_batch(
             "ALTER TABLE bank_transactions DROP COLUMN reviewed;
@@ -868,6 +899,7 @@ mod tests {
         // the schema. The completeness check must catch this one too.
         let conn = v1_database();
         apply_migrations(&conn).unwrap();
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
         conn.execute_batch("ALTER TABLE accounts DROP COLUMN hidden;").unwrap();
         conn.execute_batch("PRAGMA user_version = 4;").unwrap();
 
@@ -889,6 +921,66 @@ mod tests {
         apply_migrations(&conn).unwrap();
 
         assert!(table_exists(&conn, "index_quotes").unwrap(), "the dropped table must be restored");
+    }
+
+    #[test]
+    fn a_real_v8_database_upgrades_to_v9_with_keys() {
+        let conn = db_at_v9_with_a_simplefin_row();
+        crate::devicesync::schema::drop_triggers(&conn).unwrap();
+        conn.execute_batch(
+            "DROP INDEX accounts_sync_key; DROP INDEX categories_sync_key;
+             DROP INDEX bank_transactions_sync_key; DROP INDEX transactions_sync_key;
+             DROP VIEW sync_on;
+             DROP TABLE sync_meta; DROP TABLE sync_outbox; DROP TABLE sync_clock;
+             DROP TABLE sync_files_applied; DROP TABLE sync_pending;
+             ALTER TABLE accounts DROP COLUMN sync_key;
+             ALTER TABLE categories DROP COLUMN sync_key;
+             ALTER TABLE bank_transactions DROP COLUMN sync_key;
+             ALTER TABLE transactions DROP COLUMN sync_key;
+             PRAGMA user_version = 8;",
+        )
+        .unwrap();
+        assert!(!crate::devicesync::schema::is_complete(&conn).unwrap());
+        assert!(migration_pending(&conn).unwrap());
+
+        apply_migrations(&conn).unwrap();
+
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, TARGET_VERSION);
+        assert!(crate::devicesync::schema::is_complete(&conn).unwrap());
+        let key: String = conn
+            .query_row("SELECT sync_key FROM bank_transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(key, "sf:ACT-1|TRN-1");
+        assert!(!migration_pending(&conn).unwrap());
+    }
+
+    #[test]
+    fn reopening_restores_a_changed_trigger_body() {
+        let conn = db_at_v9_with_a_simplefin_row();
+        conn.execute_batch(
+            "DROP TRIGGER accounts_sync_insert;
+             CREATE TRIGGER accounts_sync_insert AFTER INSERT ON accounts BEGIN SELECT 1; END;",
+        )
+        .unwrap();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch("INSERT INTO accounts (name,type,currency,created_at) VALUES ('Jar','cash','USD','2026-01-01');")
+            .unwrap();
+        let key: String = conn.query_row("SELECT sync_key FROM accounts WHERE name='Jar'", [], |r| r.get(0)).unwrap();
+        assert!(key.starts_with("acct:"), "{key}");
+    }
+
+    fn db_at_v9_with_a_simplefin_row() -> Connection {
+        let conn = v1_database();
+        apply_migrations(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at,source,external_id)
+               VALUES ('Card','credit','USD','2026-01-01','simplefin','ACT-1');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description)
+               VALUES ((SELECT id FROM accounts WHERE external_id='ACT-1'),'TRN-1','2026-10-01',-5,'Coffee');",
+        )
+        .unwrap();
+        conn
     }
 
     #[test]

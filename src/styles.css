@@ -34,6 +34,7 @@
   --accent: #0f6b4f;
   --accent-ink: #fffdf9;
   --accent-soft: #dceee6;
+  --accent-text: #0f6b4f;
   --pos: #15803d;
   --pos-soft: #dcf3e4;
   --neg: #b3261e;
@@ -78,11 +79,15 @@
   --line: #2b2825;
   --line-2: #3a3631;
   --line-soft: #211f1c;
-  --accent: #34d399;
-  --accent-ink: #131211;
-  --accent-soft: rgba(52, 211, 153, .15);
-  --pos: #6ee7a5;
-  --pos-soft: rgba(110, 231, 165, .15);
+  /* "Pine": close to the light theme's deep green, so buttons read as solid
+     green with light text rather than mint. Text-only uses (links, active
+     tabs) still clear the dark surface. */
+  --accent: #1f7a58;
+  --accent-ink: #f0ece5;
+  --accent-soft: rgba(31, 122, 88, .22);
+  --accent-text: #4fae86;
+  --pos: #5fb889;
+  --pos-soft: rgba(95, 184, 137, .15);
   --neg: #f87171;
   --neg-soft: rgba(248, 113, 113, .15);
   --warn: #fbbf24;
@@ -90,12 +95,12 @@
   --warn-line: rgba(251, 191, 36, .28);
   --shadow: 0 1px 2px rgba(0, 0, 0, .4);
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, .45);
-  --chart-1: #34d399;
-  --chart-2: #fbbf24;
-  --chart-3: #5eead4;
-  --chart-4: #f9a8d4;
-  --chart-5: #a3e635;
-  --chart-6: #94a3b8;
+  --chart-1: #2a8a64;
+  --chart-2: #d9a441;
+  --chart-3: #5b9bb5;
+  --chart-4: #c98aa6;
+  --chart-5: #9aae55;
+  --chart-6: #8c939c;
   --chart-grid: #2b2825;
   --cat-1: #3987e5;
   --cat-2: #d95926;
@@ -125,7 +130,7 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.005em; }
 h1 { font-family: var(--font-display); font-size: 19px; font-weight: 400; letter-spacing: .005em; }
 h2 { font-size: 15px; }
 h3 { font-size: 13px; }
-a { color: var(--accent); }
+a { color: var(--accent-text); }
 p { margin: 0; }
 code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .n, td, th, .stat-value, .hero-value { font-variant-numeric: tabular-nums; letter-spacing: -.012em; }
@@ -150,7 +155,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
   color: var(--mut); background: none; border: 0; cursor: pointer; padding: 0; transition: background .12s, color .12s;
 }
 .rail-btn:hover { background: var(--surface); color: var(--ink-2); }
-.rail-btn.active { background: var(--accent-soft); color: var(--accent); }
+.rail-btn.active { background: var(--accent-soft); color: var(--accent-text); }
 .rail-btn.disabled { opacity: .38; pointer-events: none; }
 .rail-foot { margin-top: auto; display: grid; gap: 6px; justify-items: center; }
 
@@ -172,6 +177,21 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .cmd-status { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--mut); white-space: nowrap; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--pos); flex-shrink: 0; }
 .dot.idle { background: var(--line-2); }
+
+/* Minimise, maximise and close, flush with the window's top-right corner. They
+   sit in whichever header is rightmost: the side panel's when it shows, else
+   the command bar's. */
+.win-controls { display: flex; align-self: stretch; flex-shrink: 0; }
+.cmdbar .win-controls { margin-right: -22px; }
+.insight-tabs .win-controls { margin: 0 -18px 0 auto; }
+.layout.with-insight .cmdbar .win-controls { display: none; }
+@media (max-width: 1180px) { .layout.with-insight .cmdbar .win-controls { display: flex; } }
+.win-btn {
+  width: 42px; display: grid; place-items: center; background: none; border: 0; padding: 0;
+  color: var(--ink-2); cursor: default; transition: background .12s, color .12s;
+}
+.win-btn:hover { background: var(--surface-2); color: var(--ink); }
+.win-btn.close:hover { background: #c42b1c; color: #fff; }
 
 .workspace { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 22px 32px; }
 .page { display: flex; flex-direction: column; gap: 18px; }
@@ -258,7 +278,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
   font-size: 10px; font-weight: 600; letter-spacing: .03em; white-space: nowrap;
 }
 .badge.neutral { background: var(--surface-2); color: var(--ink-2); }
-.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.accent { background: var(--accent-soft); color: var(--accent-text); }
 .badge.pos { background: var(--pos-soft); color: var(--pos); }
 .badge.neg { background: var(--neg-soft); color: var(--neg); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
@@ -362,7 +382,7 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
 .tabs button { background: transparent; color: var(--mut); border-radius: 0; padding: 8px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs button.on { color: var(--accent-text); border-bottom-color: var(--accent); }
 
 .popover {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 200px; background: var(--surface);
@@ -385,7 +405,7 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color:
 .notice.warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-line); }
 .notice.neg { background: var(--neg-soft); color: var(--neg); }
 .notice.pos { background: var(--pos-soft); color: var(--pos); }
-.notice.info { background: var(--accent-soft); color: var(--accent); }
+.notice.info { background: var(--accent-soft); color: var(--accent-text); }
 .update-banner { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .update-banner-text { flex: 1; }
 

@@ -102,16 +102,19 @@ export type NewSplit = Omit<TxnSplit, "id">;
 
 /** What an import from Copilot would do. See `budget/copilot.rs`. */
 export interface CopilotPlan {
-  matches: { txn_id: number; category: string | null; note: string | null }[];
+  /** `name` is Copilot's, shown in place of the bank's. */
+  matches: { txn_id: number; category: string | null; note: string | null; name: string }[];
+  /** Every Copilot row Tally doesn't have yet. */
   additions: { external_id: string; posted: string; amount: number; name: string; category: string | null }[];
-  skipped: { date: string; name: string; amount: number; account: string }[];
-  /** Tally rows Copilot does not have: usually deleted there after being paid back. */
+  /** Tally rows Copilot does not have (usually deleted there after being paid
+   *  back): the import removes them, restorably. */
   not_in_copilot: {
     txn_id: number; date: string; name: string; amount: number; account: string;
     /** Added by an earlier Copilot import, and no longer in Copilot. */
     earlier_export: boolean;
   }[];
-  pending_or_excluded: number;
+  /** Pending in Copilot: left for the bank sync. */
+  pending: number;
   new_categories: { name: string; kind: string }[];
   rules: { pattern: string; category: string }[];
   /** Copilot account → the Tally account it maps to. */
@@ -121,13 +124,10 @@ export interface CopilotPlan {
   cutoff: string;
   /** Tally's old category name → Copilot's, merged or renamed first. */
   merges: [string, string][];
-  /** Categories left holding nothing that the export doesn't use, with no
-   *  rows removed: deleted. */
+  /** Tally's categories the export doesn't use: deleted, whatever they hold. */
   deletions: string[];
-  /** Each category the export doesn't use that only rows Copilot doesn't
-   *  cover keep. It goes when `kept_rows` is 0 and every `removable` row
-   *  (txn ids from `not_in_copilot`) is removed. */
-  category_holds: { name: string; kept_rows: number; removable: number[]; pinned: number }[];
+  /** Rows the import leaves in place that end up with no category. */
+  uncategorised: number;
   /** Matched rows whose category changes to Copilot's. */
   recategorised: number;
   /** Rows in Tally dated after `cutoff`, left as they are. */
@@ -203,6 +203,36 @@ export interface BackupStatus {
   restore_error: string | null;
   extra_folder: string | null;
   backups_folder: string;
+}
+
+/** One device-sync round, as `device_sync_now` reports it. */
+export interface DeviceSyncReport {
+  at: string;
+  pushed: number;
+  applied: number;
+  waiting: number;
+  skipped: number;
+  newer_files: number;
+}
+
+export interface PairedComputer {
+  id: string;
+  name: string;
+  /** Local time, `2026-10-16T09:30:12`. */
+  last_sync: string;
+}
+
+export interface DeviceSyncStatus {
+  enabled: boolean;
+  folder: string | null;
+  this_computer: string;
+  others: PairedComputer[];
+  /** Edits from the other computer waiting for their transaction to arrive here. */
+  waiting: number;
+  /** Edits made here not yet written to the folder. */
+  unsent: number;
+  last: DeviceSyncReport | null;
+  last_error: string | null;
 }
 
 /** A savings goal. It follows one account's value, or an amount kept up to date by hand. */

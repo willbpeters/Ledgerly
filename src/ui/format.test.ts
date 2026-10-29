@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { money, pct, share, fmtDate, timeAgo } from "./format";
+import { money, pct, share, shareCount, fmtDate, timeAgo } from "./format";
 
 describe("format helpers", () => {
+  it("shareCount hides floating-point noise and keeps up to three decimals", () => {
+    expect(shareCount(3877.0960000000005)).toBe("3,877.096");
+    expect(shareCount(3131.648)).toBe("3,131.648");
+    expect(shareCount(12)).toBe("12");
+    expect(shareCount(0.1 + 0.2)).toBe("0.3");
+    expect(shareCount(-5.25)).toBe("-5.25");
+  });
   it("money formats USD with two decimals", () => {
     expect(money(1234.5)).toBe("$1,234.50");
     expect(money(-50)).toBe("-$50.00");

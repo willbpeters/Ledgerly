@@ -7,7 +7,7 @@ import {
 import { AddPositionForm } from "./AddPositionForm";
 import { TransactionForm } from "./TransactionForm";
 import { CsvImport } from "./CsvImportForm";
-import { money, fmtDate } from "../../ui/format";
+import { money, fmtDate, shareCount } from "../../ui/format";
 import { PageHeader, Card, Button, Badge, Tabs, EmptyState } from "../../ui/components";
 import { DataTable, type Column } from "../../ui/DataTable";
 import { askToConfirm } from "../../ui/confirm";
@@ -53,7 +53,7 @@ export function Activity() {
     { key: "date", label: "Date", align: "left", render: (t) => fmtDate(t.date) },
     { key: "type", label: "Type", align: "left", render: (t) => <Badge tone={TXN_TONE[t.type] ?? "neutral"}>{t.type}</Badge> },
     { key: "ticker", label: "Ticker", align: "left", render: (t) => <span className="cell-primary">{secTicker(t.security_id)}</span> },
-    { key: "qty", label: "Qty", render: (t) => t.quantity || "—" },
+    { key: "qty", label: "Qty", render: (t) => (t.quantity ? shareCount(t.quantity) : "—") },
     { key: "price", label: "Price", render: (t) => (t.price ? money(t.price) : "—") },
     { key: "amount", label: "Amount", render: (t) => money(t.amount) },
     { key: "actions", label: "", render: (t) => (

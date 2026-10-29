@@ -8,6 +8,7 @@ mod simplefin;
 mod budget;
 mod market;
 mod backup;
+mod devicesync;
 
 use tauri::Manager;
 
@@ -27,7 +28,17 @@ pub fn run() {
             // is the old version.
             let report = backup::startup::run(&paths, backup::now());
             let conn = db::open(&paths.db()).expect("open db");
+            // After open, so a just-joined copy of the other computer's
+            // database takes this computer's identity before anything is recorded.
+            let sync_settings = devicesync::settings::load(&devicesync::settings::path(&dir));
+            if let Err(e) = devicesync::meta::adopt(&conn, &sync_settings) {
+                eprintln!("device sync: {e}");
+                // A just-joined copy must never record under the other
+                // computer's id. Off until the next launch adopts cleanly.
+                let _ = devicesync::meta::disable(&conn);
+            }
             app.manage(db::Db(std::sync::Mutex::new(conn)));
+            app.manage(devicesync::DeviceSyncState::new(dir.clone()));
             app.manage(backup::BackupState::new(paths, report.attempt, report.restore_error));
             Ok(())
         })
@@ -96,6 +107,11 @@ pub fn run() {
             commands::backup::reveal_path,
             commands::copilot::copilot_preview,
             commands::copilot::copilot_import,
+            commands::devicesync::device_sync_status,
+            commands::devicesync::device_sync_start_first,
+            commands::devicesync::device_sync_join,
+            commands::devicesync::device_sync_now,
+            commands::devicesync::device_sync_stop,
             commands::goals::goals_list,
             commands::goals::goals_create,
             commands::goals::goals_update,

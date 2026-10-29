@@ -10,6 +10,7 @@ import { money, pct, fmtDate } from "../ui/format";
 import { useChartColors } from "../ui/chartColors";
 import { Badge } from "../ui/components";
 import { Icons } from "./icons";
+import { WindowControls } from "./WindowControls";
 
 type Tab = "activity" | "movers" | "accounts";
 
@@ -49,10 +50,11 @@ export function InsightRail() {
 
   return (
     <aside className="insight" aria-label="Side panel">
-      <div className="insight-tabs">
+      <div className="insight-tabs" data-tauri-drag-region>
         <button className={tab === "activity" ? "on" : ""} onClick={() => setTab("activity")}>Activity</button>
         <button className={tab === "movers" ? "on" : ""} onClick={() => setTab("movers")}>Movers</button>
         <button className={tab === "accounts" ? "on" : ""} onClick={() => setTab("accounts")}>Accounts</button>
+        <WindowControls />
       </div>
 
       {attention.length > 0 && (

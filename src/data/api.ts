@@ -6,6 +6,7 @@ import type {
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
+  DeviceSyncReport, DeviceSyncStatus,
   Goal, NewGoal,
 } from "../domain/types";
 
@@ -70,11 +71,9 @@ export const api = {
   copilot: {
     /** A dry run: what importing this Copilot export would do. */
     preview: (path: string) => invoke<CopilotPlan>("copilot_preview", { path }),
-    /** Backs up, then imports in one transaction. */
-    /** With `replaceAll`, every category the export doesn't use goes, apart
-     *  from those named in `keep`. */
-    import: (path: string, removeIds: number[], replaceAll: boolean, keep: string[]) =>
-      invoke<CopilotCounts>("copilot_import", { path, removeIds, replaceAll, keep }),
+    /** Backs up, then imports in one transaction: Tally becomes Copilot's
+     *  copy up to the export's last day, in exactly Copilot's categories. */
+    import: (path: string) => invoke<CopilotCounts>("copilot_import", { path }),
   },
   backup: {
     status: () => invoke<BackupStatus>("backup_status"),
@@ -85,6 +84,16 @@ export const api = {
     restore: (path: string) => invoke<void>("backup_restore", { path }),
     exportCsv: (folder: string) => invoke<string>("export_csv", { folder }),
     reveal: (path: string) => invoke<void>("reveal_path", { path }),
+  },
+  deviceSync: {
+    status: () => invoke<DeviceSyncStatus>("device_sync_status"),
+    startFirst: (folder: string) => invoke<void>("device_sync_start_first", { folder }),
+    /** Restarts the app on success, so the promise only ever settles with an error. */
+    join: (folder: string) => invoke<void>("device_sync_join", { folder }),
+    /** `null` when sync is off. */
+    now: () => invoke<DeviceSyncReport | null>("device_sync_now"),
+    /** A warning when sync is off but the last edits couldn't be sent, else `null`. */
+    stop: () => invoke<string | null>("device_sync_stop"),
   },
   categories: {
     list: () => invoke<Category[]>("categories_list"),

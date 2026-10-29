@@ -1,6 +1,6 @@
 //! Commands for the Backups card in Settings. Anything that writes files runs
 //! off the main thread, so a slow USB drive never freezes the window.
-use crate::backup::{self, export, naming::Kind, restore, settings, snapshot, Attempt, BackupState};
+use crate::backup::{self, export, naming::Kind, settings, snapshot, Attempt, BackupState};
 use crate::db::Db;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -62,7 +62,9 @@ pub async fn backup_restore(app: tauri::AppHandle, path: String) -> Result<(), S
         let state = worker.state::<BackupState>();
         let db = worker.state::<Db>();
         let mut conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        let safety = restore::stage(&conn, &state.paths, &PathBuf::from(path), backup::now())?;
+        // Through devicesync, which turns sync between computers off too: the
+        // backup would otherwise have every change file replayed onto it.
+        let safety = crate::devicesync::pair::stage_restore(&conn, &state.paths, &PathBuf::from(path), backup::now())?;
         state.record(&safety);
         // Let go of finance.sqlite now: the restarted app must be able to
         // replace it, and Windows will not replace a file that is still open.

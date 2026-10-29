@@ -429,7 +429,7 @@ pub fn copilot_snapshot(conn: &Connection) -> rusqlite::Result<copilot::Snapshot
         .query_map([], |r| Ok(copilot::AccountRef { id: r.get(0)?, name: r.get(1)? }))?
         .collect::<rusqlite::Result<_>>()?;
     let txns = conn.prepare(
-        "SELECT id, account_id, posted, amount, external_id, COALESCE(payee, description), pending, removed,
+        "SELECT id, account_id, posted, amount, external_id, COALESCE(name, payee, description), pending, removed,
                 description
          FROM bank_transactions",
     )?
@@ -518,56 +518,35 @@ fn merge_into_name(conn: &Connection, from: &str, to: &str) -> rusqlite::Result<
     }
 }
 
-/// Whether the import keeps a category whatever holds it: the export uses its
-/// name, or it is a system category and the export has rows of that kind.
-/// `keep` names categories the owner chose to keep as well: Copilot ones the
-/// export can't show, because no transaction uses them.
-fn wanted_by_export(export: &[String], keep: &[String]) -> impl Fn(&str) -> bool {
-    let used: std::collections::HashSet<String> = export.iter().chain(keep).map(|n| n.to_lowercase()).collect();
+/// Whether the import keeps a category: the export uses its name, or it is a
+/// system category and the export has rows of that kind.
+fn wanted_by_export(export: &[String]) -> impl Fn(&str) -> bool {
+    let used: std::collections::HashSet<String> = export.iter().map(|n| n.to_lowercase()).collect();
     let kinds: Vec<seed::SystemKind> = export.iter().filter_map(|n| copilot::system_kind(n)).collect();
     move |name: &str| {
         used.contains(&name.to_lowercase()) || copilot::system_kind(name).is_some_and(|k| kinds.contains(&k))
     }
 }
 
-/// Delete every category the export doesn't want that holds nothing: no
-/// transaction that isn't removed, no split piece, no budget. A removed row's
-/// category is emptied with it (ON DELETE SET NULL); the row itself stays.
-/// Rules go with their category (ON DELETE CASCADE). Returns how many went.
-fn tidy_categories(conn: &Connection, export: &[String], keep: &[String]) -> rusqlite::Result<usize> {
-    let wanted = wanted_by_export(export, keep);
-    let empty: Vec<(i64, String)> = conn.prepare(
-        "SELECT id, name FROM categories c
-         WHERE NOT EXISTS (SELECT 1 FROM bank_transactions b WHERE b.category_id = c.id AND b.removed = 0)
-           AND NOT EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.category_id = c.id)
-           AND NOT EXISTS (SELECT 1 FROM budgets b WHERE b.category_id = c.id)",
-    )?
+/// Tally's categories become exactly Copilot's: delete every category the
+/// export doesn't want, whatever holds it. Its rows become uncategorised and
+/// go back to To review; its split pieces become uncategorised (ON DELETE SET
+/// NULL); its rules and budgets go with it. Then every automatic row is
+/// sorted again into what is left, as a bank sync would, which also pairs
+/// transfers into Internal transfer afresh. Returns the names that went.
+fn drop_unwanted_categories(conn: &Connection, export: &[String]) -> rusqlite::Result<Vec<String>> {
+    let wanted = wanted_by_export(export);
+    let all: Vec<(i64, String)> = conn.prepare("SELECT id, name FROM categories ORDER BY sort, id")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut deleted = 0;
-    for (id, name) in empty {
-        if !wanted(&name) {
-            deleted += conn.execute("DELETE FROM categories WHERE id=?1", [id])?;
-        }
-    }
-    Ok(deleted)
-}
-
-/// Replacing all categories: delete every category the export doesn't want,
-/// whatever holds it. Its rows become uncategorised and go back to To review;
-/// its split pieces become uncategorised (ON DELETE SET NULL); its rules and
-/// budgets go with it. Those named in `keep` stay. Returns how many went.
-fn drop_unwanted_categories(conn: &Connection, export: &[String], keep: &[String]) -> rusqlite::Result<usize> {
-    let wanted = wanted_by_export(export, keep);
-    let all: Vec<(i64, String)> = conn.prepare("SELECT id, name FROM categories")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    let mut deleted = 0;
-    for (id, _) in all.into_iter().filter(|(_, n)| !wanted(n)) {
+    let mut names = Vec::new();
+    for (id, name) in all.into_iter().filter(|(_, n)| !wanted(n)) {
         conn.execute("UPDATE bank_transactions SET category_source='auto', reviewed=0 WHERE category_id=?1", [id])?;
-        deleted += conn.execute("DELETE FROM categories WHERE id=?1", [id])?;
+        conn.execute("DELETE FROM categories WHERE id=?1", [id])?;
+        names.push(name);
     }
-    Ok(deleted)
+    recategorise_until(conn, None)?;
+    Ok(names)
 }
 
 /// Remove every category, to start sorting again from nothing. Every row
@@ -583,29 +562,6 @@ pub fn clear_categories(conn: &Connection) -> rusqlite::Result<usize> {
     let deleted = tx.execute("DELETE FROM categories", [])?;
     tx.commit()?;
     Ok(deleted)
-}
-
-/// What the import would leave holding each category it doesn't want: for
-/// `copilot_preview`, run inside the dry run after the re-sort.
-fn category_holds(conn: &Connection, plan: &copilot::Plan) -> rusqlite::Result<Vec<copilot::CategoryHold>> {
-    let wanted = wanted_by_export(&plan.export_categories, &[]);
-    let offered: std::collections::HashSet<i64> = plan.not_in_copilot.iter().map(|n| n.txn_id).collect();
-    let candidates: Vec<(i64, String, usize)> = conn.prepare(
-        "SELECT id, name,
-                (SELECT count(*) FROM bank_transaction_splits s WHERE s.category_id = c.id)
-              + (SELECT count(*) FROM budgets b WHERE b.category_id = c.id)
-         FROM categories c ORDER BY sort, id",
-    )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    let mut holds = Vec::new();
-    let mut rows = conn.prepare("SELECT id FROM bank_transactions WHERE category_id=?1 AND removed=0 ORDER BY id")?;
-    for (id, name, pinned) in candidates.into_iter().filter(|(_, n, _)| !wanted(n)) {
-        let ids: Vec<i64> = rows.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        let (removable, kept): (Vec<i64>, Vec<i64>) = ids.into_iter().partition(|t| offered.contains(t));
-        holds.push(copilot::CategoryHold { name, kept_rows: kept.len(), removable, pinned });
-    }
-    Ok(holds)
 }
 
 /// Put the categories in Copilot's order — the export's, most used first,
@@ -658,36 +614,27 @@ fn history_account(conn: &Connection) -> rusqlite::Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
-/// Write a Copilot plan: all of it or none of it, so that afterwards Tally's
-/// categories are Copilot's. `remove` holds the ids the owner left ticked
-/// among the rows Copilot does not have; an id the plan did not offer is
-/// ignored, so a stale or mistaken id can never remove anything.
+/// Write a Copilot plan: all of it or none of it, so that afterwards Tally
+/// holds what Copilot holds, up to the cutoff, in exactly Copilot's
+/// categories. Every Copilot row is matched or added; every Tally row Copilot
+/// doesn't have (`plan.not_in_copilot`) is removed, restorably.
 ///
 /// Copilot wins for every row it covers, except a split row (Copilot can't
 /// express one). Nothing dated after `plan.cutoff` is changed, apart from a
-/// category merge renaming what it points at, and no transaction is deleted.
+/// category merge renaming what it points at or a deleted category leaving it
+/// uncategorised, and no transaction is deleted.
 ///
-/// With `replace: Some(keep)`, Tally's categories become exactly the export's
-/// plus those named in `keep` (Copilot categories no transaction uses, which
-/// the export can't show): any other goes even while it holds rows
-/// (uncategorised, back to To review), splits or budgets, after-cutoff rows
-/// included. With `None`, a category Copilot doesn't use stays while it still
-/// holds something.
-pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan, remove: &[i64], replace: Option<&[String]>)
-    -> rusqlite::Result<CopilotCounts> {
+/// Any category the export doesn't use goes, even while it holds rows
+/// (uncategorised, back to To review), splits or budgets.
+pub fn apply_copilot_plan(conn: &Connection, plan: &copilot::Plan) -> rusqlite::Result<CopilotCounts> {
     if plan.cutoff.is_empty() {
         return Err(rusqlite::Error::InvalidParameterName(NO_POSTED.into()));
     }
     let tx = conn.unchecked_transaction()?;
     let newest_before: i64 = tx.query_row("SELECT COALESCE(MAX(id),0) FROM categories", [], |r| r.get(0))?;
     apply_merges(&tx, plan)?;
-    let mut counts = write_plan(&tx, plan, remove)?;
-    // After the re-sort, so a category it empties goes in this same import.
-    let keep = replace.unwrap_or(&[]);
-    tidy_categories(&tx, &plan.export_categories, keep)?;
-    if replace.is_some() {
-        drop_unwanted_categories(&tx, &plan.export_categories, keep)?;
-    }
+    let mut counts = write_plan(&tx, plan)?;
+    drop_unwanted_categories(&tx, &plan.export_categories)?;
     order_categories(&tx, &plan.export_categories)?;
     // Every category made here, the system ones included.
     counts.categories = tx.query_row(
@@ -709,22 +656,17 @@ pub fn copilot_preview(conn: &Connection, rows: &[copilot::CopilotRow]) -> Resul
     if plan.cutoff.is_empty() {
         return Err(NO_POSTED.into());
     }
-    // A rename or merge into a category that is deleted anyway is pointless:
-    // drop it, so the old category is simply deleted under its own name.
-    let pointless = dry_run(conn, &mut plan).map_err(|e| e.to_string())?;
-    if !pointless.is_empty() {
-        let mut i = 0;
-        plan.merges.retain(|_| { i += 1; !pointless.contains(&(i - 1)) });
-        dry_run(conn, &mut plan).map_err(|e| e.to_string())?;
-    }
+    dry_run(conn, &mut plan).map_err(|e| e.to_string())?;
     Ok(plan)
 }
 
-/// Run the import with nothing removed, read back `recategorised`,
-/// `category_holds` and `deletions`, and roll it all back. Returns the
-/// indexes of merges whose category ends up deleted.
-fn dry_run(conn: &Connection, plan: &mut copilot::Plan) -> rusqlite::Result<Vec<usize>> {
+/// Run the import, read back `recategorised`, `deletions` and
+/// `uncategorised`, and roll it all back.
+fn dry_run(conn: &Connection, plan: &mut copilot::Plan) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
+    let categorised: Vec<i64> = tx.prepare(
+        "SELECT id FROM bank_transactions WHERE category_id IS NOT NULL AND removed=0",
+    )?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     apply_merges(&tx, plan)?;
     let category_of = |id: i64| -> rusqlite::Result<Option<i64>> {
         tx.query_row("SELECT category_id FROM bank_transactions WHERE id=?1", [id], |r| r.get(0))
@@ -732,22 +674,27 @@ fn dry_run(conn: &Connection, plan: &mut copilot::Plan) -> rusqlite::Result<Vec<
     let before: Vec<(i64, Option<i64>)> = plan.matches.iter()
         .map(|m| Ok((m.txn_id, category_of(m.txn_id)?)))
         .collect::<rusqlite::Result<_>>()?;
-    write_plan(&tx, plan, &[])?;
+    write_plan(&tx, plan)?;
     let mut recategorised = 0;
     for (id, was) in before {
         if category_of(id)? != was { recategorised += 1; }
     }
     plan.recategorised = recategorised;
-    plan.category_holds = category_holds(&tx, plan)?;
-    let gone: Vec<&str> = plan.category_holds.iter()
-        .filter(|h| h.kept_rows == 0 && h.removable.is_empty() && h.pinned == 0).map(|h| h.name.as_str()).collect();
-    plan.deletions = gone.iter().map(|n| n.to_string()).collect();
-    let pointless = plan.merges.iter().enumerate()
-        .filter(|(_, (_, to))| gone.iter().any(|g| g.eq_ignore_ascii_case(to)))
-        .map(|(i, _)| i)
-        .collect();
+    plan.deletions = drop_unwanted_categories(&tx, &plan.export_categories)?;
+    // Rows that had a category, are still in Spending, and have none now.
+    let mut uncategorised = 0;
+    for id in categorised {
+        let lost: bool = tx.query_row(
+            "SELECT category_id IS NULL AND removed=0
+                    AND NOT EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.txn_id = b.id)
+             FROM bank_transactions b WHERE id=?1",
+            [id], |r| r.get(0),
+        )?;
+        if lost { uncategorised += 1; }
+    }
+    plan.uncategorised = uncategorised;
     drop(tx); // rolled back
-    Ok(pointless)
+    Ok(())
 }
 
 /// Tally's old names and spellings give way to Copilot's first, so everything
@@ -762,7 +709,7 @@ fn apply_merges(conn: &Connection, plan: &copilot::Plan) -> rusqlite::Result<()>
 /// The import from new categories to the re-sort, with merges already done.
 /// Counts are of rows actually changed, so importing the same file again
 /// counts nothing.
-fn write_plan(tx: &Connection, plan: &copilot::Plan, remove: &[i64]) -> rusqlite::Result<CopilotCounts> {
+fn write_plan(tx: &Connection, plan: &copilot::Plan) -> rusqlite::Result<CopilotCounts> {
     let mut counts = CopilotCounts::default();
     let cutoff = plan.cutoff.as_str();
 
@@ -773,6 +720,9 @@ fn write_plan(tx: &Connection, plan: &copilot::Plan, remove: &[i64]) -> rusqlite
             params![c.name, c.kind, seed::next_colour(&tx)?, sort],
         )?;
     }
+    // What the owner was paid back for never counts as spending, even in an
+    // Excluded category they made themselves.
+    tx.execute("UPDATE categories SET kind='transfer' WHERE lower(name)=lower(?1)", [copilot::EXCLUDED])?;
 
     let mut history: Option<i64> = None;
     for a in &plan.additions {
@@ -789,17 +739,22 @@ fn write_plan(tx: &Connection, plan: &copilot::Plan, remove: &[i64]) -> rusqlite
         };
         let category = match &a.category { Some(n) => category_named(tx, n)?, None => None };
         // A row Copilot left uncategorised waits in To review, as there. The
-        // owner's own note stays when Copilot has none.
+        // owner's own note stays when Copilot has none. Copilot has it, so a
+        // copy removed in Tally comes back. `name` keeps Copilot's name once a
+        // bank sync takes the row over.
         counts.added += tx.execute(
             "INSERT INTO bank_transactions
-               (account_id,external_id,posted,amount,description,payee,category_id,category_source,reviewed,note)
-             VALUES (?1,?2,?3,?4,?5,?5,?6,'manual',?6 IS NOT NULL,?7)
+               (account_id,external_id,posted,amount,description,payee,name,category_id,category_source,reviewed,note)
+             VALUES (?1,?2,?3,?4,?5,?5,?5,?6,'manual',?6 IS NOT NULL,?7)
              ON CONFLICT(account_id,external_id) DO UPDATE SET
-               category_id=excluded.category_id, note=COALESCE(excluded.note, bank_transactions.note)
+               category_id=excluded.category_id, note=COALESCE(excluded.note, bank_transactions.note),
+               name=excluded.name, removed=0
              WHERE NOT EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.txn_id = bank_transactions.id)
                AND bank_transactions.posted <= ?8
                AND (bank_transactions.category_id IS NOT excluded.category_id
-                    OR bank_transactions.note IS NOT COALESCE(excluded.note, bank_transactions.note))",
+                    OR bank_transactions.note IS NOT COALESCE(excluded.note, bank_transactions.note)
+                    OR bank_transactions.name IS NOT excluded.name
+                    OR bank_transactions.removed <> 0)",
             params![account_id, a.external_id, a.posted, a.amount, a.name, category, a.note, cutoff],
         )?;
     }
@@ -820,6 +775,11 @@ fn write_plan(tx: &Connection, plan: &copilot::Plan, remove: &[i64]) -> rusqlite
             "UPDATE bank_transactions SET note=?1 WHERE id=?2 AND posted <= ?3 AND note IS NULL AND ?1 IS NOT NULL",
             params![m.note, m.txn_id, cutoff],
         )?;
+        // Copilot's name shows in place of the bank's, as it did in Copilot.
+        tx.execute(
+            "UPDATE bank_transactions SET name=?1 WHERE id=?2 AND posted <= ?3 AND name IS NOT ?1",
+            params![m.name, m.txn_id, cutoff],
+        )?;
     }
 
     // Rules follow Copilot too, replacing a payee's existing rule.
@@ -835,9 +795,9 @@ fn write_plan(tx: &Connection, plan: &copilot::Plan, remove: &[i64]) -> rusqlite
         }
     }
 
-    let offered: std::collections::HashSet<i64> = plan.not_in_copilot.iter().map(|n| n.txn_id).collect();
-    let chosen: Vec<i64> = remove.iter().copied().filter(|id| offered.contains(id)).collect();
-    counts.removed = set_removed(tx, &chosen, true)?;
+    // Tally matches Copilot: what Copilot doesn't have is removed, restorably.
+    let gone: Vec<i64> = plan.not_in_copilot.iter().map(|n| n.txn_id).collect();
+    counts.removed = set_removed(tx, &gone, true)?;
 
     // The learned rules apply at once to every automatic row up to the cutoff.
     recategorise_until(tx, Some(cutoff))?;
@@ -922,7 +882,7 @@ mod tests {
         let plan = copilot_plan(&conn, &csv);
         assert!(plan.new_categories.is_empty(), "transfer and income are never offered as new spending");
 
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         let kinds: Vec<(String, String)> = conn.prepare("SELECT name, kind FROM categories ORDER BY name").unwrap()
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
@@ -1506,7 +1466,7 @@ mod tests {
         let plan = copilot_plan(&conn, &csv);
         assert_eq!(plan.recategorised, 1);
 
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         assert_eq!(row(&conn, "sf1"), (None, "manual".into(), false));
         assert_eq!(copilot_plan(&conn, &csv).recategorised, 0, "already uncategorised: no change");
@@ -1533,14 +1493,14 @@ mod tests {
         ]);
         let plan = copilot_plan(&conn, &csv);
         assert!(plan.deletions.contains(&"Travel".to_string()), "the preview sees the re-sort empty it");
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
         assert_eq!(seed::category_id(&conn, "Travel").unwrap(), None);
         assert_eq!(row(&conn, "golf").0.as_deref(), Some("Golf"));
         let before = dump(&conn);
 
         let again = copilot_plan(&conn, &csv);
         assert!(again.merges.is_empty() && again.deletions.is_empty() && again.new_categories.is_empty());
-        let counts = apply_copilot_plan(&conn, &again, &[], None).unwrap();
+        let counts = apply_copilot_plan(&conn, &again).unwrap();
 
         assert_eq!(counts, CopilotCounts::default(), "nothing changed, so nothing counted");
         assert_eq!(dump(&conn), before);
@@ -1558,7 +1518,7 @@ mod tests {
         // The export ends 07-03: one leg on the cutoff, one after it.
         let csv = export(&[copilot_row("2026-07-03", "Elsewhere", "1", "Other", "regular", "")]);
 
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
 
         assert_eq!(row(&conn, "out").0.as_deref(), Some("Internal transfer"), "re-sorted, then paired again");
         // Only the rename of Tally's old Transfer reaches the later leg.
@@ -1572,12 +1532,12 @@ mod tests {
     fn a_re_import_keeps_the_owners_note_when_copilot_has_none() {
         let conn = seeded();
         let csv = export(&[copilot_row("2026-01-05", "Old Diner", "8", "Eating Out", "regular", "")]);
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
         conn.execute("UPDATE bank_transactions SET note='with Sam'", []).unwrap();
         // Copilot has since moved it, with still no note of its own.
         let moved = export(&[copilot_row("2026-01-05", "Old Diner", "8", "Golf", "regular", "")]);
 
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &moved), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &moved)).unwrap();
 
         let (note, category): (Option<String>, String) = conn.query_row(
             "SELECT b.note, c.name FROM bank_transactions b JOIN categories c ON c.id=b.category_id", [],
@@ -1594,7 +1554,7 @@ mod tests {
         let pending = copilot_row("2026-01-05", "P", "8", "Other", "regular", "").replace("\"posted\"", "\"pending\"");
         let all_pending = copilot::parse_csv(&export(&[pending])).unwrap();
         assert_eq!(copilot_preview(&conn, &all_pending).unwrap_err(), NO_POSTED);
-        assert!(apply_copilot_plan(&conn, &copilot::Plan::default(), &[], None).is_err());
+        assert!(apply_copilot_plan(&conn, &copilot::Plan::default()).is_err());
     }
 
     #[test]
@@ -1606,7 +1566,7 @@ mod tests {
         let plan = copilot_plan(&conn, &csv);
         assert!(plan.merges.contains(&("golf".to_string(), "Golf".to_string())));
 
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         assert_eq!(seed::category_id(&conn, "Golf").unwrap(), Some(golf));
         assert_eq!(seed::category_id(&conn, "golf").unwrap(), None);
@@ -1619,7 +1579,7 @@ mod tests {
             copilot_row("2026-01-05", "Paid back", "40", "Eating Out", "regular", ""),
             copilot_row("2026-01-09", "Kept", "8", "Eating Out", "regular", ""),
         ]);
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &first), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &first)).unwrap();
         let second = export(&[
             copilot_row("2026-01-01", "Older", "3", "Eating Out", "regular", ""),
             copilot_row("2026-01-09", "Kept", "8", "Eating Out", "regular", ""),
@@ -1629,7 +1589,7 @@ mod tests {
         assert!(plan.not_in_copilot[0].earlier_export);
         let gone = plan.not_in_copilot[0].txn_id;
 
-        apply_copilot_plan(&conn, &plan, &[gone], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         let (removed, total): (i64, i64) = conn.query_row(
             "SELECT (SELECT removed FROM bank_transactions WHERE id=?1), (SELECT count(*) FROM bank_transactions)",
@@ -1639,7 +1599,7 @@ mod tests {
     }
 
     #[test]
-    fn a_category_held_only_by_removed_rows_goes_and_the_preview_says_which() {
+    fn a_category_copilot_doesnt_use_goes_and_the_preview_says_which() {
         let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         let other = account(&conn, "Brokerage", "cash");
@@ -1657,18 +1617,17 @@ mod tests {
             copilot_row("2026-07-20", "Later", "3", "Eating Out", "regular", "9849"),
         ]);
         let plan = copilot_plan(&conn, &csv);
-        let poker = id_of(&conn, "poker");
-        let hold = |name: &str| plan.category_holds.iter().find(|h| h.name == name).cloned();
-        assert_eq!(hold("Poker"), Some(copilot::CategoryHold { name: "Poker".into(), kept_rows: 0, removable: vec![poker], pinned: 0 }));
-        assert_eq!(hold("Subscriptions").map(|h| h.kept_rows), Some(1));
-        assert!(!plan.deletions.contains(&"Poker".to_string()), "not unless its row is removed");
+        assert!(plan.deletions.contains(&"Poker".to_string()));
+        assert!(plan.deletions.contains(&"Subscriptions".to_string()));
+        assert_eq!(plan.uncategorised, 1, "the row in an account Copilot doesn't have");
 
-        apply_copilot_plan(&conn, &plan, &[poker], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         assert_eq!(seed::category_id(&conn, "Poker").unwrap(), None);
-        assert!(seed::category_id(&conn, "Subscriptions").unwrap().is_some());
+        assert_eq!(seed::category_id(&conn, "Subscriptions").unwrap(), None);
         assert_eq!(row(&conn, "poker").0, None, "the row stays, removed and uncategorised");
-        assert!(removed(&conn, "poker"));
+        assert!(removed(&conn, "poker"), "Copilot doesn't have it, so it is removed without asking");
+        assert_eq!(row(&conn, "sub"), (None, "auto".into(), false), "back to To review");
     }
 
     #[test]
@@ -1689,12 +1648,10 @@ mod tests {
         conn.execute("INSERT INTO budgets (category_id, month, limit_amount) VALUES (?1, NULL, 100)", [travel]).unwrap();
         let csv = export(&[copilot_row("2026-07-01", "Zqx Diner", "12.50", "Eating Out", "regular", "9849")]);
         let plan = copilot_plan(&conn, &csv);
-        let hold = |name: &str| plan.category_holds.iter().find(|h| h.name == name).cloned().unwrap();
-        assert_eq!(hold("Travel").pinned, 1, "the preview counts its budget");
-        assert!(!plan.deletions.contains(&"Travel".to_string()), "a budget keeps it unless replacing all");
+        assert!(plan.deletions.contains(&"Travel".to_string()), "a budget doesn't keep it");
         let rows_before: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
 
-        apply_copilot_plan(&conn, &plan, &[], Some(&[])).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         let names: Vec<String> = conn.prepare("SELECT name FROM categories ORDER BY sort").unwrap()
             .query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
@@ -1706,35 +1663,6 @@ mod tests {
         assert_eq!(budgets, 0);
         let rows_after: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(rows_after, rows_before, "no transaction deleted");
-    }
-
-    #[test]
-    fn replacing_all_keeps_the_categories_the_owner_chose() {
-        let conn = seeded();
-        let card = account(&conn, "Card (9849)", "credit");
-        upsert_transactions(&conn, card, &[
-            payee_txn("sf1", "2026-07-01", -12.5, "Zqx Diner"),
-            payee_txn("owed", "2026-07-03", -40.0, "Zqx Concert"),
-            payee_txn("gone", "2026-07-04", -9.0, "Zqx Stream"),
-        ], &[]).unwrap();
-        conn.execute("INSERT INTO categories (name,kind) VALUES ('To be paid back','spending')", []).unwrap();
-        let owed = seed::category_id(&conn, "To be paid back").unwrap();
-        set_category(&conn, id_of(&conn, "owed"), owed, false).unwrap();
-        set_category(&conn, id_of(&conn, "gone"), seed::category_id(&conn, "Subscriptions").unwrap(), false).unwrap();
-        // An empty one the owner keeps too, as Copilot has it with nothing in it.
-        conn.execute("INSERT INTO categories (name,kind) VALUES ('Car','spending')", []).unwrap();
-        let csv = export(&[copilot_row("2026-07-01", "Zqx Diner", "12.50", "Eating Out", "regular", "9849")]);
-        let plan = copilot_plan(&conn, &csv);
-        // The owner's own spelling of the names doesn't matter.
-        let keep = ["to be paid back".to_string(), "Car".to_string()];
-
-        apply_copilot_plan(&conn, &plan, &[], Some(&keep)).unwrap();
-
-        let names: Vec<String> = conn.prepare("SELECT name FROM categories ORDER BY sort").unwrap()
-            .query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
-        assert_eq!(names, vec!["Eating Out", "To be paid back", "Car"]);
-        assert_eq!(row(&conn, "owed").0.as_deref(), Some("To be paid back"), "its row keeps it");
-        assert_eq!(row(&conn, "gone").0, None);
     }
 
     #[test]
@@ -1783,7 +1711,7 @@ mod tests {
             \"2026-01-12\",\"Haggin Oaks\",\"25\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
         let plan = copilot_plan(&conn, &csv);
 
-        let counts = apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        let counts = apply_copilot_plan(&conn, &plan).unwrap();
 
         assert_eq!((counts.matched, counts.added), (1, 2));
         // Copilot's name: Tally's old Dining is renamed to it.
@@ -1798,7 +1726,7 @@ mod tests {
 
         // Running it again changes nothing.
         let again = copilot_plan(&conn, &csv);
-        apply_copilot_plan(&conn, &again, &[], None).unwrap();
+        apply_copilot_plan(&conn, &again).unwrap();
         let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 3);
     }
@@ -1808,7 +1736,7 @@ mod tests {
         let conn = seeded();
         let csv = format!("{COPILOT_HEADER}\n\
             \"2026-01-05\",\"Haggin Oaks\",\"-20\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
         let id: i64 = conn.query_row("SELECT id FROM bank_transactions", [], |r| r.get(0)).unwrap();
         let amount: f64 = conn.query_row("SELECT amount FROM bank_transactions WHERE id=?1", [id], |r| r.get(0)).unwrap();
         let half = amount / 2.0;
@@ -1817,7 +1745,7 @@ mod tests {
             NewSplit { category_id: None, amount: half, note: None },
         ]).unwrap();
 
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
 
         let category: Option<i64> = conn.query_row("SELECT category_id FROM bank_transactions WHERE id=?1", [id], |r| r.get(0)).unwrap();
         assert_eq!(category, None, "the pieces own the category now");
@@ -1836,7 +1764,7 @@ mod tests {
         let plan = copilot_plan(&conn, &csv);
         assert_eq!(plan.recategorised, 1);
 
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         assert_eq!(row(&conn, "sf1"), (Some("Eating Out".into()), "manual".into(), true));
         let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
@@ -1852,10 +1780,13 @@ mod tests {
         set_splits(&conn, id, &[piece(&conn, Some("Groceries"), -10.0), piece(&conn, None, -2.5)]).unwrap();
         let csv = format!("{COPILOT_HEADER}\n\"2026-07-03\",\"Zqx Diner\",\"12.50\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
 
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
 
         assert_eq!(row(&conn, "sf1").0, None, "the pieces own the category");
-        assert_eq!(splits_of(&conn, "sf1"), vec![(Some("Groceries".into()), -10.0), (None, -2.5)]);
+        // Copilot has no Groceries, so the piece keeps its amount but not that category.
+        assert_eq!(splits_of(&conn, "sf1"), vec![(None, -10.0), (None, -2.5)]);
+        assert!(conn.query_row("SELECT category_source='manual' FROM bank_transactions", [], |r| r.get::<_, bool>(0)).unwrap(),
+            "still split, so the re-sort leaves it alone");
     }
 
     fn snapshot_of(conn: &Connection, ext: &str) -> (i64, Option<String>, f64, String, bool, bool) {
@@ -1867,7 +1798,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_after_the_exports_newest_day_is_touched() {
+    fn after_the_exports_newest_day_only_categories_change() {
         let conn = seeded();
         conn.execute("INSERT INTO categories (name,kind,sort) VALUES ('Shops','spending',500)", []).unwrap();
         let card = account(&conn, "Card (9849)", "credit");
@@ -1901,7 +1832,7 @@ mod tests {
         assert_eq!(plan.cutoff, "2026-07-03");
         assert_eq!(plan.untouched_after_cutoff, 5);
 
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
         let after: Vec<_> = ["late-target", "late-meal", "late-trip", "late-golf", "late-gone"].iter().map(|e| snapshot_of(&conn, e)).collect();
         let renamed = |(id, cat, amount, source, reviewed, removed): &(i64, Option<String>, f64, String, bool, bool), name: Option<&str>| {
@@ -1909,7 +1840,12 @@ mod tests {
         };
         assert_eq!(after[0], renamed(&before[0], Some("Shops")), "only the merge reaches it");
         assert_eq!(after[1], renamed(&before[1], Some("Eating Out")), "only the rename reaches it");
-        assert_eq!(after[2..], before[2..]);
+        // Copilot has no Travel or Other: the rows lose them, and the re-sort a
+        // sync would do puts the golf round in Copilot's Golf by the learned rule.
+        let blank = |s: &(i64, Option<String>, f64, String, bool, bool), cat: Option<&str>| (s.0, cat.map(str::to_string), s.2, s.3.clone(), s.4, s.5);
+        assert_eq!(after[2], blank(&before[2], None));
+        assert_eq!(after[3], blank(&before[3], Some("Golf")));
+        assert_eq!(after[4], before[4], "removed stays removed");
         let total: i64 = conn.query_row("SELECT count(*) FROM bank_transactions", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 9, "6 of Tally's plus 3 added, none deleted");
     }
@@ -1976,7 +1912,7 @@ mod tests {
     }
 
     #[test]
-    fn an_import_leaves_exactly_copilots_categories_plus_ones_still_in_use() {
+    fn an_import_leaves_exactly_copilots_categories() {
         let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[
@@ -1996,15 +1932,18 @@ mod tests {
             \"2026-01-08\",\"Odd\",\"3\",\"posted\",\"Groceries\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
         let plan = copilot_plan(&conn, &csv);
 
-        apply_copilot_plan(&conn, &plan, &[], None).unwrap();
+        apply_copilot_plan(&conn, &plan).unwrap();
 
-        // Copilot's, most used first (Golf twice), then the system category,
-        // then Travel (holds a row after the cutoff) and Health (a budget).
-        assert_eq!(category_names(&conn), vec!["Golf", "Eating Out", "Groceries", "Internal transfer", "Health", "Travel"]);
+        // Copilot's, most used first (Golf twice), then the system category.
+        // Travel goes though a row after the cutoff holds it, Health though a
+        // budget does.
+        assert_eq!(category_names(&conn), vec!["Golf", "Eating Out", "Groceries", "Internal transfer"]);
         let mut deleted = plan.deletions.clone();
         deleted.sort();
-        assert_eq!(deleted, vec!["Entertainment", "Fees", "Fuel", "Income", "Other", "Rent & Mortgage", "Shopping", "Subscriptions", "Transport", "Utilities"],
+        assert_eq!(deleted, vec!["Entertainment", "Fees", "Fuel", "Health", "Income", "Other", "Rent & Mortgage", "Shopping", "Subscriptions", "Transport", "Travel", "Utilities"],
             "the preview names exactly what goes");
+        assert_eq!(plan.uncategorised, 1, "the Travel row after the cutoff");
+        assert_eq!(row(&conn, "late"), (None, "auto".into(), false));
         let rules: i64 = conn.query_row("SELECT count(*) FROM category_rules WHERE pattern='zqx fee'", [], |r| r.get(0)).unwrap();
         assert_eq!(rules, 0, "a deleted category's rules go with it");
     }
@@ -2022,7 +1961,7 @@ mod tests {
         rows.push_str("\"2026-01-20\",\"Pay\",\"-900\",\"posted\",\"\",\"\",\"false\",\"\",\"income\",\"\",\"\",\"\",\"\"\n");
         let csv = format!("{COPILOT_HEADER}\n{rows}");
 
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
 
         let got: Vec<(String, String, i64)> = conn.prepare("SELECT name, colour, sort FROM categories ORDER BY sort").unwrap()
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(|r| r.unwrap()).collect();
@@ -2042,12 +1981,12 @@ mod tests {
         let csv = format!("{COPILOT_HEADER}\n\
             \"2026-01-05\",\"To savings\",\"-200\",\"posted\",\"\",\"\",\"false\",\"\",\"internal transfer\",\"\",\"\",\"\",\"\"\n\
             \"2026-01-06\",\"Range\",\"20\",\"posted\",\"Golf\",\"\",\"false\",\"\",\"regular\",\"\",\"\",\"\",\"\"\n");
-        let counts = apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        let counts = apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
         assert_eq!(counts.categories, 2);
     }
 
     #[test]
-    fn the_import_removes_only_rows_it_offered_and_the_owner_ticked() {
+    fn the_import_removes_every_row_copilot_doesnt_have_and_no_other() {
         let conn = seeded();
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[
@@ -2059,17 +1998,89 @@ mod tests {
             \"2026-07-01\",\"Zqx Diner\",\"12.50\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n\
             \"2026-07-20\",\"Later\",\"3\",\"posted\",\"Other\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
         let plan = copilot_plan(&conn, &csv);
-        let offered: Vec<i64> = plan.not_in_copilot.iter().map(|n| n.txn_id).collect();
-        assert_eq!(offered.len(), 2);
-        let paidback: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='paidback'", [], |r| r.get(0)).unwrap();
-        let kept: i64 = conn.query_row("SELECT id FROM bank_transactions WHERE external_id='kept'", [], |r| r.get(0)).unwrap();
+        assert_eq!(plan.not_in_copilot.len(), 2);
 
-        // The owner untick "other"; "kept" was never offered and must be ignored.
-        apply_copilot_plan(&conn, &plan, &[paidback, kept], None).unwrap();
+        let counts = apply_copilot_plan(&conn, &plan).unwrap();
 
+        assert_eq!(counts.removed, 2);
         assert!(removed(&conn, "paidback"));
-        assert!(!removed(&conn, "other"));
-        assert!(!removed(&conn, "kept"));
+        assert!(removed(&conn, "other"));
+        assert!(!removed(&conn, "kept"), "Copilot has it");
+    }
+
+    #[test]
+    fn copilots_name_shows_and_a_sync_never_overwrites_it() {
+        let conn = seeded();
+        let card = account(&conn, "Card (9849)", "credit");
+        upsert_transactions(&conn, card, &[payee_txn("sf1", "2026-07-01", -12.5, "SQ *ZQX DINER 123")], &[]).unwrap();
+        let csv = export(&[copilot_row("2026-07-01", "Zqx Diner", "12.50", "Eating Out", "regular", "9849")]);
+
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+        upsert_transactions(&conn, card, &[payee_txn("sf1", "2026-07-01", -12.5, "SQ *ZQX DINER 999")], &[]).unwrap();
+
+        let (name, payee): (String, String) = conn.query_row(
+            "SELECT COALESCE(name, payee), payee FROM bank_transactions WHERE external_id='sf1'", [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(name, "Zqx Diner");
+        assert_eq!(payee, "SQ *ZQX DINER 999", "the bank's own text is still kept");
+    }
+
+    #[test]
+    fn a_row_the_bank_has_differently_is_replaced_by_copilots() {
+        // Copilot holds the purchase at $12.50 with the tip; the bank's record
+        // says $10. Copilot's goes in, the bank's is removed.
+        let conn = seeded();
+        let card = account(&conn, "Card (9849)", "credit");
+        upsert_transactions(&conn, card, &[
+            payee_txn("first", "2026-07-01", -5.0, "Zqx First"),
+            payee_txn("tipless", "2026-07-05", -10.0, "Zqx Bistro"),
+        ], &[]).unwrap();
+        let csv = export(&[
+            copilot_row("2026-07-01", "Zqx First", "5", "Eating Out", "regular", "9849"),
+            copilot_row("2026-07-05", "Zqx Bistro", "12.50", "Eating Out", "regular", "9849"),
+            copilot_row("2026-07-20", "Later", "1", "Eating Out", "regular", "9849"),
+        ]);
+
+        let counts = apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+
+        assert_eq!((counts.matched, counts.added, counts.removed), (1, 2, 1));
+        assert!(removed(&conn, "tipless"));
+        let live: Vec<(String, f64)> = conn.prepare(
+            "SELECT COALESCE(name, payee), amount FROM bank_transactions WHERE removed=0 ORDER BY posted",
+        ).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(live, vec![("Zqx First".into(), -5.0), ("Zqx Bistro".into(), -12.5), ("Later".into(), -1.0)]);
+    }
+
+    #[test]
+    fn an_excluded_row_shows_in_excluded_and_never_counts_as_spending() {
+        let conn = seeded();
+        // The owner's own Excluded, made as spending: the import puts it right.
+        conn.execute("INSERT INTO categories (name,kind) VALUES ('Excluded','spending')", []).unwrap();
+        let excluded = copilot_row("2026-01-05", "Zqx Concert", "80", "Concerts", "regular", "")
+            .replace("\"false\"", "\"true\"");
+        let csv = export(&[excluded, copilot_row("2026-01-06", "Range", "20", "Golf", "regular", "")]);
+
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+
+        let (category, kind, gone): (String, String, i64) = conn.query_row(
+            "SELECT c.name, c.kind, b.removed FROM bank_transactions b JOIN categories c ON c.id=b.category_id
+             WHERE b.description='Zqx Concert'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!((category.as_str(), kind.as_str(), gone), ("Excluded", "transfer", 0));
+        assert!(category_names(&conn).contains(&"Concerts".to_string()), "its own category is Copilot's too");
+    }
+
+    #[test]
+    fn a_re_import_brings_back_a_copilot_row_removed_in_tally() {
+        let conn = seeded();
+        let csv = export(&[copilot_row("2026-01-05", "Old Diner", "8", "Eating Out", "regular", "")]);
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+        conn.execute("UPDATE bank_transactions SET removed=1", []).unwrap();
+
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+
+        let gone: i64 = conn.query_row("SELECT removed FROM bank_transactions", [], |r| r.get(0)).unwrap();
+        assert_eq!(gone, 0, "Copilot has it, so it shows");
     }
 
     #[test]
@@ -2078,7 +2089,7 @@ mod tests {
         let card = account(&conn, "Card (9849)", "credit");
         upsert_transactions(&conn, card, &[payee_txn("sf-new", "2026-07-02", -1.0, "Zqx")], &[]).unwrap();
         let csv = format!("{COPILOT_HEADER}\n\"2026-01-05\",\"Old Diner\",\"8\",\"posted\",\"Eating Out\",\"\",\"false\",\"\",\"regular\",\"Adv\",\"9849\",\"\",\"\"\n");
-        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv), &[], None).unwrap();
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
 
         // "Import 2 years" later brings SimpleFIN's own copy of that purchase.
         upsert_transactions(&conn, card, &[payee_txn("sf-old", "2026-01-06", -8.0, "Old Diner Inc")], &[]).unwrap();

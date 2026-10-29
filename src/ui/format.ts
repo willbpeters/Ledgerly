@@ -2,6 +2,12 @@ export function money(n: number): string {
   const abs = Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${n < 0 ? "-" : ""}$${abs}`;
 }
+/** A number of shares. Sums of fractional fund shares carry floating-point
+ *  noise (3877.0960000000005), and funds report shares to three decimals, so
+ *  round there and drop trailing zeros. */
+export function shareCount(n: number): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+}
 export function pct(n: number): string {
   // Signed by what is shown, not by the raw value: -0.004 rounds to 0.0, and a
   // "-0.0%" reads as a loss that is not there.

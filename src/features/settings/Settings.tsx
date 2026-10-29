@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { useRefreshPrices } from "../../data/useRefresh";
-import { askBeforeRemove, setAskBeforeRemove } from "../../data/undo";
-import { Card, Button } from "../../ui/components";
+import { Card } from "../../ui/components";
 import { ThemeToggle } from "../../ui/ThemeToggle";
 import { SimplefinCard } from "./SimplefinCard";
-import { CategoriesCard } from "./CategoriesCard";
 import { BackupCard } from "./BackupCard";
+import { DeviceSyncCard } from "./DeviceSyncCard";
 import { CopilotImportCard } from "./CopilotImportCard";
 
+// Categories and rules live in Spending, and refreshing prices in Markets.
 export function Settings() {
-  const refresh = useRefreshPrices();
-  const [askRemove, setAskRemove] = useState(askBeforeRemove);
   // Read from the running app, so it is right after every release.
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
@@ -23,32 +20,10 @@ export function Settings() {
         <ThemeToggle />
       </Card>
 
-      <Card title="Prices" subtitle="Fetched from a free public source; only your tickers leave this machine.">
-        <div className="row center">
-          <Button onClick={() => refresh.mutate()} loading={refresh.isPending}>Refresh prices now</Button>
-          {refresh.isSuccess && <span className="pos">Updated {refresh.data} securities.</span>}
-          {refresh.isError && <span className="neg">Couldn't refresh prices. Check your connection and try again.</span>}
-        </div>
-        <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-          Prices also refresh automatically: every few seconds during US market hours, every 15 minutes otherwise.
-        </p>
-      </Card>
-
       <SimplefinCard />
-
       <CopilotImportCard />
-
-      <Card title="Spending" subtitle="Removing a transaction (when you were paid back) always offers Undo.">
-        <label className="row center" style={{ gap: 8 }}>
-          <input type="checkbox" checked={askRemove}
-            onChange={(e) => { setAskBeforeRemove(e.target.checked); setAskRemove(e.target.checked); }} />
-          Ask before removing a transaction
-        </label>
-      </Card>
-
-      <CategoriesCard />
-
       <BackupCard />
+      <DeviceSyncCard />
 
       <Card title="About">
         <div className="grid" style={{ gap: 4, fontSize: 13 }}>
