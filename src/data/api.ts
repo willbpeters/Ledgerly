@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, Security, Transaction, Snapshot,
   SyncedHolding, SyncReport, SimplefinStatus, SimplefinSample,
-  Category, BankTransaction, CategoryRule, Budget, NewSplit,
+  Category, CategoryKind, BankTransaction, CategoryRule, Budget, NewSplit,
   NewAccount, NewTransaction,
   NewsItem, EarningsEvent, SecurityProfile, IndexQuote, MarketRefreshReport,
   BackupEntry, BackupAttempt, BackupStatus, CopilotPlan, CopilotCounts,
@@ -102,6 +102,8 @@ export const api = {
     update: (id: number, name: string, colour: string) =>
       invoke<void>("categories_update", { id, name, colour }),
     delete: (id: number) => invoke<void>("categories_delete", { id }),
+    /** What it counts as: spending, income, or neither ("transfer"). */
+    setKind: (id: number, kind: CategoryKind) => invoke<void>("categories_set_kind", { id, kind }),
     /** Backs up, then removes every category; returns how many went. */
     clear: () => invoke<number>("categories_clear"),
   },
@@ -114,6 +116,8 @@ export const api = {
     /** Split across categories; no pieces unsplits. Refused unless they add up. */
     setSplits: (id: number, splits: NewSplit[]) =>
       invoke<void>("bank_transaction_set_splits", { id, splits }),
+    /** The owner's note; a blank one clears it. */
+    setNote: (id: number, note: string) => invoke<void>("bank_transaction_set_note", { id, note }),
     toReview: () => invoke<BankTransaction[]>("bank_transactions_to_review"),
     approve: (ids: number[]) => invoke<number>("bank_transactions_approve", { ids }),
     /** Remove from Spending (paid back), or restore. Never deletes. */
@@ -123,6 +127,9 @@ export const api = {
   },
   rules: {
     list: () => invoke<CategoryRule[]>("rules_list"),
+    /** A rule of the owner's own; sorts history at once. Returns rows moved. */
+    create: (matchType: "payee" | "description", pattern: string, categoryId: number) =>
+      invoke<number>("rules_create", { matchType, pattern, categoryId }),
     delete: (id: number) => invoke<void>("rules_delete", { id }),
   },
   budgets: {

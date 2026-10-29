@@ -70,6 +70,7 @@ mod tests {
             plan.cutoff, plan.merges, plan.deletions, plan.uncategorised, plan.recategorised, plan.untouched_after_cutoff,
         );
         println!("export categories {:?}", plan.export_categories);
+        println!("not counted as spending, as in Copilot {:?}", plan.not_counted);
         if std::env::var("COPILOT_APPLY").is_ok() {
             let counts = crate::budget::store::apply_copilot_plan(&conn, &plan).unwrap();
             println!("applied {counts:?} to {}", copy.display());

@@ -1,13 +1,16 @@
 import { useState } from "react";
 import {
   useCategories, useRules, useCreateCategory, useUpdateCategory, useDeleteCategory, useDeleteRule,
-  useClearCategories,
+  useClearCategories, useSetCategoryKind, useCreateRule,
 } from "../../data/queries";
-import { Card, Button, Badge, EmptyState } from "../../ui/components";
-import { CategoryPill } from "../../ui/CategoryPill";
+import { Card, Button, EmptyState } from "../../ui/components";
+import { CategoryPill, CategorySelect } from "../../ui/CategoryPill";
 import { CATEGORY_TOKENS, categoryColour, categoryToken } from "../../ui/categoryColour";
 import { askToConfirm } from "../../ui/confirm";
-import type { Category } from "../../domain/types";
+import type { Category, CategoryKind } from "../../domain/types";
+
+// What a category can count as, in the owner's words.
+const KINDS: [CategoryKind, string][] = [["spending", "Spending"], ["income", "Income"], ["transfer", "Not counted"]];
 
 // What each of the twelve colours is called in the picker, in token order.
 const COLOUR_NAMES = ["Blue", "Orange", "Aqua", "Yellow", "Pink", "Green", "Violet", "Red", "Sky", "Lime", "Plum", "Brown"];
@@ -34,6 +37,57 @@ function ColourPicker({ value, onChange, label, automatic = false }: {
   );
 }
 
+// What a rule looks at, in the owner's words.
+const MATCHES: Record<string, string> = {
+  payee: "Payee contains", description: "Description contains", mcc: "Merchant code is",
+};
+
+/** Write a rule: text to look for in the payee or the bank's description, and
+ *  the category it files into. Saving sorts history at once. */
+function RuleForm({ categories }: { categories: Category[] }) {
+  const create = useCreateRule();
+  const [matchType, setMatchType] = useState<"payee" | "description">("payee");
+  const [pattern, setPattern] = useState("");
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [message, setMessage] = useState<{ tone: "pos" | "neg"; text: string } | null>(null);
+  const ready = pattern.trim() !== "" && categoryId != null;
+
+  function save() {
+    if (!ready) return;
+    setMessage(null);
+    create.mutate({ matchType, pattern, categoryId }, {
+      onSuccess: (moved) => {
+        setPattern("");
+        setMessage({ tone: "pos", text: `Rule saved. ${moved} transaction${moved === 1 ? "" : "s"} moved.` });
+      },
+      onError: (e) => setMessage({ tone: "neg", text: String(e) }),
+    });
+  }
+
+  return (
+    <div>
+      <div className="row center" style={{ gap: 8, flexWrap: "wrap" }}>
+        <select value={matchType} onChange={(e) => setMatchType(e.target.value as "payee" | "description")}
+          aria-label="What the rule looks at" style={{ width: 168 }}>
+          <option value="payee">{MATCHES.payee}</option>
+          <option value="description">{MATCHES.description}</option>
+        </select>
+        <input value={pattern} onChange={(e) => setPattern(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+          placeholder={matchType === "payee" ? "e.g. Target" : "e.g. PAYROLL"} aria-label="Text to look for"
+          style={{ flex: 1, minWidth: 140 }} />
+        <span className="muted">→</span>
+        <CategorySelect categories={categories} value={categoryId} onChange={setCategoryId} aria-label="Category for the rule" />
+        <Button onClick={save} loading={create.isPending} disabled={!ready}>Add rule</Button>
+      </div>
+      <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+        Any case. The description is the bank's text, shown in grey under a transaction's name.
+      </p>
+      {message && <div className={`notice ${message.tone}`} style={{ marginTop: 8 }}>{message.text}</div>}
+    </div>
+  );
+}
+
 export function CategoriesCard() {
   const { data: categories = [] } = useCategories();
   const { data: rules = [] } = useRules();
@@ -42,6 +96,7 @@ export function CategoriesCard() {
   const remove = useDeleteCategory();
   const removeRule = useDeleteRule();
   const clear = useClearCategories();
+  const setKind = useSetCategoryKind();
 
   const [newName, setNewName] = useState("");
   const [newColour, setNewColour] = useState("auto");
@@ -99,8 +154,13 @@ export function CategoriesCard() {
               ) : (
                 <>
                   <CategoryPill category={c} />
-                  {c.kind !== "spending" && <Badge>{c.kind}</Badge>}
-                  <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                  <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
+                    <select value={c.kind} aria-label={`What ${c.name} counts as`} style={{ width: 128 }}
+                      title="Not counted: shows in Spending but adds to no total or budget, like a category Copilot excludes"
+                      onChange={(e) => setKind.mutate({ id: c.id, kind: e.target.value as CategoryKind },
+                        { onError: (err) => setError(String(err)) })}>
+                      {KINDS.map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
+                    </select>
                     <Button variant="ghost" size="sm" onClick={() => setEditing({ ...c, colour: categoryToken(c.colour) })}>Edit</Button>
                     <Button variant="ghost" size="sm" onClick={async () => {
                       if (await askToConfirm(`Delete "${c.name}"? Transactions in it become uncategorised.`)) remove.mutate(c.id);
@@ -122,23 +182,30 @@ export function CategoriesCard() {
         {error && <div className="notice neg" style={{ marginTop: 10 }}>{error}</div>}
       </Card>
 
-      <Card title="Learned rules" subtitle="Created when you apply a category to everything from a payee. Delete one to stop it applying.">
-        {rules.length === 0 ? (
-          <EmptyState title="No rules yet"
-            body="Change a transaction's category in Spending and choose “apply to all”, and the rule will show up here." />
-        ) : (
-          <div style={{ display: "grid", gap: 2 }}>
-            {rules.map((r) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 4px" }}>
-                <Badge>{r.match_type}</Badge>
-                <span style={{ fontWeight: 600 }}>{r.pattern}</span>
-                <span className="muted">→ {nameOf(r.category_id)}</span>
-                <Button variant="ghost" size="sm" style={{ marginLeft: "auto" }}
-                  onClick={() => removeRule.mutate(r.id)}>Delete</Button>
+      <Card title="Rules" subtitle="A rule files every transaction it matches, past and future, unless you chose that one's category yourself.">
+        <RuleForm categories={categories} />
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+          {rules.length === 0 ? (
+            <EmptyState title="No rules yet"
+              body="Add one above, or change a transaction's category in Spending and choose “apply to all”." />
+          ) : (
+            // Folded away by default: an import can bring a hundred of them.
+            <details>
+              <summary style={{ cursor: "pointer" }}>All rules ({rules.length})</summary>
+              <div style={{ display: "grid", gap: 2, paddingTop: 6 }}>
+                {rules.map((r) => (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 4px" }}>
+                    <span className="muted" style={{ fontSize: 11, width: 118, flexShrink: 0 }}>{MATCHES[r.match_type] ?? r.match_type}</span>
+                    <span style={{ fontWeight: 600 }}>{r.pattern}</span>
+                    <span className="muted">→ {nameOf(r.category_id)}</span>
+                    <Button variant="ghost" size="sm" style={{ marginLeft: "auto" }}
+                      onClick={() => removeRule.mutate(r.id)}>Delete</Button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            </details>
+          )}
+        </div>
       </Card>
     </>
   );

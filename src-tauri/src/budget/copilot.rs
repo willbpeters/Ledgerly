@@ -15,8 +15,9 @@ const HEADER: [&str; 13] = [
 const MATCH_DAYS: i64 = 3;
 /// The account that collects rows whose Copilot account no longer exists.
 pub const HISTORY_ACCOUNT: &str = "Copilot history";
-/// Where rows Copilot excluded go: the owner excluded purchases they were paid
-/// back for. Kind `transfer`, so they show but never count as spending.
+/// Where rows the owner excluded one by one go: purchases they were paid back
+/// for. Kind `transfer`, so they show but never count as spending. (A category
+/// Copilot excludes whole keeps its rows; see `not_counted`.)
 pub const EXCLUDED: &str = "Excluded";
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -116,6 +117,9 @@ pub struct Plan {
     pub untouched_after_cutoff: usize,
     /// Every category name the export uses, most used first: Copilot's order.
     pub export_categories: Vec<String>,
+    /// The export's categories Copilot leaves out of spending (every row in
+    /// them excluded), in Copilot's order. Made kind `transfer` here too.
+    pub not_counted: Vec<String>,
 }
 
 /// Tally's old names for categories Copilot calls something else. Merged into
@@ -170,22 +174,38 @@ pub fn parse_csv(text: &str) -> Result<Vec<CopilotRow>, String> {
         .collect())
 }
 
-/// The category a row belongs in: Copilot's own name, exactly. An excluded
-/// row is always "Excluded"; an internal transfer is always "Internal
-/// transfer", whatever its category says; income with no category is
-/// "Income" — the two system categories.
-pub fn category_for(r: &CopilotRow) -> Option<String> {
-    if r.excluded {
-        return Some(EXCLUDED.into());
+/// The categories Copilot leaves out of spending, lowercase: every regular row
+/// in them is excluded. Excluding a category in Copilot marks all its rows;
+/// one excluded row among others in its category is the owner's own (paid
+/// back).
+pub fn not_counted(rows: &[CopilotRow]) -> HashSet<String> {
+    let mut all_excluded: BTreeMap<String, bool> = BTreeMap::new();
+    for r in rows.iter().filter(|r| !r.pending && r.kind == "regular") {
+        let name = r.category.trim().to_lowercase();
+        if !name.is_empty() {
+            *all_excluded.entry(name).or_insert(true) &= r.excluded;
+        }
     }
+    all_excluded.into_iter().filter(|(_, all)| *all).map(|(name, _)| name).collect()
+}
+
+/// The category a row belongs in: Copilot's own name, exactly. An internal
+/// transfer is always "Internal transfer", whatever its category says, and
+/// income with no category is "Income" — the two system categories — even
+/// when excluded, as Copilot marks every one. Any other excluded row is
+/// "Excluded", unless its whole category is (`not_counted`).
+pub fn category_for(r: &CopilotRow, not_counted: &HashSet<String>) -> Option<String> {
     if r.kind == "internal transfer" {
         return Some("Internal transfer".into());
     }
     let name = r.category.trim();
-    if !name.is_empty() {
-        return Some(name.to_string());
+    if r.kind == "income" {
+        return Some(if name.is_empty() { "Income".into() } else { name.to_string() });
     }
-    (r.kind == "income").then(|| "Income".to_string())
+    if r.excluded && !not_counted.contains(&name.to_lowercase()) {
+        return Some(EXCLUDED.into());
+    }
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// The system category kind a `category_for` name stands for, if any.
@@ -224,6 +244,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     // The newest day of the whole file. Nothing in Tally after it is touched.
     let newest = rows.iter().filter(|r| !r.pending).map(|r| r.date.as_str()).max().unwrap_or("");
     p.cutoff = newest.to_string();
+    let excluded_whole = not_counted(rows);
 
     // Where SimpleFIN's own record of each account starts. Copilot rows from
     // that date on are matched, never added; imported rows do not count.
@@ -247,7 +268,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
 
     for r in rows {
         if r.pending { p.pending += 1; continue; }
-        let category = category_for(r);
+        let category = category_for(r, &excluded_whole);
         let target = account_for(r);
         if let Target::Account(id) = target {
             let c = covers.entry(id).or_insert_with(|| (r.date.clone(), r.date.clone()));
@@ -343,7 +364,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
 
     // Every category the export uses, most used first, in Copilot's spelling.
     let mut uses: BTreeMap<String, (String, usize)> = BTreeMap::new();
-    for c in rows.iter().filter(|r| !r.pending).filter_map(category_for) {
+    for c in rows.iter().filter(|r| !r.pending).filter_map(|r| category_for(r, &excluded_whole)) {
         uses.entry(c.to_lowercase()).or_insert_with(|| (c.clone(), 0)).1 += 1;
     }
     // A transfer's or an excluded row's own category (one Copilot has, like
@@ -357,6 +378,7 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     let mut order: Vec<(String, usize)> = uses.values().cloned().collect();
     order.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     p.export_categories = order.into_iter().map(|(name, _)| name).collect();
+    p.not_counted = p.export_categories.iter().filter(|c| excluded_whole.contains(&c.to_lowercase())).cloned().collect();
     let in_export = |name: &str| uses.contains_key(&name.to_lowercase());
 
     // Copilot's spelling, then Tally's old names give way to Copilot's.
@@ -391,8 +413,10 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
         .filter(|c| !have.contains(&c.to_lowercase()) && system_kind(c).is_none())
         .map(|name| NewCategory {
             // Money moved into the owner's own investments is not spending,
-            // and nor is what they were paid back for.
-            kind: if name.eq_ignore_ascii_case("investments") || name.eq_ignore_ascii_case(EXCLUDED) {
+            // nor is what they were paid back for, nor a category Copilot
+            // leaves out of spending.
+            kind: if name.eq_ignore_ascii_case("investments") || name.eq_ignore_ascii_case(EXCLUDED)
+                || excluded_whole.contains(&name.to_lowercase()) {
                 "transfer"
             } else {
                 "spending"
@@ -406,9 +430,11 @@ pub fn plan(rows: &[CopilotRow], snap: &Snapshot) -> Plan {
     // A payee used at least twice, 90% of the time in one category. It
     // replaces any rule the payee already has: Copilot's choice wins.
     let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // Excluded rows teach nothing: being paid back says nothing of the payee.
-    for r in rows.iter().filter(|r| !r.pending && !r.excluded) {
-        if let Some(c) = category_for(r) {
+    // Rows excluded one by one teach nothing: being paid back says nothing of
+    // the payee. A category Copilot excludes whole still does (Netflix is
+    // Subscriptions).
+    for r in rows.iter().filter(|r| !r.pending) {
+        if let Some(c) = category_for(r, &excluded_whole).filter(|c| c != EXCLUDED) {
             by_name.entry(r.name.trim().to_lowercase()).or_default().push(c);
         }
     }
@@ -638,12 +664,56 @@ mod tests {
     #[test]
     fn categories_keep_copilots_own_names() {
         let r = |cat: &str, kind: &str| CopilotRow { category: cat.into(), kind: kind.into(), ..CopilotRow::default() };
-        assert_eq!(category_for(&r("Eating Out", "regular")).as_deref(), Some("Eating Out"));
-        assert_eq!(category_for(&r("Shops", "regular")).as_deref(), Some("Shops"));
-        assert_eq!(category_for(&r("Gifts ", "regular")).as_deref(), Some("Gifts"));
-        assert_eq!(category_for(&r("Golf", "internal transfer")).as_deref(), Some("Internal transfer"));
-        assert_eq!(category_for(&r("", "income")).as_deref(), Some("Income"));
-        assert_eq!(category_for(&r("", "regular")), None);
+        let none = HashSet::new();
+        assert_eq!(category_for(&r("Eating Out", "regular"), &none).as_deref(), Some("Eating Out"));
+        assert_eq!(category_for(&r("Shops", "regular"), &none).as_deref(), Some("Shops"));
+        assert_eq!(category_for(&r("Gifts ", "regular"), &none).as_deref(), Some("Gifts"));
+        assert_eq!(category_for(&r("Golf", "internal transfer"), &none).as_deref(), Some("Internal transfer"));
+        assert_eq!(category_for(&r("", "income"), &none).as_deref(), Some("Income"));
+        assert_eq!(category_for(&r("", "regular"), &none), None);
+    }
+
+    #[test]
+    fn excluded_income_and_transfers_stay_income_and_transfers() {
+        // Copilot marks every paycheck and transfer excluded: none counts as
+        // spending there. A Target paycheck is still income.
+        let r = |cat: &str, kind: &str| CopilotRow { category: cat.into(), kind: kind.into(), excluded: true, ..CopilotRow::default() };
+        let none = HashSet::new();
+        assert_eq!(category_for(&r("", "income"), &none).as_deref(), Some("Income"));
+        assert_eq!(category_for(&r("", "internal transfer"), &none).as_deref(), Some("Internal transfer"));
+        assert_eq!(category_for(&r("", "regular"), &none).as_deref(), Some(EXCLUDED));
+    }
+
+    #[test]
+    fn a_category_copilot_excludes_whole_keeps_its_rows_and_does_not_count() {
+        // Every Car row excluded: a category Copilot leaves out of spending.
+        // One excluded Eating Out row among others: paid back, so Excluded.
+        let excluded = |r: String| r.replacen("\"false\"", "\"true\"", 1);
+        let rows = parse_csv(&csv(&[
+            &excluded(row("2026-01-02", "Smog", "40", "Car", "regular", "")),
+            &excluded(row("2026-01-09", "Gas", "50", "Car", "regular", "")),
+            &row("2026-01-03", "Diner", "12", "Eating Out", "regular", ""),
+            &excluded(row("2026-01-04", "Diner", "30", "Eating Out", "regular", "")),
+        ])).unwrap();
+        let p = plan(&rows, &snap());
+        let cats: Vec<(&str, Option<&str>)> = p.additions.iter().map(|a| (a.name.as_str(), a.category.as_deref())).collect();
+        assert_eq!(cats, vec![
+            ("Smog", Some("Car")), ("Gas", Some("Car")), ("Diner", Some("Eating Out")), ("Diner", Some(EXCLUDED)),
+        ]);
+        assert_eq!(p.not_counted, vec!["Car".to_string()]);
+        let kinds: Vec<(&str, &str)> = p.new_categories.iter().map(|c| (c.name.as_str(), c.kind.as_str())).collect();
+        // Eating Out isn't new: Tally's Dining is merged into it.
+        assert_eq!(kinds, vec![("Car", "transfer"), (EXCLUDED, "transfer")]);
+    }
+
+    #[test]
+    fn rows_in_a_category_copilot_excludes_still_teach_rules() {
+        let excluded = |r: String| r.replacen("\"false\"", "\"true\"", 1);
+        let rows = parse_csv(&csv(&[
+            &excluded(row("2026-01-02", "Netflix", "15", "Subscriptions", "regular", "")),
+            &excluded(row("2026-02-02", "Netflix", "15", "Subscriptions", "regular", "")),
+        ])).unwrap();
+        assert_eq!(plan(&rows, &snap()).rules, vec![LearnedRule { pattern: "netflix".into(), category: "Subscriptions".into() }]);
     }
 
     #[test]
@@ -708,14 +778,17 @@ mod tests {
     #[test]
     fn pending_rows_are_skipped_and_excluded_ones_go_in_excluded() {
         let pending = row("2026-01-02", "P", "1", "", "regular", "").replace("\"posted\"", "\"pending\"");
-        // Paid back: excluded in Copilot, its own category still one of Copilot's.
+        // Paid back: excluded in Copilot, among Concerts rows that count. Its
+        // own category is still one of Copilot's.
         let excluded = row("2026-01-02", "E", "1", "Concerts", "regular", "").replace("\"false\"", "\"true\"");
-        let p = plan(&parse_csv(&csv(&[&pending, &excluded])).unwrap(), &snap());
-        assert_eq!((p.additions.len(), p.pending), (1, 1));
+        let counted = row("2026-01-03", "F", "1", "Concerts", "regular", "");
+        let p = plan(&parse_csv(&csv(&[&pending, &excluded, &counted])).unwrap(), &snap());
+        assert_eq!((p.additions.len(), p.pending), (2, 1));
         assert_eq!(p.additions[0].category.as_deref(), Some(EXCLUDED));
         assert!(p.export_categories.contains(&"Concerts".to_string()));
         let kinds: Vec<(&str, &str)> = p.new_categories.iter().map(|c| (c.name.as_str(), c.kind.as_str())).collect();
         assert_eq!(kinds, vec![("Concerts", "spending"), (EXCLUDED, "transfer")]);
+        assert!(p.not_counted.is_empty());
         assert!(p.rules.is_empty());
     }
 

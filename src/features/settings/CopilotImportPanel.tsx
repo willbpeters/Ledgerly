@@ -87,9 +87,16 @@ export function CopilotImportPanel({ plan, result, busy, onChoose, onImport, chi
             <div style={{ paddingTop: 4 }}>
               <strong>Categories become exactly Copilot's:</strong> {plan.export_categories.join(", ")}
             </div>
+            {plan.not_counted.length > 0 && (
+              <div className="muted">
+                Not counted as spending, as in Copilot: {plan.not_counted.join(", ")}. They keep their
+                transactions; change any in Spending → Categories &amp; rules
+              </div>
+            )}
             {plan.export_categories.includes(EXCLUDED) && (
               <div className="muted">
-                What you excluded in Copilot goes in {EXCLUDED}, which shows but never counts as spending
+                Transactions you excluded one by one in Copilot go in {EXCLUDED}, which shows but never counts as
+                spending. Income and transfers stay Income and Internal transfer
               </div>
             )}
             {plan.new_categories.length > 0 && (

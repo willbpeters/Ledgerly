@@ -330,6 +330,15 @@ tbody tr:hover td { background: var(--surface-2); }
 tbody tr:last-child td { border-bottom: 0; }
 .cell-primary { font-weight: 600; }
 .cell-secondary { font-size: 11px; color: var(--mut); }
+/* A transaction's note reads as text but is a button: click to edit. "+ Note"
+   shows only on the row under the pointer, or when tabbed to. */
+.note-text {
+  display: block; background: none; border: 0; padding: 0; font: inherit; font-style: italic;
+  text-align: left; cursor: text;
+}
+.note-text:hover { color: var(--ink-2); text-decoration: underline dotted; }
+.note-add { padding: 0 2px; font-size: 11px; opacity: 0; }
+tr:hover .note-add, .note-add:focus-visible { opacity: 1; }
 .ticker-cell { display: flex; align-items: center; gap: 11px; }
 .ticker-mark { width: 3px; height: 26px; border-radius: 2px; flex-shrink: 0; }
 .bar { display: inline-flex; align-items: center; gap: 7px; justify-content: flex-end; }

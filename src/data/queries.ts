@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
-import type { NewGoal, NewSplit } from "../domain/types";
+import type { CategoryKind, NewGoal, NewSplit } from "../domain/types";
 import { api, type NewAccount, type NewTransaction } from "./api";
 import { writeLastSync, clearLastSync } from "./lastSync";
 import { MIN_HISTORY_DAYS } from "../domain/risk";
@@ -247,6 +247,30 @@ export function useClearCategories() {
       qc.invalidateQueries({ queryKey: budgetKeys.budgets });
       qc.invalidateQueries({ queryKey: ["backup"] });
     },
+  });
+}
+/** Changes what Spending counts, so everything spending-related refetches. */
+export function useSetCategoryKind() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; kind: CategoryKind }) => api.categories.setKind(v.id, v.kind),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+/** A new rule re-sorts history, so rows move as well as the rule list. */
+export function useCreateRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { matchType: "payee" | "description"; pattern: string; categoryId: number }) =>
+      api.rules.create(v.matchType, v.pattern, v.categoryId),
+    onSuccess: () => invalidateSpending(qc),
+  });
+}
+export function useSetNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; note: string }) => api.bankTransactions.setNote(v.id, v.note),
+    onSuccess: () => invalidateSpending(qc),
   });
 }
 export function useDeleteRule() {

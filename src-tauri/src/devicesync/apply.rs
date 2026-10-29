@@ -170,7 +170,7 @@ fn categories(conn: &Connection, c: &Change) -> rusqlite::Result<bool> {
             }
             Ok(true)
         }
-        name @ ("name" | "colour" | "sort") => {
+        name @ ("name" | "colour" | "sort" | "kind") => {
             if name == "name" {
                 // A different category already has this name: wait rather than
                 // fail on the UNIQUE constraint.

@@ -723,6 +723,21 @@ fn write_plan(tx: &Connection, plan: &copilot::Plan) -> rusqlite::Result<Copilot
     // What the owner was paid back for never counts as spending, even in an
     // Excluded category they made themselves.
     tx.execute("UPDATE categories SET kind='transfer' WHERE lower(name)=lower(?1)", [copilot::EXCLUDED])?;
+    // Copilot decides what counts as spending: a category it excludes whole
+    // doesn't count here either, and one it counts does again. Its system
+    // categories, Investments and an income category the owner made are left
+    // as they are.
+    for name in &plan.export_categories {
+        if copilot::system_kind(name).is_some() || name.eq_ignore_ascii_case(copilot::EXCLUDED)
+            || name.eq_ignore_ascii_case("investments") {
+            continue;
+        }
+        let kind = if plan.not_counted.contains(name) { "transfer" } else { "spending" };
+        tx.execute(
+            "UPDATE categories SET kind=?1 WHERE lower(name)=lower(?2) AND kind NOT IN ('income', ?1)",
+            params![kind, name],
+        )?;
+    }
 
     let mut history: Option<i64> = None;
     for a in &plan.additions {
@@ -2056,9 +2071,14 @@ mod tests {
         let conn = seeded();
         // The owner's own Excluded, made as spending: the import puts it right.
         conn.execute("INSERT INTO categories (name,kind) VALUES ('Excluded','spending')", []).unwrap();
+        // Paid back: excluded on its own, among Concerts rows that count.
         let excluded = copilot_row("2026-01-05", "Zqx Concert", "80", "Concerts", "regular", "")
             .replace("\"false\"", "\"true\"");
-        let csv = export(&[excluded, copilot_row("2026-01-06", "Range", "20", "Golf", "regular", "")]);
+        let csv = export(&[
+            excluded,
+            copilot_row("2026-01-07", "Zqx Gig", "30", "Concerts", "regular", ""),
+            copilot_row("2026-01-06", "Range", "20", "Golf", "regular", ""),
+        ]);
 
         apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
 
@@ -2068,6 +2088,39 @@ mod tests {
         ).unwrap();
         assert_eq!((category.as_str(), kind.as_str(), gone), ("Excluded", "transfer", 0));
         assert!(category_names(&conn).contains(&"Concerts".to_string()), "its own category is Copilot's too");
+    }
+
+    fn kind_of(conn: &Connection, name: &str) -> String {
+        conn.query_row("SELECT kind FROM categories WHERE name=?1", [name], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn a_category_copilot_excludes_whole_keeps_its_rows_and_stops_counting() {
+        let conn = seeded();
+        conn.execute("INSERT INTO categories (name,kind) VALUES ('Car','spending')", []).unwrap();
+        let excluded = |r: String| r.replace("\"false\"", "\"true\"");
+        let csv = export(&[
+            excluded(copilot_row("2026-01-05", "Zqx Smog", "40", "Car", "regular", "")),
+            // Copilot marks every paycheck excluded: still income.
+            excluded(copilot_row("2026-01-09", "Target Payroll", "-500", "", "income", "")),
+            copilot_row("2026-01-06", "Range", "20", "Golf", "regular", ""),
+        ]);
+
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &csv)).unwrap();
+
+        let filed = |d: &str| -> String {
+            conn.query_row("SELECT c.name FROM bank_transactions b JOIN categories c ON c.id=b.category_id
+                            WHERE b.description=?1", [d], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(filed("Zqx Smog"), "Car");
+        assert_eq!(kind_of(&conn, "Car"), "transfer", "doesn't count as spending, as in Copilot");
+        assert_eq!(filed("Target Payroll"), "Income");
+        assert_eq!(kind_of(&conn, "Golf"), "spending");
+
+        // Counted in Copilot again: counted here again.
+        let counted = export(&[copilot_row("2026-01-05", "Zqx Smog", "40", "Car", "regular", "")]);
+        apply_copilot_plan(&conn, &copilot_plan(&conn, &counted)).unwrap();
+        assert_eq!(kind_of(&conn, "Car"), "spending");
     }
 
     #[test]

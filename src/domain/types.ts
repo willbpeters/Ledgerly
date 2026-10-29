@@ -134,6 +134,8 @@ export interface CopilotPlan {
   untouched_after_cutoff: number;
   /** Every category name the export uses, most used first. */
   export_categories: string[];
+  /** The export's categories Copilot leaves out of spending; they don't count here either. */
+  not_counted: string[];
 }
 export interface CopilotCounts { matched: number; added: number; categories: number; rules: number; removed: number }
 export interface CategoryRule {

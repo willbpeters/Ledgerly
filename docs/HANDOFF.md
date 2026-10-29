@@ -73,7 +73,16 @@ budgeting and spending module.
   progress bar and remainder; and the month's transactions with an inline
   category picker. Changing a category can write a payee rule that later syncs
   obey. Categories and the learned rules are managed in Spending →
-  Categories & rules (moved from Settings 2026-10-28).
+  Categories & rules (moved from Settings 2026-10-28). There each category
+  has a **Counts as** choice (Spending, Income, Not counted = kind
+  `transfer`; `categories_set_kind`), and **Add rule** writes the owner's
+  own rule (payee or bank description contains some text, any case;
+  `rules_create` replaces one with the same text and re-sorts every
+  automatic row at once, hand-picked rows stay). The rule list is folded
+  under "All rules (N)". **Notes:** "+ Note" (shown on row hover) or
+  clicking a note edits it inline (`bank_transaction_set_note`; blank
+  clears). Device sync carries a category's kind as well as its name,
+  colour and sort.
   **No preset categories (2026-10-28):** a fresh database has none; they come
   from the owner or from the Copilot import. Only two are ever made by Tally
   itself, **Internal transfer** (kind `transfer`) and **Income** (kind
@@ -143,14 +152,21 @@ budgeting and spending module.
     with the bank's description still under it. Device sync carries `name`
     as a field and in a row.
   - **Copilot's category names, as they are.** `category_for` returns the
-    export's name exactly. An excluded row is always **"Excluded"** (kind
-    `transfer`: it shows, but never counts as spending; the owner excluded
-    what they were paid back for); an internal transfer is always "Internal
-    transfer"; income with no category is "Income". Categories Tally lacks are
-    created (Investments and Excluded as kind `transfer`, the rest
+    export's name exactly. An internal transfer is always "Internal
+    transfer" and income with no category "Income", **even when excluded**:
+    Copilot's export marks every paycheck and transfer `excluded` (the
+    owner's Target paychecks once all landed in Excluded). **A category
+    Copilot excludes whole** (every regular row in it excluded, e.g. Car,
+    Subscriptions) keeps its rows and is made kind `transfer`, shown in the
+    app as "Not counted" (`copilot::not_counted`, `Plan.not_counted`); a
+    re-import sets every export category's kind to Copilot's choice again,
+    leaving system categories, Investments and income-kind ones alone. Any
+    other excluded row (one paid-back row among counted ones) goes in
+    **"Excluded"** (kind `transfer`). Categories Tally lacks are created
+    (Investments, Excluded and not-counted ones as `transfer`, the rest
     `spending`). A category written on a transfer or an excluded row counts
-    as one of Copilot's, though the row itself goes elsewhere. Excluded rows
-    teach no rules.
+    as one of Copilot's, though the row itself goes elsewhere. Rows in
+    Excluded teach no rules; rows in a not-counted category do.
   - **Old names merge first.** `OLD_NAMES` (Dining → Eating Out, Shopping →
     Shops, Transfer → Internal transfer) are folded into Copilot's name by
     `store::merge_category(from, to)` when the export uses it: transactions,

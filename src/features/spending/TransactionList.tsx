@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
-import { useSetTransactionCategory } from "../../data/queries";
+import { useSetTransactionCategory, useSetNote } from "../../data/queries";
 import { useOfferUndo } from "../../data/undo";
+import { useToast } from "../../ui/toast";
 import { splitRemainder } from "../../domain/splits";
 import { money, fmtDate } from "../../ui/format";
 import { Badge } from "../../ui/components";
@@ -28,16 +29,29 @@ export function TransactionList({ transactions, categories, accounts, onApprove,
 }) {
   const setCategory = useSetTransactionCategory();
   const offerUndo = useOfferUndo();
+  const toast = useToast();
   const [teaching, setTeaching] = useState<number | null>(null);
   const [splitting, setSplitting] = useState<number | null>(null);
+  // The row whose note is being written, and the text so far.
+  const [noting, setNoting] = useState<{ id: number; text: string } | null>(null);
+  const setNote = useSetNote();
   const byId = new Map(categories.map((c) => [c.id, c]));
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? "—";
   // An editor must not outlive its row: the list changes under it on a month
   // change or a sync, and the row could come back with the editor still open.
   useEffect(() => {
     if (splitting != null && !transactions.some((t) => t.id === splitting)) setSplitting(null);
-  }, [transactions, splitting]);
+    if (noting != null && !transactions.some((t) => t.id === noting.id)) setNoting(null);
+  }, [transactions, splitting, noting]);
   const openSplit = (id: number) => { setTeaching(null); setSplitting(id); };
+
+  function saveNote() {
+    if (!noting) return;
+    setNote.mutate({ id: noting.id, note: noting.text }, {
+      onSuccess: () => setNoting(null),
+      onError: (e) => toast.push({ tone: "neg", title: "Note not saved", body: String(e) }),
+    });
+  }
   const columns = 5 + (onApprove ? 1 : 0) + (onRemove || onRestore ? 1 : 0);
 
   function choose(t: BankTransaction, categoryId: number | null) {
@@ -82,7 +96,22 @@ export function TransactionList({ transactions, categories, accounts, onApprove,
                     {t.payee && t.description !== t.payee && (
                       <div className="cell-secondary">{t.description}</div>
                     )}
-                    {t.note && <div className="cell-secondary" style={{ fontStyle: "italic" }}>{t.note}</div>}
+                    {noting?.id === t.id ? (
+                      <div className="row center" style={{ gap: 6, marginTop: 4 }}>
+                        <input autoFocus value={noting.text} aria-label={`Note for ${name}`} placeholder="Add a note"
+                          onChange={(e) => setNoting({ id: t.id, text: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === "Enter") saveNote(); if (e.key === "Escape") setNoting(null); }}
+                          style={{ flex: 1, minWidth: 140 }} />
+                        <button className="btn btn-secondary btn-sm" onClick={saveNote}>Save</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setNoting(null)}>Cancel</button>
+                      </div>
+                    ) : t.note ? (
+                      <button className="note-text cell-secondary" aria-label={`Edit note for ${name}: ${t.note}`}
+                        title="Edit note" onClick={() => setNoting({ id: t.id, text: t.note ?? "" })}>{t.note}</button>
+                    ) : !t.removed && (
+                      <button className="btn btn-ghost btn-sm note-add" aria-label={`Add a note to ${name}`}
+                        onClick={() => setNoting({ id: t.id, text: "" })}>+ Note</button>
+                    )}
                     {t.pending && <Badge tone="warn">Pending</Badge>}
                   </td>
                   <td className="left cell-secondary">{accountName(t.account_id)}</td>

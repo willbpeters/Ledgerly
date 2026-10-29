@@ -23,7 +23,8 @@ const plan: CopilotPlan = {
   uncategorised: 3,
   recategorised: 12,
   untouched_after_cutoff: 5,
-  export_categories: ["Eating Out", "Shops", "Golf", "Excluded"],
+  export_categories: ["Eating Out", "Shops", "Golf", "Car", "Excluded"],
+  not_counted: ["Car"],
 };
 const base = { plan: null, result: null, busy: false, onChoose: vi.fn(), onImport: vi.fn() };
 
@@ -53,8 +54,9 @@ describe("CopilotImportPanel", () => {
 
   it("says the categories become exactly Copilot's, and what changes", () => {
     render(<CopilotImportPanel {...base} plan={plan} />);
-    expect(screen.getByText("Eating Out, Shops, Golf, Excluded")).toBeInTheDocument();
-    expect(screen.getByText(/goes in Excluded, which shows but never counts as spending/)).toBeInTheDocument();
+    expect(screen.getByText("Eating Out, Shops, Golf, Car, Excluded")).toBeInTheDocument();
+    expect(screen.getByText(/excluded one by one in Copilot go in Excluded, which shows but never counts as spending/)).toBeInTheDocument();
+    expect(screen.getByText(/Not counted as spending, as in Copilot: Car./)).toBeInTheDocument();
     expect(screen.getByText("New: Golf")).toBeInTheDocument();
     expect(screen.getByText("Renamed or merged: Dining → Eating Out, Shopping → Shops")).toBeInTheDocument();
     expect(screen.getByText("Removed: Travel, Poker")).toBeInTheDocument();
@@ -67,9 +69,9 @@ describe("CopilotImportPanel", () => {
   it("leaves out changes there aren't any of", () => {
     render(<CopilotImportPanel {...base} plan={{
       ...plan, not_in_copilot: [], pending: 0, merges: [], deletions: [], new_categories: [], rules: [],
-      uncategorised: 0, recategorised: 1, untouched_after_cutoff: 0, export_categories: ["Eating Out"],
+      uncategorised: 0, recategorised: 1, untouched_after_cutoff: 0, export_categories: ["Eating Out"], not_counted: [],
     }} />);
-    for (const text of [/removed/, /pending/, /Renamed/, /^Removed:/, /^New:/, /Excluded/, /To review/, /stay as they are/, /Rules learned from Copilot/]) {
+    for (const text of [/removed/, /pending/, /Renamed/, /^Removed:/, /^New:/, /Excluded/, /Not counted/, /To review/, /stay as they are/, /Rules learned from Copilot/]) {
       expect(screen.queryByText(text)).toBeNull();
     }
     expect(screen.getByText("1 transaction gets Copilot's category")).toBeInTheDocument();

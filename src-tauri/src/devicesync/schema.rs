@@ -140,10 +140,12 @@ CREATE TRIGGER categories_sync_insert AFTER INSERT ON categories BEGIN
     FROM categories c WHERE c.id = NEW.id AND (SELECT yes FROM sync_on);
 END;
 
-CREATE TRIGGER categories_sync_update AFTER UPDATE OF name, colour, sort ON categories
+CREATE TRIGGER categories_sync_update AFTER UPDATE OF name, colour, sort, kind ON categories
 WHEN (SELECT yes FROM sync_on) AND NEW.sync_key IS NOT NULL BEGIN
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'categories', NEW.sync_key, 'name', json_quote(NEW.name), {NOW} WHERE OLD.name IS NOT NEW.name;
+  INSERT INTO sync_outbox (tbl, key, field, value, at)
+    SELECT 'categories', NEW.sync_key, 'kind', json_quote(NEW.kind), {NOW} WHERE OLD.kind IS NOT NEW.kind;
   INSERT INTO sync_outbox (tbl, key, field, value, at)
     SELECT 'categories', NEW.sync_key, 'colour', json_quote(NEW.colour), {NOW} WHERE OLD.colour IS NOT NEW.colour;
   INSERT INTO sync_outbox (tbl, key, field, value, at)

@@ -89,6 +89,22 @@ pub fn update_category(conn: &Connection, id: i64, name: &str, colour: &str) -> 
     Ok(())
 }
 
+#[tauri::command]
+pub fn categories_set_kind(db: tauri::State<Db>, id: i64, kind: String) -> Result<(), String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    set_category_kind(&conn, id, &kind)
+}
+
+/// What a category counts as: `spending` (spent and budgets), `income`, or
+/// `transfer`, which shows but never counts, like a category Copilot excludes.
+pub fn set_category_kind(conn: &Connection, id: i64, kind: &str) -> Result<(), String> {
+    if !matches!(kind, "spending" | "income" | "transfer") {
+        return Err(format!("\"{kind}\" isn't something a category can count as."));
+    }
+    conn.execute("UPDATE categories SET kind=?1 WHERE id=?2", params![kind, id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Deleting a category leaves its transactions uncategorised (the foreign key
 /// is ON DELETE SET NULL) and removes any rules that pointed at it.
 #[tauri::command]
@@ -240,6 +256,19 @@ pub fn bank_transaction_set_category(
     store::set_category(&conn, id, category_id, apply_to_payee).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn bank_transaction_set_note(db: tauri::State<Db>, id: i64, note: String) -> Result<(), String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    set_note(&conn, id, &note).map_err(|e| e.to_string())
+}
+
+/// The owner's note on a transaction. A blank one clears it.
+pub fn set_note(conn: &Connection, id: i64, note: &str) -> rusqlite::Result<()> {
+    let note = Some(note.trim()).filter(|n| !n.is_empty());
+    conn.execute("UPDATE bank_transactions SET note=?1 WHERE id=?2", params![note, id])?;
+    Ok(())
+}
+
 /// Split a transaction across categories; an empty list unsplits it.
 #[tauri::command]
 pub fn bank_transaction_set_splits(db: tauri::State<Db>, id: i64, splits: Vec<store::NewSplit>)
@@ -263,6 +292,45 @@ pub fn rules_list(db: tauri::State<Db>) -> Result<Vec<CategoryRule>, String> {
         })
     }).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rules_create(db: tauri::State<Db>, match_type: String, pattern: String, category_id: i64)
+    -> Result<usize, String> {
+    let conn = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    create_rule(&conn, &match_type, &pattern, category_id)
+}
+
+/// A rule the owner writes: a transaction whose payee (or description)
+/// contains `pattern`, in any case, goes in the category. It replaces a rule
+/// with the same text. Every automatic row is re-sorted at once, so it reaches
+/// history too; categories chosen by hand stay. Returns how many rows moved.
+pub fn create_rule(conn: &Connection, match_type: &str, pattern: &str, category_id: i64) -> Result<usize, String> {
+    if !matches!(match_type, "payee" | "description") {
+        return Err("A rule looks at the payee or the description.".into());
+    }
+    let pattern = pattern.trim().to_lowercase();
+    if pattern.is_empty() {
+        return Err("Type the text the rule looks for.".into());
+    }
+    let run = || -> rusqlite::Result<usize> {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO category_rules (match_type, pattern, category_id, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(match_type, pattern) DO UPDATE SET category_id=excluded.category_id",
+            params![match_type, pattern, category_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        let auto = "SELECT id, category_id FROM bank_transactions WHERE category_source='auto'";
+        let read = |tx: &Connection| -> rusqlite::Result<HashMap<i64, Option<i64>>> {
+            tx.prepare(auto)?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+        };
+        let before = read(&tx)?;
+        store::recategorise_all(&tx)?;
+        let moved = read(&tx)?.iter().filter(|(id, c)| before.get(id) != Some(c)).count();
+        tx.commit()?;
+        Ok(moved)
+    };
+    run().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -334,6 +402,73 @@ mod tests {
         let conn = db::open_in_memory().unwrap();
         crate::budget::seed::test_categories(&conn);
         conn
+    }
+
+    fn with_target_paycheck() -> Connection {
+        let conn = seeded();
+        conn.execute_batch(
+            "INSERT INTO accounts (name,type,currency,created_at) VALUES ('Checking','cash','USD','2026-01-01');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee)
+               VALUES (1,'t1','2026-10-01',500,'TARGET CORPORATI PAYROLL PETERS','Target');
+             INSERT INTO bank_transactions (account_id,external_id,posted,amount,description,payee,category_id,category_source)
+               VALUES (1,'t2','2026-10-15',500,'TARGET CORPORATI PAYROLL PETERS','Target',
+                       (SELECT id FROM categories WHERE name='Groceries'),'manual');",
+        ).unwrap();
+        conn
+    }
+
+    fn category_of(conn: &Connection, ext: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT c.name FROM bank_transactions b LEFT JOIN categories c ON c.id=b.category_id WHERE b.external_id=?1",
+            [ext], |r| r.get(0),
+        ).unwrap()
+    }
+
+    #[test]
+    fn a_rule_the_owner_writes_sorts_history_but_not_hand_picked_rows() {
+        let conn = with_target_paycheck();
+        let income = crate::budget::seed::category_id(&conn, "Income").unwrap().unwrap();
+        let moved = create_rule(&conn, "description", "  Target Corporati Payroll ", income).unwrap();
+        assert_eq!(moved, 1);
+        assert_eq!(category_of(&conn, "t1").as_deref(), Some("Income"));
+        assert_eq!(category_of(&conn, "t2").as_deref(), Some("Groceries"), "chosen by hand, so it stays");
+        let pattern: String = conn.query_row("SELECT pattern FROM category_rules", [], |r| r.get(0)).unwrap();
+        assert_eq!(pattern, "target corporati payroll");
+    }
+
+    #[test]
+    fn a_rule_with_the_same_text_is_replaced_and_a_blank_one_refused() {
+        let conn = with_target_paycheck();
+        let id = |n: &str| crate::budget::seed::category_id(&conn, n).unwrap().unwrap();
+        create_rule(&conn, "payee", "target", id("Groceries")).unwrap();
+        create_rule(&conn, "payee", "TARGET", id("Income")).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM category_rules", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(category_of(&conn, "t1").as_deref(), Some("Income"));
+        assert!(create_rule(&conn, "payee", "  ", id("Income")).unwrap_err().contains("Type the text"));
+        assert!(create_rule(&conn, "mcc", "5812", id("Income")).is_err());
+    }
+
+    #[test]
+    fn a_note_is_set_trimmed_and_cleared_when_blank() {
+        let conn = with_target_paycheck();
+        let note = |c: &Connection| -> Option<String> {
+            c.query_row("SELECT note FROM bank_transactions WHERE external_id='t1'", [], |r| r.get(0)).unwrap()
+        };
+        set_note(&conn, 1, "  Bonus week ").unwrap();
+        assert_eq!(note(&conn).as_deref(), Some("Bonus week"));
+        set_note(&conn, 1, "   ").unwrap();
+        assert_eq!(note(&conn), None);
+    }
+
+    #[test]
+    fn a_category_counts_as_spending_income_or_neither() {
+        let conn = seeded();
+        let id = crate::budget::seed::category_id(&conn, "Groceries").unwrap().unwrap();
+        set_category_kind(&conn, id, "transfer").unwrap();
+        let kind: String = conn.query_row("SELECT kind FROM categories WHERE id=?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(kind, "transfer");
+        assert!(set_category_kind(&conn, id, "savings").is_err());
     }
 
     #[test]

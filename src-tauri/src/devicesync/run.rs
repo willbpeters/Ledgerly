@@ -303,6 +303,18 @@ mod tests {
     }
 
     #[test]
+    fn whether_a_category_counts_as_spending_reaches_the_other_computer() {
+        // The Copilot import makes Car not count, as in Copilot; the laptop
+        // must agree or its Spending totals differ.
+        let drive = tempfile::tempdir().unwrap();
+        let (pc, laptop) = pair_up(drive.path());
+        exec(&pc, "UPDATE categories SET kind='transfer' WHERE name='Dining';");
+        round(&pc.db, drive.path(), &pc.id, "PC").unwrap();
+        assert_eq!(round(&laptop.db, drive.path(), &laptop.id, "LAPTOP").unwrap().applied, 1);
+        assert_eq!(text(&laptop, "SELECT kind FROM categories WHERE name='Dining'").as_deref(), Some("transfer"));
+    }
+
+    #[test]
     fn each_computer_sees_the_other_in_the_folder() {
         let drive = tempfile::tempdir().unwrap();
         let (pc, laptop) = pair_up(drive.path());

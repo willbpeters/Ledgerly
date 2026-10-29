@@ -6,9 +6,11 @@ import type { Account, BankTransaction, Category } from "../../domain/types";
 
 // Category changes are saved through Tauri; record them instead.
 const setCategory = vi.hoisted(() => vi.fn());
+const setNote = vi.hoisted(() => vi.fn());
 vi.mock("../../data/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../data/queries")>()),
   useSetTransactionCategory: () => ({ mutate: setCategory }),
+  useSetNote: () => ({ mutate: setNote, isPending: false }),
 }));
 const { TransactionList } = await import("./TransactionList");
 
@@ -202,5 +204,34 @@ describe("TransactionList splits", () => {
   it("offers no Split on a removed row", () => {
     renderList({ transactions: [txn({ removed: true })], onRestore: vi.fn() });
     expect(screen.queryByRole("button", { name: "Split Target" })).toBeNull();
+  });
+});
+
+describe("TransactionList notes", () => {
+  it("adds a note under a transaction", () => {
+    setNote.mockClear();
+    renderList();
+    fireEvent.click(screen.getByRole("button", { name: "Add a note to Target" }));
+    const box = screen.getByLabelText("Note for Target");
+    fireEvent.change(box, { target: { value: "Split with Sam" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(setNote).toHaveBeenCalledWith({ id: 7, note: "Split with Sam" }, expect.anything());
+  });
+
+  it("edits a note from the note itself, and Escape leaves it as it was", () => {
+    setNote.mockClear();
+    renderList({ transactions: [txn({ note: "Gift for Mum" })] });
+    fireEvent.click(screen.getByRole("button", { name: "Edit note for Target: Gift for Mum" }));
+    const box = screen.getByLabelText("Note for Target");
+    expect(box).toHaveValue("Gift for Mum");
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(setNote).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Note for Target")).toBeNull();
+    expect(screen.getByText("Gift for Mum")).toBeInTheDocument();
+  });
+
+  it("offers no new note on a removed row", () => {
+    renderList({ transactions: [txn({ removed: true })] });
+    expect(screen.queryByRole("button", { name: "Add a note to Target" })).toBeNull();
   });
 });
